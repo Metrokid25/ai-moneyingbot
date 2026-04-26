@@ -23,15 +23,15 @@ _BLOCK_CONTENT: list[Tuple[str, str]] = [
 ]
 
 
-def _is_login_page(page: Page) -> bool:
-    """현재 페이지가 로그인 페이지인지 감지."""
+def _is_login_page(page: Page) -> Optional[str]:
+    """현재 페이지 상태 감지. 'login_required', 'next_error', None 중 하나 반환."""
     url = page.url
     if "nid.naver.com" in url:
         print("[DEBUG] 로그인 페이지 감지: nid.naver.com URL")
-        return True
+        return "login_required"
     if "login" in url:
         print("[DEBUG] 로그인 페이지 감지: login URL")
-        return True
+        return "login_required"
 
     try:
         html = page.content()
@@ -40,22 +40,23 @@ def _is_login_page(page: Page) -> bool:
 
     if "NotLoggedInError" in html:
         print("[DEBUG] 로그인 페이지 감지: NotLoggedInError 문자열 존재")
-        return True
+        return "login_required"
     if "카페 멤버이시면 먼저 로그인을 해야 합니다" in html:
         print("[DEBUG] 로그인 페이지 감지: 로그인 안내 문자열 존재")
-        return True
+        return "login_required"
     if 'id="__next_error__"' in html:
-        print("[DEBUG] 로그인 페이지 감지: __next_error__ 태그 존재")
-        return True
+        # auth 마커 없이 __next_error__ 단독 → Next.js 일반 에러, 진단 저장 필요
+        print("[DEBUG] next_error 감지: __next_error__ 존재 (auth 마커 없음)")
+        return "next_error"
 
     try:
         if page.query_selector('input[id="id"], input[name="id"]'):
             print("[DEBUG] 로그인 페이지 감지: id 입력 필드 존재")
-            return True
+            return "login_required"
     except PlaywrightError:
         pass
 
-    return False
+    return None
 
 
 def wait_for_login(page: Page) -> None:
@@ -63,7 +64,7 @@ def wait_for_login(page: Page) -> None:
 
     이미 로그인된 세션이면 즉시 반환.
     """
-    if not _is_login_page(page):
+    if _is_login_page(page) != "login_required":
         return
     input("[LOGIN] 브라우저에서 로그인을 완료한 뒤, 이 콘솔에서 엔터를 눌러주세요.")
     print("[LOGIN] 진행합니다")
@@ -121,8 +122,9 @@ class BrowserSession:
         final_url = self._page.url
 
         # 로그인 필요 감지 우선 (Next.js SPA 포함)
-        if _is_login_page(self._page):
-            return final_url, "login_required"
+        reason = _is_login_page(self._page)
+        if reason:
+            return final_url, reason
 
         # 그 외 차단 감지 (캡차, 권한 없음 등)
         blocked = check_blocked(final_url, self._page.content())
