@@ -79,6 +79,19 @@ def run_indexer(list_url: str, start_page: int, end_page: int) -> None:
 
             if err:
                 print(f"  [STOP] 차단 감지: {err}")
+                if err != "login_required":
+                    print(f"  [DIAGNOSE] {err} 발생 - HTML 강제 저장")
+                    try:
+                        diagnostic_html = session.page.content()
+                        diagnostic_url = session.page.url
+                        debug_path = DEBUG_DIR / f"diagnostic_{err}_{page_num}.html"
+                        url_path = DEBUG_DIR / f"diagnostic_{err}_{page_num}.url.txt"
+                        debug_path.write_text(diagnostic_html, encoding="utf-8")
+                        url_path.write_text(diagnostic_url, encoding="utf-8")
+                        print(f"  [DIAGNOSE] HTML → {debug_path}")
+                        print(f"  [DIAGNOSE] URL → {diagnostic_url}")
+                    except Exception as e:
+                        print(f"  [DIAGNOSE] HTML 저장 실패: {e}")
                 break
 
             html, err = session.get_frame_html()
