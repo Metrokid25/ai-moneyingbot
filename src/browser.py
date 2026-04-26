@@ -112,6 +112,12 @@ class BrowserSession:
                     continue
                 return self._page.url, f"navigation_failed: {err_msg}"
 
+        # SPA 페이지가 안정될 때까지 대기
+        try:
+            self._page.wait_for_load_state("networkidle", timeout=15000)
+        except PlaywrightError:
+            pass  # networkidle 실패해도 계속 진행 (느린 페이지일 뿐)
+
         final_url = self._page.url
 
         # 로그인 필요 감지 우선 (Next.js SPA 포함)
@@ -126,18 +132,29 @@ class BrowserSession:
 
     def get_frame_html(self) -> Tuple[Optional[str], Optional[str]]:
         """cafe_main iframe HTML 반환. (html, error_reason)"""
-        try:
-            frame = self._page.frame(name="cafe_main")
-            if frame is not None:
-                frame.wait_for_load_state("domcontentloaded", timeout=BROWSER_TIMEOUT_MS)
-                html = frame.content()
-                blocked = check_blocked(frame.url or "", html)
-                if blocked:
-                    return None, blocked
-                return html, None
-            return self._page.content(), None
-        except PlaywrightError as e:
-            return None, f"frame_load_failed: {e}"
+        MAX_RETRIES = 2
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                frame = self._page.frame(name="cafe_main")
+                if frame is not None:
+                    frame.wait_for_load_state("domcontentloaded", timeout=BROWSER_TIMEOUT_MS)
+                    html = frame.content()
+                    blocked = check_blocked(frame.url or "", html)
+                    if blocked:
+                        return None, blocked
+                    return html, None
+                return self._page.content(), None
+            except PlaywrightError as e:
+                err_msg = str(e)
+                if "is navigating" in err_msg and attempt < MAX_RETRIES:
+                    print(f"  [RETRY] 페이지 navigating 중, 2초 후 재시도 ({attempt + 1}/{MAX_RETRIES})")
+                    time.sleep(2)
+                    try:
+                        self._page.wait_for_load_state("networkidle", timeout=10000)
+                    except PlaywrightError:
+                        pass
+                    continue
+                return None, f"frame_load_failed: {err_msg}"
 
     def screenshot(self, path: str) -> None:
         try:

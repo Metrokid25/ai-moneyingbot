@@ -8,6 +8,8 @@ import random
 import time
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
+from playwright.sync_api import Error as PlaywrightError
+
 from browser import BrowserSession, check_blocked, wait_for_login
 from config import DEBUG_DIR
 from db import init_db, upsert_article, article_exists
@@ -63,6 +65,12 @@ def run_indexer(list_url: str, start_page: int, end_page: int) -> None:
                     current_url = session.page.url
                     if page_url in current_url or current_url == page_url:
                         print(f"  [INFO] 사용자가 이미 목표 페이지에 도달함, goto 생략")
+                        try:
+                            session.page.wait_for_load_state("networkidle", timeout=15000)
+                            print(f"  [INFO] networkidle 도달, 페이지 안정화됨")
+                        except PlaywrightError as e:
+                            print(f"  [WARN] networkidle 대기 실패 (15초 초과), 그대로 진행: {e}")
+                        time.sleep(2)
                         final_url = current_url
                         err = None
                     else:
