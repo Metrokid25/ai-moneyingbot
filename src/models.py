@@ -3,6 +3,15 @@ from datetime import datetime, timezone
 from typing import Optional
 
 
+class Status:
+    INDEXED        = "INDEXED"
+    BODY_COLLECTED = "BODY_COLLECTED"
+    BODY_EMPTY     = "BODY_EMPTY"
+    BODY_FAILED    = "BODY_FAILED"
+    BODY_BLOCKED   = "BODY_BLOCKED"
+    # OK / FAILED: deprecated — main.py one-shot 잔재, Phase 2 신규 코드에서 사용 안 함
+
+
 @dataclass
 class Article:
     article_id: str
@@ -18,3 +27,4 @@ class Article:
     saved_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
+    updated_at: Optional[str] = None

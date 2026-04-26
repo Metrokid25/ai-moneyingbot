@@ -1,6 +1,9 @@
 import sqlite3
-from models import Article
+from datetime import datetime, timezone
+from typing import Any, List, Optional
+
 from config import DB_PATH
+from models import Article
 
 
 def get_conn() -> sqlite3.Connection:
@@ -24,7 +27,8 @@ def init_db() -> None:
                 source_page  INTEGER,
                 status       TEXT NOT NULL DEFAULT 'OK',
                 error_reason TEXT,
-                saved_at     TEXT NOT NULL
+                saved_at     TEXT NOT NULL,
+                updated_at   TEXT
             )
         """)
         _migrate(conn)
@@ -36,6 +40,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE articles ADD COLUMN author TEXT")
     if "source_page" not in existing:
         conn.execute("ALTER TABLE articles ADD COLUMN source_page INTEGER")
+    if "updated_at" not in existing:
+        conn.execute("ALTER TABLE articles ADD COLUMN updated_at TEXT")
+        conn.execute("UPDATE articles SET updated_at = saved_at WHERE updated_at IS NULL")
 
 
 def article_exists(article_id: str) -> bool:
@@ -47,12 +54,13 @@ def article_exists(article_id: str) -> bool:
 
 
 def upsert_article(article: Article) -> None:
+    now = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
         conn.execute("""
             INSERT INTO articles
                 (article_id, title, url, author, posted_at, raw_html, clean_text,
-                 source_page, status, error_reason, saved_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 source_page, status, error_reason, saved_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(article_id) DO UPDATE SET
                 title        = excluded.title,
                 url          = excluded.url,
@@ -61,9 +69,13 @@ def upsert_article(article: Article) -> None:
                 raw_html     = excluded.raw_html,
                 clean_text   = excluded.clean_text,
                 source_page  = excluded.source_page,
-                status       = excluded.status,
+                status       = CASE
+                    WHEN articles.status IN ('BODY_COLLECTED', 'BODY_BLOCKED')
+                        THEN articles.status
+                    ELSE excluded.status
+                END,
                 error_reason = excluded.error_reason,
-                saved_at     = excluded.saved_at
+                updated_at   = excluded.updated_at
         """, (
             article.article_id,
             article.title,
@@ -76,7 +88,94 @@ def upsert_article(article: Article) -> None:
             article.status,
             article.error_reason,
             article.saved_at,
+            now,
         ))
+
+
+def get_article_by_id(article_id: str) -> Optional[Article]:
+    """단건 조회. 없으면 None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT article_id, title, url, author, posted_at, raw_html, clean_text, "
+            "source_page, status, error_reason, saved_at, updated_at "
+            "FROM articles WHERE article_id = ?",
+            (article_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return Article(
+            article_id=row[0],
+            title=row[1],
+            url=row[2],
+            author=row[3],
+            posted_at=row[4],
+            raw_html=row[5],
+            clean_text=row[6],
+            source_page=row[7],
+            status=row[8],
+            error_reason=row[9],
+            saved_at=row[10],
+            updated_at=row[11],
+        )
+
+
+def get_articles_by_status(status: str, limit: Optional[int] = None) -> List[Article]:
+    """status 일치 글 목록. limit=None 이면 전체."""
+    sql = (
+        "SELECT article_id, title, url, author, posted_at, raw_html, clean_text, "
+        "source_page, status, error_reason, saved_at, updated_at "
+        "FROM articles WHERE status = ? ORDER BY article_id"
+    )
+    params: list[Any] = [status]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [
+        Article(
+            article_id=row[0],
+            title=row[1],
+            url=row[2],
+            author=row[3],
+            posted_at=row[4],
+            raw_html=row[5],
+            clean_text=row[6],
+            source_page=row[7],
+            status=row[8],
+            error_reason=row[9],
+            saved_at=row[10],
+            updated_at=row[11],
+        )
+        for row in rows
+    ]
+
+
+def update_article_body(
+    article_id: str,
+    raw_html: str,
+    clean_text: str,
+    new_status: str,
+) -> None:
+    """본문/상태만 갱신. BODY_COLLECTED/BODY_BLOCKED 상태 역주행 차단."""
+    current = get_article_by_id(article_id)
+    if current is None:
+        raise ValueError(f"article_id not found: {article_id}")
+    if (
+        current.status in ("BODY_COLLECTED", "BODY_BLOCKED")
+        and new_status != current.status
+    ):
+        raise ValueError(
+            f"status 역주행 차단: {current.status} -> {new_status} "
+            f"(article_id={article_id})"
+        )
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE articles SET raw_html=?, clean_text=?, status=?, updated_at=? "
+            "WHERE article_id=?",
+            (raw_html, clean_text, new_status, now, article_id),
+        )
 
 
 def count_indexed() -> int:
