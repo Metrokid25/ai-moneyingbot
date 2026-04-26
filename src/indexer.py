@@ -60,7 +60,13 @@ def run_indexer(list_url: str, start_page: int, end_page: int) -> None:
             if first_page:
                 if err == "login_required":
                     wait_for_login(session.page)
-                    final_url, err = session.goto(page_url)
+                    current_url = session.page.url
+                    if page_url in current_url or current_url == page_url:
+                        print(f"  [INFO] 사용자가 이미 목표 페이지에 도달함, goto 생략")
+                        final_url = current_url
+                        err = None
+                    else:
+                        final_url, err = session.goto(page_url)
                 first_page = False
 
             if err:

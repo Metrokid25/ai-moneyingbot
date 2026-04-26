@@ -1,3 +1,4 @@
+import time
 from typing import Optional, Tuple
 from playwright.sync_api import (
     sync_playwright, Page, Browser, BrowserContext,
@@ -66,6 +67,8 @@ def wait_for_login(page: Page) -> None:
         return
     input("[LOGIN] 브라우저에서 로그인을 완료한 뒤, 이 콘솔에서 엔터를 눌러주세요.")
     print("[LOGIN] 진행합니다")
+    print("[LOGIN] 세션 안정화를 위해 3초 대기")
+    time.sleep(3)
 
 
 def check_blocked(url: str, content: str) -> Optional[str]:
@@ -92,11 +95,22 @@ class BrowserSession:
         return self._page
 
     def goto(self, url: str) -> Tuple[str, Optional[str]]:
-        """URL로 이동. (final_url, error_reason) 반환."""
-        try:
-            self._page.goto(url, timeout=BROWSER_TIMEOUT_MS, wait_until="domcontentloaded")
-        except PlaywrightError as e:
-            return url, f"navigation_failed: {e}"
+        """URL로 이동. (final_url, error_reason) 반환.
+
+        navigation interrupted 에러는 2초 대기 후 최대 2회 재시도.
+        """
+        MAX_RETRIES = 2
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                self._page.goto(url, timeout=BROWSER_TIMEOUT_MS, wait_until="domcontentloaded")
+                break
+            except PlaywrightError as e:
+                err_msg = str(e)
+                if "interrupted by another navigation" in err_msg and attempt < MAX_RETRIES:
+                    print(f"  [RETRY] navigation interrupted, 2초 후 재시도 ({attempt + 1}/{MAX_RETRIES})")
+                    time.sleep(2)
+                    continue
+                return self._page.url, f"navigation_failed: {err_msg}"
 
         final_url = self._page.url
 
