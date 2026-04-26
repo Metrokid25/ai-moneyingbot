@@ -1,3 +1,5 @@
+import sys
+import time
 from typing import Optional, Tuple
 from playwright.sync_api import (
     sync_playwright, Page, Browser, BrowserContext,
@@ -20,6 +22,37 @@ _BLOCK_CONTENT: list[Tuple[str, str]] = [
     ("age_verification", "본인확인"),
     ("age_verification", "성인인증"),
 ]
+
+
+def _is_login_page(page: Page) -> bool:
+    """현재 페이지가 로그인 페이지인지 감지."""
+    url = page.url
+    if "nid.naver.com" in url or "login" in url:
+        return True
+    try:
+        if page.query_selector('input[id="id"], input[name="id"]'):
+            return True
+    except PlaywrightError:
+        pass
+    return False
+
+
+def wait_for_login(page: Page, timeout_seconds: int = 60) -> None:
+    """로그인 페이지면 사용자가 직접 로그인할 때까지 최대 timeout_seconds 초 대기.
+
+    이미 로그인된 세션이면 즉시 반환.
+    시간 초과 시 sys.exit(1) 로 종료.
+    """
+    if not _is_login_page(page):
+        return
+    print("[LOGIN] 로그인이 필요합니다. 브라우저에서 직접 로그인해주세요. (최대 60초 대기)")
+    for _ in range(timeout_seconds):
+        time.sleep(1)
+        if not _is_login_page(page):
+            print("[LOGIN] 로그인 감지됨, 진행")
+            return
+    print("[STOP] 로그인 시간 초과")
+    sys.exit(1)
 
 
 def check_blocked(url: str, content: str) -> Optional[str]:

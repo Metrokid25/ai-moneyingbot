@@ -8,7 +8,7 @@ import random
 import time
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
-from browser import BrowserSession, check_blocked
+from browser import BrowserSession, check_blocked, wait_for_login
 from config import DEBUG_DIR
 from db import init_db, upsert_article, article_exists
 from models import Article
@@ -48,6 +48,7 @@ def run_indexer(list_url: str, start_page: int, end_page: int) -> None:
 
     session = BrowserSession()
     indexed_total = 0
+    first_page = True
 
     try:
         for page_num in pages:
@@ -55,6 +56,13 @@ def run_indexer(list_url: str, start_page: int, end_page: int) -> None:
             print(f"\n[PAGE {page_num}] {page_url}")
 
             final_url, err = session.goto(page_url)
+
+            if first_page:
+                if err == "login_required":
+                    wait_for_login(session.page)
+                    final_url, err = session.goto(page_url)
+                first_page = False
+
             if err:
                 print(f"  [STOP] 차단 감지: {err}")
                 break
