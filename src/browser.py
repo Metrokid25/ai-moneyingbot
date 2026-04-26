@@ -99,6 +99,12 @@ class BrowserSession:
             return url, f"navigation_failed: {e}"
 
         final_url = self._page.url
+
+        # 로그인 필요 감지 우선 (Next.js SPA 포함)
+        if _is_login_page(self._page):
+            return final_url, "login_required"
+
+        # 그 외 차단 감지 (캡차, 권한 없음 등)
         blocked = check_blocked(final_url, self._page.content())
         if blocked:
             return final_url, blocked
