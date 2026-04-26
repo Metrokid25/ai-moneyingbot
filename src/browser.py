@@ -25,13 +25,35 @@ _BLOCK_CONTENT: list[Tuple[str, str]] = [
 def _is_login_page(page: Page) -> bool:
     """현재 페이지가 로그인 페이지인지 감지."""
     url = page.url
-    if "nid.naver.com" in url or "login" in url:
+    if "nid.naver.com" in url:
+        print("[DEBUG] 로그인 페이지 감지: nid.naver.com URL")
         return True
+    if "login" in url:
+        print("[DEBUG] 로그인 페이지 감지: login URL")
+        return True
+
+    try:
+        html = page.content()
+    except PlaywrightError:
+        html = ""
+
+    if "NotLoggedInError" in html:
+        print("[DEBUG] 로그인 페이지 감지: NotLoggedInError 문자열 존재")
+        return True
+    if "카페 멤버이시면 먼저 로그인을 해야 합니다" in html:
+        print("[DEBUG] 로그인 페이지 감지: 로그인 안내 문자열 존재")
+        return True
+    if 'id="__next_error__"' in html:
+        print("[DEBUG] 로그인 페이지 감지: __next_error__ 태그 존재")
+        return True
+
     try:
         if page.query_selector('input[id="id"], input[name="id"]'):
+            print("[DEBUG] 로그인 페이지 감지: id 입력 필드 존재")
             return True
     except PlaywrightError:
         pass
+
     return False
 
 
