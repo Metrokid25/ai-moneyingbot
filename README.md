@@ -8,21 +8,29 @@
 
 ---
 
-## 설치
+## 환경 요구사항
 
-```bash
+- **Python 3.12 권장** — Python 3.14는 lxml/greenlet wheel 미지원으로 소스 빌드 실패함
+- Windows 10/11 기준
+- Visual C++ Build Tools **불필요** — lxml을 제거하여 C 확장 빌드 없이 설치 가능
+
+---
+
+## 설치 방법 (PowerShell activate 없이)
+
+PowerShell 실행 정책(ExecutionPolicy)으로 `.venv\Scripts\Activate.ps1`이 실패하는 경우,
+`.venv\Scripts\python.exe`를 직접 호출하면 activate 없이도 동작한다.
+
+```powershell
 cd C:\projects\naver_cafe_archive
-
-# 가상환경 생성 (선택)
-python -m venv .venv
-.venv\Scripts\activate
-
-# 의존성 설치
-pip install -r requirements.txt
-
-# Playwright 브라우저 바이너리 설치
-playwright install chromium
+Remove-Item -Recurse -Force .venv
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m playwright install chromium
 ```
+
+---
 
 ## 환경 변수 설정
 
@@ -35,8 +43,8 @@ copy .env.example .env
 
 ## 1단계: 글 1개 저장
 
-```bash
-python src/main.py "https://cafe.naver.com/카페명/글번호"
+```powershell
+.\.venv\Scripts\python.exe src\main.py "https://cafe.naver.com/카페명/글번호"
 ```
 
 1. Chromium 창이 열린다.
@@ -62,11 +70,11 @@ python src/main.py "https://cafe.naver.com/카페명/글번호"
 
 글 본문은 수집하지 않고 목록 정보(article_id, title, url, author, posted_at)만 저장한다.
 
-```bash
-python src/indexer.py "https://cafe.naver.com/멤버글목록URL" --start 2826 --end 1
+```powershell
+.\.venv\Scripts\python.exe src\indexer.py "https://cafe.naver.com/멤버글목록URL" --start 2826 --end 1
 ```
 
-- `--start`: 시작 페이지 번호 (오래된 글부터 수집하려면 큰 숫자)
+- `--start`: 시작 페이지 번호 (최신 글부터 수집하려면 큰 숫자)
 - `--end`: 끝 페이지 번호
 - 페이지 이동마다 3~5초 랜덤 대기
 
@@ -94,16 +102,35 @@ python src/indexer.py "https://cafe.naver.com/멤버글목록URL" --start 2826 -
 
 ---
 
-## DB 확인
+## 3페이지 테스트 실행
+
+환경 설치 후 동작 확인용 3페이지 테스트.
+
+```powershell
+.\.venv\Scripts\python.exe src\indexer.py "굿머닝_작성글_목록_URL" --start 2826 --end 2824
+```
+
+예상 결과: 3페이지 × 약 15개 = 약 45개 저장
+
+> `굿머닝_작성글_목록_URL` 자리에 실제 네이버 카페 작성글 목록 URL을 넣어라.
+
+---
+
+## DB 확인 명령
+
+```powershell
+# 저장된 글 개수 확인
+.\.venv\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect('data/archive.db'); print(c.execute('select count(*) from articles').fetchone()[0])"
+
+# 샘플 20개 확인
+.\.venv\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect('data/archive.db'); rows=c.execute('select article_id,title,author,posted_at,source_page,status from articles limit 20').fetchall(); [print(r) for r in rows]"
+```
+
+sqlite3 CLI를 쓰는 경우:
 
 ```bash
-# 전체 현황
 sqlite3 data/archive.db "SELECT status, COUNT(*) FROM articles GROUP BY status;"
-
-# 최근 저장된 글
 sqlite3 data/archive.db "SELECT article_id, title, posted_at, status FROM articles ORDER BY saved_at DESC LIMIT 20;"
-
-# 인덱싱된 글 수
 sqlite3 data/archive.db "SELECT COUNT(*) FROM articles WHERE status='INDEXED';"
 ```
 
@@ -165,3 +192,15 @@ C:\projects\naver_cafe_archive\
 | `age_verification` | 성인인증 / 본인확인 화면 감지 |
 | `navigation_failed: ...` | 네트워크 오류 또는 타임아웃 |
 | `frame_load_failed: ...` | iframe 로드 실패 |
+
+---
+
+## 프로젝트 분담
+
+| 역할 | 담당 |
+|---|---|
+| 기획·설계 | Claude.ai Opus 4.7 |
+| 개발 | Claude Code (Sonnet 4.6) |
+| 코드 리뷰 | Codex `/codex:adversarial-review` |
+| 의사결정·실행 | 운영자 |
+| 원격 저장소 | https://github.com/Metrokid25/ai-moneyingbot (Private) |
