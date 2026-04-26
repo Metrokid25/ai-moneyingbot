@@ -1,3 +1,4 @@
-playwright
-beautifulsoup4
-python-dotenv
+# Python 3.12
+playwright==1.58.0
+beautifulsoup4==4.14.3
+python-dotenv==1.2.2
