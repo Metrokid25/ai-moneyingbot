@@ -1,0 +1,12 @@
+.venv/
+data/
+__pycache__/
+*.pyc
+*.pyo
+.env
+debug/
+*.db
+*.db-journal
+.vscode/
+.idea/
+*.log
