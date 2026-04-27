@@ -18,8 +18,8 @@ _BLOCK_CONTENT: list[Tuple[str, str]] = [
     ("no_permission",    "이 카페는 가입 후"),
     ("no_permission",    "비공개 카페로 회원만"),
     ("captcha",          "자동입력 방지문자"),
-    ("age_verification", "본인확인"),
-    ("age_verification", "성인인증"),
+    # ("age_verification", "본인확인"),  # 2026-04-27: genderUnknownLayer 모달이 모든 페이지 DOM에 박혀있어 false positive
+    # ("age_verification", "성인인증"),  # 2026-04-27: 119investment 카페는 성인인증 대상 아님 (멤버 수년 경험상 0건)
 ]
 
 
