@@ -42,12 +42,12 @@ sample = conn.execute(
     "ORDER BY article_id LIMIT 5"
 ).fetchall()
 for s in sample:
-    print(f"  id={s[0]:6s}  status={s[1]:10s}  saved={s[2]}  updated={s[3]}")
+    print(f"  id={s[0]:6}  status={s[1]:10s}  saved={s[2]}  updated={s[3]}")
 
 # 7. article_id=53 단건 조회 (신규 함수 테스트)
-print("\n=== TEST: get_article_by_id('53') ===")
+print("\n=== TEST: get_article_by_id(53) ===")
 from db import get_article_by_id
-a = get_article_by_id("53")
+a = get_article_by_id(53)
 if a is None:
     print("  None")
 else:
@@ -59,8 +59,8 @@ else:
     print(f"  saved_at == updated_at: {a.saved_at == a.updated_at}")
 
 # 8. 존재하지 않는 ID 테스트
-print("\n=== TEST: get_article_by_id('nonexistent_999999') ===")
-b = get_article_by_id("nonexistent_999999")
+print("\n=== TEST: get_article_by_id(999999) — 존재하지 않는 ID ===")
+b = get_article_by_id(999999)
 print(f"  result: {b}")
 
 # 9. get_articles_by_status('INDEXED', limit=3)

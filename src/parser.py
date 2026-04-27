@@ -3,14 +3,16 @@ from urllib.parse import urlparse, parse_qs
 from bs4 import BeautifulSoup
 
 
-def extract_article_id(url: str) -> Optional[str]:
+def extract_article_id(url: str) -> Optional[int]:
     parsed = urlparse(url)
     for part in reversed(parsed.path.strip("/").split("/")):
         if part.isdigit():
-            return part
+            return int(part)
     qs = parse_qs(parsed.query)
     if "articleid" in qs:
-        return qs["articleid"][0]
+        val = qs["articleid"][0]
+        if val.isdigit():
+            return int(val)
     return None
 
 
@@ -57,7 +59,7 @@ def parse_article_list(html: str, base_url: str) -> list[dict]:
     """목록 페이지 HTML에서 글 행 목록을 파싱한다.
 
     Returns:
-        [{"article_id": str, "title": str, "url": str, "posted_at": str}, ...]
+        [{"article_id": int, "title": str, "url": str, "posted_at": str}, ...]
     """
     soup = BeautifulSoup(html, "html.parser")
     results = []

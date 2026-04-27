@@ -14,7 +14,7 @@ class Status:
 
 @dataclass
 class Article:
-    article_id: str
+    article_id: int
     url: str
     title: Optional[str] = None
     author: Optional[str] = None

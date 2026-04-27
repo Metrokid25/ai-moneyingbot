@@ -17,7 +17,7 @@ def init_db() -> None:
     with get_conn() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS articles (
-                article_id   TEXT PRIMARY KEY,
+                article_id   INTEGER PRIMARY KEY,
                 title        TEXT,
                 url          TEXT NOT NULL,
                 author       TEXT,
@@ -45,7 +45,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE articles SET updated_at = saved_at WHERE updated_at IS NULL")
 
 
-def article_exists(article_id: str) -> bool:
+def article_exists(article_id: int) -> bool:
     with get_conn() as conn:
         row = conn.execute(
             "SELECT 1 FROM articles WHERE article_id = ?", (article_id,)
@@ -92,7 +92,7 @@ def upsert_article(article: Article) -> None:
         ))
 
 
-def get_article_by_id(article_id: str) -> Optional[Article]:
+def get_article_by_id(article_id: int) -> Optional[Article]:
     """단건 조회. 없으면 None."""
     with get_conn() as conn:
         row = conn.execute(
@@ -152,10 +152,11 @@ def get_articles_by_status(status: str, limit: Optional[int] = None) -> List[Art
 
 
 def update_article_body(
-    article_id: str,
+    article_id: int,
     raw_html: str,
     clean_text: str,
     new_status: str,
+    error_reason: Optional[str] = None,
 ) -> None:
     """본문/상태만 갱신. BODY_COLLECTED/BODY_BLOCKED 상태 역주행 차단."""
     current = get_article_by_id(article_id)
@@ -172,9 +173,9 @@ def update_article_body(
     now = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
         conn.execute(
-            "UPDATE articles SET raw_html=?, clean_text=?, status=?, updated_at=? "
-            "WHERE article_id=?",
-            (raw_html, clean_text, new_status, now, article_id),
+            "UPDATE articles SET raw_html=?, clean_text=?, status=?, "
+            "error_reason=?, updated_at=? WHERE article_id=?",
+            (raw_html, clean_text, new_status, error_reason, now, article_id),
         )
 
 
