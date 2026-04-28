@@ -4,9 +4,7 @@
 """
 from typing import Optional
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-
-from browser import BrowserSession
+from browser import BrowserSession, check_blocked
 from config import DEBUG_DIR
 from db import get_article_by_id, update_article_body
 from models import Status
@@ -15,13 +13,14 @@ from parser import parse_article
 
 MIN_BODY_LENGTH = 50
 
-BODY_SELECTORS = (
-    "div#tbody, "
-    "div.se-main-container, "
-    ".article_viewer, "
-    "#postContent, "
-    ".ArticleContentsArea"
-)
+CAFE_MAIN_FRAME_NAME = "cafe_main"
+SELECTOR_TIMEOUT_MS = 10000
+
+BODY_SELECTORS = [
+    "div.article_viewer",       # 1순위: 순수 본문
+    "div.ContentRenderer",      # 2순위: 동등 후보
+    "div.article_container",    # 3순위: 본문+메타 (fallback)
+]
 
 
 def collect_body(
@@ -75,23 +74,50 @@ def collect_body(
             update_article_body(article_id, "", "", Status.BODY_FAILED, error_reason=err)
             return Status.BODY_FAILED
 
-        try:
-            session.page.wait_for_selector(BODY_SELECTORS, timeout=10000)
-        except PlaywrightTimeoutError as e:
-            print(f"[collector] body selector wait failed: {e}")
+        session.page.wait_for_timeout(2000)
+
+        frame = session.page.frame(name=CAFE_MAIN_FRAME_NAME)
+        if frame is None:
+            for fr in session.page.frames:
+                if fr.name == CAFE_MAIN_FRAME_NAME:
+                    frame = fr
+                    break
+        if frame is None:
+            print(f"[collector] FAILED: cafe_main frame not found (article_id={article_id})")
             try:
-                html_at_timeout = session.page.content()
+                page_html = session.page.content()
             except Exception:
-                html_at_timeout = ""
-            update_article_body(article_id, html_at_timeout, "", Status.BODY_FAILED,
+                page_html = ""
+            update_article_body(article_id, page_html, "", Status.BODY_FAILED,
+                                error_reason="cafe_main_frame_not_found")
+            return Status.BODY_FAILED
+
+        raw_html = frame.content()
+        block_reason = check_blocked(frame.url or "", raw_html)
+        if block_reason:
+            print(f"[collector] BLOCKED in frame: {block_reason} (article_id={article_id})")
+            update_article_body(article_id, raw_html, "", Status.BODY_BLOCKED,
+                                error_reason=block_reason)
+            return Status.BODY_BLOCKED
+
+        matched_selector = None
+        for selector in BODY_SELECTORS:
+            try:
+                frame.wait_for_selector(selector, timeout=SELECTOR_TIMEOUT_MS)
+                matched_selector = selector
+                break
+            except Exception:
+                continue
+
+        if matched_selector is None:
+            print(f"[collector] FAILED: no selector matched in cafe_main frame (article_id={article_id})")
+            update_article_body(article_id, raw_html, "", Status.BODY_FAILED,
                                 error_reason="selector_timeout")
             return Status.BODY_FAILED
 
-        html, frame_err = session.get_frame_html()
-        if frame_err or html is None:
-            print(f"[collector] get_frame_html failed: {frame_err}")
-            update_article_body(article_id, "", "", Status.BODY_FAILED, error_reason=frame_err)
-            return Status.BODY_FAILED
+        print(f"[collector] matched: {matched_selector} (article_id={article_id})")
+
+        html = raw_html
 
         try:
             _title, _posted_at, clean_text, _raw_html_frag = parse_article(html)

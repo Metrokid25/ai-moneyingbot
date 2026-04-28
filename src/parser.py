@@ -38,9 +38,11 @@ def parse_article(html: str) -> Tuple[Optional[str], Optional[str], str, str]:
     posted_at = date_el.get_text(strip=True) if date_el else None
 
     content_el = (
-        soup.select_one("div#tbody")
+        soup.select_one("div.article_viewer")
+        or soup.select_one("div.ContentRenderer")
+        or soup.select_one("div.article_container")
+        or soup.select_one("div#tbody")
         or soup.select_one("div.se-main-container")
-        or soup.select_one(".article_viewer")
         or soup.select_one("#postContent")
         or soup.select_one(".ArticleContentsArea")
     )
