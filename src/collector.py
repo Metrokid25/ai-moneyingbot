@@ -2,6 +2,7 @@
 
 설계 문서: docs/phase2_design.md 섹션 4
 """
+import time
 from typing import Optional
 
 from browser import BrowserSession, check_blocked
@@ -14,6 +15,8 @@ from parser import parse_article
 MIN_BODY_LENGTH = 50
 
 CAFE_MAIN_FRAME_NAME = "cafe_main"
+FRAME_MOUNT_TIMEOUT_S = 30
+FRAME_POLL_INTERVAL_MS = 500
 SELECTOR_TIMEOUT_MS = 10000
 
 BODY_SELECTORS = [
@@ -74,16 +77,21 @@ def collect_body(
             update_article_body(article_id, "", "", Status.BODY_FAILED, error_reason=err)
             return Status.BODY_FAILED
 
-        session.page.wait_for_timeout(2000)
+        deadline = time.monotonic() + FRAME_MOUNT_TIMEOUT_S
+        frame = None
+        while time.monotonic() < deadline:
+            frame = session.page.frame(name=CAFE_MAIN_FRAME_NAME)
+            if frame is None:
+                for fr in session.page.frames:
+                    if fr.name == CAFE_MAIN_FRAME_NAME:
+                        frame = fr
+                        break
+            if frame is not None:
+                break
+            session.page.wait_for_timeout(FRAME_POLL_INTERVAL_MS)
 
-        frame = session.page.frame(name=CAFE_MAIN_FRAME_NAME)
         if frame is None:
-            for fr in session.page.frames:
-                if fr.name == CAFE_MAIN_FRAME_NAME:
-                    frame = fr
-                    break
-        if frame is None:
-            print(f"[collector] FAILED: cafe_main frame not found (article_id={article_id})")
+            print(f"[collector] FAILED: cafe_main frame not found after {FRAME_MOUNT_TIMEOUT_S}s (article_id={article_id})")
             try:
                 page_html = session.page.content()
             except Exception:
