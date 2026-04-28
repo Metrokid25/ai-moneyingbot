@@ -92,14 +92,6 @@ def collect_body(
                                 error_reason="cafe_main_frame_not_found")
             return Status.BODY_FAILED
 
-        raw_html = frame.content()
-        block_reason = check_blocked(frame.url or "", raw_html)
-        if block_reason:
-            print(f"[collector] BLOCKED in frame: {block_reason} (article_id={article_id})")
-            update_article_body(article_id, raw_html, "", Status.BODY_BLOCKED,
-                                error_reason=block_reason)
-            return Status.BODY_BLOCKED
-
         matched_selector = None
         for selector in BODY_SELECTORS:
             try:
@@ -111,11 +103,23 @@ def collect_body(
 
         if matched_selector is None:
             print(f"[collector] FAILED: no selector matched in cafe_main frame (article_id={article_id})")
+            try:
+                raw_html = frame.content()
+            except Exception:
+                raw_html = ""
             update_article_body(article_id, raw_html, "", Status.BODY_FAILED,
                                 error_reason="selector_timeout")
             return Status.BODY_FAILED
 
         print(f"[collector] matched: {matched_selector} (article_id={article_id})")
+
+        raw_html = frame.content()
+        block_reason = check_blocked(frame.url or "", raw_html)
+        if block_reason:
+            print(f"[collector] BLOCKED in frame: {block_reason} (article_id={article_id})")
+            update_article_body(article_id, raw_html, "", Status.BODY_BLOCKED,
+                                error_reason=block_reason)
+            return Status.BODY_BLOCKED
 
         html = raw_html
 
