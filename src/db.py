@@ -17,18 +17,21 @@ def init_db() -> None:
     with get_conn() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS articles (
-                article_id   INTEGER PRIMARY KEY,
-                title        TEXT,
-                url          TEXT NOT NULL,
-                author       TEXT,
-                posted_at    TEXT,
-                raw_html     TEXT,
-                clean_text   TEXT,
-                source_page  INTEGER,
-                status       TEXT NOT NULL DEFAULT 'OK',
-                error_reason TEXT,
-                saved_at     TEXT NOT NULL,
-                updated_at   TEXT
+                article_id        INTEGER PRIMARY KEY,
+                title             TEXT,
+                url               TEXT NOT NULL,
+                author            TEXT,
+                posted_at         TEXT,
+                raw_html          TEXT,
+                clean_text        TEXT,
+                source_page       INTEGER,
+                status            TEXT NOT NULL DEFAULT 'OK',
+                error_reason      TEXT,
+                saved_at          TEXT NOT NULL,
+                updated_at        TEXT,
+                attempt_count     INTEGER NOT NULL DEFAULT 0,
+                last_error_reason TEXT,
+                last_attempt_at   TEXT
             )
         """)
         _migrate(conn)
@@ -43,6 +46,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "updated_at" not in existing:
         conn.execute("ALTER TABLE articles ADD COLUMN updated_at TEXT")
         conn.execute("UPDATE articles SET updated_at = saved_at WHERE updated_at IS NULL")
+    if "attempt_count" not in existing:
+        conn.execute(
+            "ALTER TABLE articles ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0"
+        )
+    if "last_error_reason" not in existing:
+        conn.execute("ALTER TABLE articles ADD COLUMN last_error_reason TEXT")
+    if "last_attempt_at" not in existing:
+        conn.execute("ALTER TABLE articles ADD COLUMN last_attempt_at TEXT")
 
 
 def article_exists(article_id: int) -> bool:
