@@ -1,9 +1,13 @@
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 
 from config import DB_PATH
 from models import Article
+
+MAX_RETRY_ATTEMPTS = 5
+
+_KST = timezone(timedelta(hours=9))
 
 
 def get_conn() -> sqlite3.Connection:
@@ -188,6 +192,55 @@ def update_article_body(
             "error_reason=?, updated_at=? WHERE article_id=?",
             (raw_html, clean_text, new_status, error_reason, now, article_id),
         )
+
+
+def now_kst_iso() -> str:
+    return datetime.now(_KST).isoformat()
+
+
+def record_attempt_start(conn: sqlite3.Connection, article_id: int) -> None:
+    conn.execute(
+        "UPDATE articles SET attempt_count = attempt_count + 1, last_attempt_at = ? WHERE article_id = ?",
+        (now_kst_iso(), article_id),
+    )
+
+
+def record_transient_failure(conn: sqlite3.Connection, article_id: int, reason: str) -> None:
+    conn.execute(
+        "UPDATE articles SET status = 'INDEXED', last_error_reason = ? WHERE article_id = ?",
+        (reason, article_id),
+    )
+
+
+def record_permanent_failure(conn: sqlite3.Connection, article_id: int, reason: str) -> None:
+    conn.execute(
+        "UPDATE articles SET status = 'BODY_FAILED', last_error_reason = ? WHERE article_id = ?",
+        (reason, article_id),
+    )
+
+
+def record_body_collected(
+    conn: sqlite3.Connection, article_id: int, body_html: str, body_text: str
+) -> None:
+    conn.execute(
+        "UPDATE articles SET raw_html = ?, clean_text = ?, status = 'BODY_COLLECTED', "
+        "last_error_reason = NULL, updated_at = ? WHERE article_id = ?",
+        (body_html, body_text, now_kst_iso(), article_id),
+    )
+
+
+def reset_to_indexed(conn: sqlite3.Connection, article_id: int, reason: str) -> None:
+    conn.execute(
+        "UPDATE articles SET status = 'INDEXED', attempt_count = 0, last_error_reason = ? WHERE article_id = ?",
+        (reason, article_id),
+    )
+
+
+def get_attempt_count(conn: sqlite3.Connection, article_id: int) -> int:
+    row = conn.execute(
+        "SELECT attempt_count FROM articles WHERE article_id = ?", (article_id,)
+    ).fetchone()
+    return row[0] if row else 0
 
 
 def count_indexed() -> int:

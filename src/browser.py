@@ -165,8 +165,17 @@ class BrowserSession:
             pass
 
     def close(self) -> None:
-        self._browser.close()
-        self._pw.stop()
+        # page → context → browser → pw 순으로 단계별 종료 (pending task hang 방지)
+        for fn in (
+            self._page.close,
+            self._context.close,
+            self._browser.close,
+            self._pw.stop,
+        ):
+            try:
+                fn()
+            except Exception:
+                pass
 
 
 def fetch_page(url: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
