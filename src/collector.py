@@ -30,8 +30,6 @@ from db import (
 from models import Status
 from parser import parse_article
 
-MIN_BODY_LENGTH = 50
-
 CAFE_MAIN_FRAME_NAME = "cafe_main"
 FRAME_MOUNT_TIMEOUT_S = 30
 FRAME_POLL_INTERVAL_MS = 500
@@ -63,8 +61,8 @@ def _check_and_demote(conn, article_id: int, last_reason: str) -> None:
         )
 
 
-def _handle_transient(conn, article_id: int, reason: str) -> None:
-    record_transient_failure(conn, article_id, reason)
+def _handle_transient(conn, article_id: int, reason: str, raw_html: Optional[str] = None) -> None:
+    record_transient_failure(conn, article_id, reason, raw_html=raw_html)
     conn.commit()
     _check_and_demote(conn, article_id, reason)
     conn.commit()
@@ -213,7 +211,7 @@ def collect_body(
                 inner_html = ""
 
             if not inner_html.strip():
-                reason = f"empty body: {matched_selector}"
+                reason = f"empty inner_html: {matched_selector}"
                 print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
                 _handle_transient(conn, article_id, reason)
                 return Status.INDEXED
@@ -245,7 +243,7 @@ def collect_body(
 
             # ── parse ─────────────────────────────────────────────────────
             try:
-                _title, _posted_at, clean_text, _raw_html_frag = parse_article(raw_html)
+                _title, _posted_at, clean_text, _raw_html_frag, has_media = parse_article(raw_html)
             except Exception as e:
                 reason = f"parse error: {e}"
                 print(f"[collector] PERMANENT: {reason} (article_id={article_id})")
@@ -253,10 +251,10 @@ def collect_body(
                 conn.commit()
                 return Status.BODY_FAILED
 
-            if len(clean_text.strip()) < MIN_BODY_LENGTH:
-                reason = f"empty body: {matched_selector}"
-                print(f"[collector] TRANSIENT: short body (article_id={article_id})")
-                _handle_transient(conn, article_id, reason)
+            if not clean_text.strip() and not has_media:
+                reason = "truly empty: no text, no media"
+                print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
+                _handle_transient(conn, article_id, reason, raw_html=raw_html)
                 return Status.INDEXED
 
             record_body_collected(conn, article_id, raw_html, clean_text)

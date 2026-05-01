@@ -16,8 +16,8 @@ def extract_article_id(url: str) -> Optional[int]:
     return None
 
 
-def parse_article(html: str) -> Tuple[Optional[str], Optional[str], str, str]:
-    """(title, posted_at, clean_text, raw_html_fragment)"""
+def parse_article(html: str) -> Tuple[Optional[str], Optional[str], str, str, bool]:
+    """(title, posted_at, clean_text, raw_html_fragment, has_media)"""
     soup = BeautifulSoup(html, "html.parser")
 
     title_el = (
@@ -54,7 +54,10 @@ def parse_article(html: str) -> Tuple[Optional[str], Optional[str], str, str]:
         clean_text = soup.get_text(separator="\n", strip=True)
         raw_html = html
 
-    return title, posted_at, clean_text, raw_html
+    search_root = content_el if content_el else soup
+    has_media = bool(search_root.find(["img", "video", "iframe", "embed", "audio", "object"]))
+
+    return title, posted_at, clean_text, raw_html, has_media
 
 
 def parse_article_list(html: str, base_url: str) -> list[dict]:

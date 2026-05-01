@@ -205,10 +205,12 @@ def record_attempt_start(conn: sqlite3.Connection, article_id: int) -> None:
     )
 
 
-def record_transient_failure(conn: sqlite3.Connection, article_id: int, reason: str) -> None:
+def record_transient_failure(
+    conn: sqlite3.Connection, article_id: int, reason: str, raw_html: Optional[str] = None
+) -> None:
     conn.execute(
-        "UPDATE articles SET status = 'INDEXED', last_error_reason = ? WHERE article_id = ?",
-        (reason, article_id),
+        "UPDATE articles SET status = 'INDEXED', last_error_reason = ?, raw_html = COALESCE(?, raw_html) WHERE article_id = ?",
+        (reason, raw_html, article_id),
     )
 
 

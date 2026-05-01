@@ -167,7 +167,7 @@ LONG_CLEAN_TEXT = "충분히 긴 본문 " * 20  # > 50자
 def test_collect_body_success():
     _insert_indexed(10)
     session, frame = _make_session()
-    with patch("collector.parse_article", return_value=("title", "2026-01-01", LONG_CLEAN_TEXT, "<html/>")):
+    with patch("collector.parse_article", return_value=("title", "2026-01-01", LONG_CLEAN_TEXT, "<html/>", False)):
         from collector import collect_body
         result = collect_body(10, session=session)
     assert result == Status.BODY_COLLECTED
@@ -244,7 +244,7 @@ def test_collect_body_force_resets_attempt_count_from_body_failed():
     conn.close()
 
     session, _ = _make_session()
-    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>")):
+    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>", False)):
         from collector import collect_body
         result = collect_body(50, session=session, force=True)
 
@@ -260,7 +260,7 @@ def test_collect_body_force_resets_attempt_count_from_indexed():
     _insert_indexed(51, attempt_count=7)  # count가 쌓인 INDEXED (Bug #3 시나리오)
 
     session, _ = _make_session()
-    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>")):
+    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>", False)):
         from collector import collect_body
         result = collect_body(51, session=session, force=True)
 
@@ -278,7 +278,7 @@ def test_collect_body_success_clears_last_error_reason():
     conn.close()
 
     session, _ = _make_session()
-    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>")):
+    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>", False)):
         from collector import collect_body
         collect_body(60, session=session)
 
@@ -343,7 +343,7 @@ def test_simulate_fail_empty_with_dev_mode(monkeypatch):
     result = collect_body(90, session=session, simulate_fail="empty")
     assert result == Status.INDEXED
     r = _query(90)
-    assert "empty body" in r["last_error_reason"]
+    assert "empty inner_html" in r["last_error_reason"]
 
 
 def test_simulate_fail_navigation_with_dev_mode(monkeypatch):
@@ -369,3 +369,75 @@ def test_simulate_fail_session_with_dev_mode(monkeypatch):
     assert result == Status.INDEXED
     r = _query(110)
     assert "session expired" in r["last_error_reason"]
+
+
+# ── 신규 테스트 (B-1~B-5) ─────────────────────────────────────────────────────
+
+def test_collect_body_image_only_body_succeeds():
+    """이미지만 있는 글(clean_text 없음, has_media=True) → BODY_COLLECTED."""
+    _insert_indexed(200)
+    session, frame = _make_session()
+    frame.inner_html.return_value = "<img src='x.jpg'>"
+    frame.content.return_value = "<html><body><img src='x.jpg'></body></html>"
+    with patch("collector.parse_article", return_value=("", None, "", "<img src='x.jpg'>", True)):
+        from collector import collect_body
+        result = collect_body(200, session=session)
+    assert result == Status.BODY_COLLECTED
+    conn = get_conn()
+    row = conn.execute("SELECT raw_html FROM articles WHERE article_id=200").fetchone()
+    conn.close()
+    assert row[0] is not None
+
+
+def test_collect_body_short_text_succeeds():
+    """50자 미만 짧은 텍스트(2자) → BODY_COLLECTED (기존 MIN_BODY_LENGTH=50 제거 검증)."""
+    _insert_indexed(201)
+    session, frame = _make_session()
+    with patch("collector.parse_article", return_value=(None, None, "상승", "<p>상승</p>", False)):
+        from collector import collect_body
+        result = collect_body(201, session=session)
+    assert result == Status.BODY_COLLECTED
+    conn = get_conn()
+    row = conn.execute("SELECT clean_text FROM articles WHERE article_id=201").fetchone()
+    conn.close()
+    assert row[0] == "상승"
+
+
+def test_collect_body_truly_empty_transient():
+    """텍스트 없음 + 미디어 없음 → INDEXED transient, raw_html 보존."""
+    _insert_indexed(202)
+    session, frame = _make_session()
+    with patch("collector.parse_article", return_value=(None, None, "", "", False)):
+        from collector import collect_body
+        result = collect_body(202, session=session)
+    assert result == Status.INDEXED
+    r = _query(202)
+    assert r["last_error_reason"] == "truly empty: no text, no media"
+    conn = get_conn()
+    row = conn.execute("SELECT raw_html FROM articles WHERE article_id=202").fetchone()
+    conn.close()
+    assert row[0] is not None
+
+
+def test_record_transient_failure_preserves_raw_html_when_none():
+    """raw_html=None 호출 시 기존 raw_html 유지 (COALESCE 동작)."""
+    _insert_indexed(210)
+    conn = get_conn()
+    conn.execute("UPDATE articles SET raw_html='<p>existing</p>' WHERE article_id=210")
+    conn.commit()
+    record_transient_failure(conn, 210, "some reason", raw_html=None)
+    conn.commit()
+    row = conn.execute("SELECT raw_html FROM articles WHERE article_id=210").fetchone()
+    conn.close()
+    assert row[0] == "<p>existing</p>"
+
+
+def test_record_transient_failure_stores_raw_html_when_provided():
+    """raw_html 값 제공 시 신규 값 저장."""
+    _insert_indexed(211)
+    conn = get_conn()
+    record_transient_failure(conn, 211, "some reason", raw_html="<p>new</p>")
+    conn.commit()
+    row = conn.execute("SELECT raw_html FROM articles WHERE article_id=211").fetchone()
+    conn.close()
+    assert row[0] == "<p>new</p>"

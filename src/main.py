@@ -33,7 +33,7 @@ def run(url: str) -> None:
         print(f"[FAILED] {error_reason}")
         return
 
-    title, posted_at, clean_text, raw_html = parse_article(html)
+    title, posted_at, clean_text, raw_html, _has_media = parse_article(html)
 
     article = Article(
         article_id=article_id,
