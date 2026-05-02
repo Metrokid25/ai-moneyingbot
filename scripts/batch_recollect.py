@@ -18,7 +18,8 @@ CAFE_MEMBERS_URL = (
     "THEA7uBzD6uKXKno57_Bl7jItzRnvmuDMltnPsGI9BY"
 )
 
-SLEEP_BETWEEN_S = 2.0
+SLEEP_MIN_S = 3.0
+SLEEP_MAX_S = 5.0
 LOGS_DIR = Path("logs")
 TOTAL_ARTICLES_SCALE = 42_386
 
@@ -276,7 +277,8 @@ def main() -> int:
         plan_str = ", ".join(f"{ft}:{cnt}" for ft, cnt in _SIM_PLAN)
         print(f"[batch] inject-sim: {len(sim_map)}건 ({plan_str})")
 
-    print(f"[batch] 예상 소요 시간: 약 {total * (8 + SLEEP_BETWEEN_S) / 60:.1f}분")
+    avg_sleep = (SLEEP_MIN_S + SLEEP_MAX_S) / 2
+    print(f"[batch] 예상 소요 시간: 약 {total * (8 + avg_sleep) / 60:.1f}분")
     print()
     print("[batch] 브라우저 세션 시작...")
     session = BrowserSession()
@@ -361,7 +363,7 @@ def main() -> int:
                 )
 
             if i < total:
-                time.sleep(SLEEP_BETWEEN_S)
+                time.sleep(random.uniform(SLEEP_MIN_S, SLEEP_MAX_S))
 
     except KeyboardInterrupt:
         print(f"\n[batch] 사용자 중단. 처리 완료: {processed}/{total}")
