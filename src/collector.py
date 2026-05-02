@@ -243,13 +243,20 @@ def collect_body(
 
             # ── parse ─────────────────────────────────────────────────────
             try:
-                _title, _posted_at, clean_text, _raw_html_frag, has_media = parse_article(raw_html)
+                _title, _posted_at, clean_text, _raw_html_frag, has_media, renderer_loaded = parse_article(raw_html)
             except Exception as e:
                 reason = f"parse error: {e}"
                 print(f"[collector] PERMANENT: {reason} (article_id={article_id})")
                 record_permanent_failure(conn, article_id, reason)
                 conn.commit()
                 return Status.BODY_FAILED
+
+            # Path 0: article_viewer는 있으나 ContentRenderer 미로드 → retry
+            if not renderer_loaded:
+                reason = "content_renderer_not_loaded"
+                print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
+                _handle_transient(conn, article_id, reason, raw_html=raw_html)
+                return Status.INDEXED
 
             if not clean_text.strip() and not has_media:
                 reason = "truly empty: no text, no media"

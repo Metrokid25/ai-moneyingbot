@@ -167,7 +167,7 @@ LONG_CLEAN_TEXT = "충분히 긴 본문 " * 20  # > 50자
 def test_collect_body_success():
     _insert_indexed(10)
     session, frame = _make_session()
-    with patch("collector.parse_article", return_value=("title", "2026-01-01", LONG_CLEAN_TEXT, "<html/>", False)):
+    with patch("collector.parse_article", return_value=("title", "2026-01-01", LONG_CLEAN_TEXT, "<html/>", False, True)):
         from collector import collect_body
         result = collect_body(10, session=session)
     assert result == Status.BODY_COLLECTED
@@ -244,7 +244,7 @@ def test_collect_body_force_resets_attempt_count_from_body_failed():
     conn.close()
 
     session, _ = _make_session()
-    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>", False)):
+    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>", False, True)):
         from collector import collect_body
         result = collect_body(50, session=session, force=True)
 
@@ -260,7 +260,7 @@ def test_collect_body_force_resets_attempt_count_from_indexed():
     _insert_indexed(51, attempt_count=7)  # count가 쌓인 INDEXED (Bug #3 시나리오)
 
     session, _ = _make_session()
-    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>", False)):
+    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>", False, True)):
         from collector import collect_body
         result = collect_body(51, session=session, force=True)
 
@@ -278,7 +278,7 @@ def test_collect_body_success_clears_last_error_reason():
     conn.close()
 
     session, _ = _make_session()
-    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>", False)):
+    with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>", False, True)):
         from collector import collect_body
         collect_body(60, session=session)
 
@@ -379,7 +379,7 @@ def test_collect_body_image_only_body_succeeds():
     session, frame = _make_session()
     frame.inner_html.return_value = "<img src='x.jpg'>"
     frame.content.return_value = "<html><body><img src='x.jpg'></body></html>"
-    with patch("collector.parse_article", return_value=("", None, "", "<img src='x.jpg'>", True)):
+    with patch("collector.parse_article", return_value=("", None, "", "<img src='x.jpg'>", True, True)):
         from collector import collect_body
         result = collect_body(200, session=session)
     assert result == Status.BODY_COLLECTED
@@ -393,7 +393,7 @@ def test_collect_body_short_text_succeeds():
     """50자 미만 짧은 텍스트(2자) → BODY_COLLECTED (기존 MIN_BODY_LENGTH=50 제거 검증)."""
     _insert_indexed(201)
     session, frame = _make_session()
-    with patch("collector.parse_article", return_value=(None, None, "상승", "<p>상승</p>", False)):
+    with patch("collector.parse_article", return_value=(None, None, "상승", "<p>상승</p>", False, True)):
         from collector import collect_body
         result = collect_body(201, session=session)
     assert result == Status.BODY_COLLECTED
@@ -407,7 +407,7 @@ def test_collect_body_truly_empty_transient():
     """텍스트 없음 + 미디어 없음 → INDEXED transient, raw_html 보존."""
     _insert_indexed(202)
     session, frame = _make_session()
-    with patch("collector.parse_article", return_value=(None, None, "", "", False)):
+    with patch("collector.parse_article", return_value=(None, None, "", "", False, True)):
         from collector import collect_body
         result = collect_body(202, session=session)
     assert result == Status.INDEXED
@@ -441,3 +441,43 @@ def test_record_transient_failure_stores_raw_html_when_provided():
     row = conn.execute("SELECT raw_html FROM articles WHERE article_id=211").fetchone()
     conn.close()
     assert row[0] == "<p>new</p>"
+
+
+# ── Path 0: ContentRenderer 미로드 테스트 ─────────────────────────────────────
+
+def test_collect_body_content_renderer_not_loaded_transient():
+    """T1: article_viewer 있으나 ContentRenderer 미로드 → INDEXED transient."""
+    _insert_indexed(300)
+    session, frame = _make_session()
+    with patch("collector.parse_article", return_value=("", None, "", "<div class='article_viewer'><img src='loading.gif'></div>", False, False)):
+        from collector import collect_body
+        result = collect_body(300, session=session)
+    assert result == Status.INDEXED
+    r = _query(300)
+    assert r["status"] == Status.INDEXED
+    assert r["last_error_reason"] == "content_renderer_not_loaded"
+
+
+def test_collect_body_renderer_loaded_media_only_succeeds():
+    """T2: ContentRenderer 로드 + 텍스트 없음 + 미디어 있음 → BODY_COLLECTED (Path 2)."""
+    _insert_indexed(301)
+    session, frame = _make_session()
+    with patch("collector.parse_article", return_value=("", None, "", "<div class='ContentRenderer'><img src='photo.jpg'></div>", True, True)):
+        from collector import collect_body
+        result = collect_body(301, session=session)
+    assert result == Status.BODY_COLLECTED
+    r = _query(301)
+    assert r["status"] == Status.BODY_COLLECTED
+
+
+def test_collect_body_renderer_loaded_truly_empty_transient():
+    """T3: ContentRenderer 로드 + 텍스트 없음 + 미디어 없음 → INDEXED transient (Path 1)."""
+    _insert_indexed(302)
+    session, frame = _make_session()
+    with patch("collector.parse_article", return_value=("", None, "", "", False, True)):
+        from collector import collect_body
+        result = collect_body(302, session=session)
+    assert result == Status.INDEXED
+    r = _query(302)
+    assert r["status"] == Status.INDEXED
+    assert r["last_error_reason"] == "truly empty: no text, no media"

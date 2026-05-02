@@ -16,8 +16,8 @@ def extract_article_id(url: str) -> Optional[int]:
     return None
 
 
-def parse_article(html: str) -> Tuple[Optional[str], Optional[str], str, str, bool]:
-    """(title, posted_at, clean_text, raw_html_fragment, has_media)"""
+def parse_article(html: str) -> Tuple[Optional[str], Optional[str], str, str, bool, bool]:
+    """(title, posted_at, clean_text, raw_html_fragment, has_media, content_renderer_loaded)"""
     soup = BeautifulSoup(html, "html.parser")
 
     title_el = (
@@ -37,15 +37,23 @@ def parse_article(html: str) -> Tuple[Optional[str], Optional[str], str, str, bo
     )
     posted_at = date_el.get_text(strip=True) if date_el else None
 
-    content_el = (
-        soup.select_one("div.article_viewer")
-        or soup.select_one("div.ContentRenderer")
-        or soup.select_one("div.article_container")
-        or soup.select_one("div#tbody")
-        or soup.select_one("div.se-main-container")
-        or soup.select_one("#postContent")
-        or soup.select_one(".ArticleContentsArea")
-    )
+    # article_viewer가 있으면 반드시 ContentRenderer가 그 안에 로드돼야 유효한 본문.
+    # ContentRenderer 미로드 상태에서 wrapper에 placeholder 이미지가 있으면
+    # has_media=True로 오판해 silent BODY_COLLECTED 되므로 조기 반환.
+    article_viewer_el = soup.select_one("div.article_viewer")
+    if article_viewer_el:
+        content_el = article_viewer_el.select_one("div.ContentRenderer")
+        if content_el is None:
+            return title, posted_at, "", str(article_viewer_el), False, False
+    else:
+        content_el = (
+            soup.select_one("div.ContentRenderer")
+            or soup.select_one("div.article_container")
+            or soup.select_one("div#tbody")
+            or soup.select_one("div.se-main-container")
+            or soup.select_one("#postContent")
+            or soup.select_one(".ArticleContentsArea")
+        )
 
     if content_el:
         clean_text = content_el.get_text(separator="\n", strip=True)
@@ -57,7 +65,7 @@ def parse_article(html: str) -> Tuple[Optional[str], Optional[str], str, str, bo
     search_root = content_el if content_el else soup
     has_media = bool(search_root.find(["img", "video", "iframe", "embed", "audio", "object"]))
 
-    return title, posted_at, clean_text, raw_html, has_media
+    return title, posted_at, clean_text, raw_html, has_media, True
 
 
 def parse_article_list(html: str, base_url: str) -> list[dict]:
