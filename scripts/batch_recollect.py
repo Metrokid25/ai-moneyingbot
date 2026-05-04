@@ -31,7 +31,8 @@ CIRCUIT_BREAKER_REASONS = {
     BlockReason.NO_PERMISSION,
     BlockReason.AGE_VERIFICATION,
 }
-TOTAL_ARTICLES_SCALE = 42_386
+# TOTAL_ARTICLES_SCALE = 42_386  # deprecated: _write_final_report에서 DB 직접 조회로 교체됨 (2026-05-04)
+# 양산 완전 종료 후 다른 참조 없는지 재확인 후 삭제 예정
 
 # timeout:10, navigation:5, empty:3, session:0 → total 18
 _SIM_PLAN = [("timeout", 10), ("navigation", 5), ("empty", 3)]
@@ -151,6 +152,9 @@ def _write_final_report(
 
     conn = get_conn()
     try:
+        status_rows = conn.execute(
+            "SELECT status, COUNT(*) FROM articles GROUP BY status"
+        ).fetchall()
         err_rows = conn.execute(
             "SELECT last_error_reason, COUNT(*) as cnt "
             "FROM articles WHERE attempt_count > 0 "
@@ -159,6 +163,12 @@ def _write_final_report(
     finally:
         conn.close()
 
+    db_counts = {row[0]: row[1] for row in status_rows}
+    db_collected = db_counts.get("BODY_COLLECTED", 0)
+    db_indexed = db_counts.get("INDEXED", 0)
+    db_total = db_collected + db_indexed
+    progress_pct = db_collected / db_total * 100 if db_total > 0 else 0.0
+
     start_str = datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M:%S")
     end_str = datetime.datetime.fromtimestamp(end_ts).strftime("%H:%M:%S")
 
@@ -166,6 +176,7 @@ def _write_final_report(
         "",
         "=" * 70,
         "=== 종료 리포트 ===",
+        f"0. DB 누적 현황 : BODY_COLLECTED {db_collected:,}건 / INDEXED {db_indexed:,}건 잔여 (진행률 {progress_pct:.2f}%)",
         (
             f"1. 성공률       : {success}/{total} ({success / total * 100:.1f}%)"
             if total else "1. 성공률       : N/A"
@@ -194,14 +205,15 @@ def _write_final_report(
     else:
         lines.append("     (없음)")
 
-    if processed > 0:
-        scale_h = (total_elapsed / processed) * TOTAL_ARTICLES_SCALE / 3600
+    if db_indexed > 0:
+        avg_s = (total_elapsed / processed) if processed > 0 else 6.0
+        remain_h = avg_s * db_indexed / 3600
         lines.append(
-            f"6. 양산 예상시간: {TOTAL_ARTICLES_SCALE:,}건 기준 약 {scale_h:.1f}시간"
-            f" ({scale_h * 60:.0f}분)"
+            f"6. 양산 예상시간: 잔여 {db_indexed:,}건 기준 약 {remain_h:.1f}시간"
+            f" ({remain_h * 60:.0f}분)"
         )
     else:
-        lines.append("6. 양산 예상시간: N/A (처리 건수 없음)")
+        lines.append("6. 양산 예상시간: INDEXED 잔여 없음 (완료)")
 
     lines.append("=" * 70)
 
