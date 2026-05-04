@@ -5,11 +5,12 @@ import random
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, "src")
 
 from browser import BrowserSession, wait_for_login
-from collector import _VALID_SIMULATE, collect_body
+from collector import _VALID_SIMULATE, BlockReason, collect_body
 from db import get_article_by_id, get_articles_by_status, get_conn
 from models import Status
 
@@ -21,10 +22,60 @@ CAFE_MEMBERS_URL = (
 SLEEP_MIN_S = 3.0
 SLEEP_MAX_S = 5.0
 LOGS_DIR = Path("logs")
+
+CIRCUIT_BREAKER_ENABLED = True
+CIRCUIT_BREAKER_THRESHOLD = 3
+CIRCUIT_BREAKER_REASONS = {
+    BlockReason.LOGIN_REQUIRED,
+    BlockReason.CAPTCHA,
+    BlockReason.NO_PERMISSION,
+    BlockReason.AGE_VERIFICATION,
+}
 TOTAL_ARTICLES_SCALE = 42_386
 
 # timeout:10, navigation:5, empty:3, session:0 → total 18
 _SIM_PLAN = [("timeout", 10), ("navigation", 5), ("empty", 3)]
+
+
+class _CircuitBreaker:
+    """연속 block 신호 임계값 도달 시 양산을 즉시 중단한다."""
+
+    def __init__(self, enabled: bool, threshold: int, reasons: set) -> None:
+        self.enabled = enabled
+        self.threshold = threshold
+        self.reasons = reasons
+        self._signal: Optional[str] = None
+        self._count: int = 0
+
+    def record(
+        self,
+        status: str,
+        block_signal: Optional[str],
+        log_fh=None,
+        i: int = 0,
+        total: int = 0,
+    ) -> None:
+        """status/block_signal 기록. 임계값 초과 시 sys.exit(2) 발생."""
+        if status == Status.BODY_COLLECTED:
+            self._signal = None
+            self._count = 0
+            return
+        if block_signal not in self.reasons:
+            return
+        if block_signal == self._signal:
+            self._count += 1
+        else:
+            self._signal = block_signal
+            self._count = 1
+        if self.enabled and self._count >= self.threshold:
+            msg = (
+                f"[CIRCUIT BREAKER] {block_signal} 연속 {self.threshold}건 발생, "
+                f"양산 중단. 카페 접속 상태 직접 확인 후 재실행 바람. 진행: {i}/{total}"
+            )
+            print(msg)
+            if log_fh:
+                _log(log_fh, msg)
+            sys.exit(2)
 
 
 def _build_sim_map(indexed_ids: list[int]) -> dict[int, str]:
@@ -71,12 +122,12 @@ def _write_log_header(fh, total: int, sim_map: dict[int, str]) -> None:
 
 
 def _write_checkpoint(
-    fh, i: int, total: int, success: int, failed_cnt: int, start_ts: float
+    fh, i: int, total: int, success: int, failed_cnt: int, exception_cnt: int, start_ts: float
 ) -> None:
     elapsed = time.time() - start_ts
     line = (
         f"[CHECKPOINT {i}/{total}] "
-        f"success={success} failed={failed_cnt} "
+        f"success={success} failed={failed_cnt} exception={exception_cnt} "
         f"elapsed={elapsed:.0f}s ({elapsed / 60:.1f}min)"
     )
     _log(fh, line)
@@ -291,6 +342,7 @@ def main() -> int:
     sim_stats = {"injected": 0, "success": 0}
     processed = 0
     start_ts = time.time()
+    cb = _CircuitBreaker(CIRCUIT_BREAKER_ENABLED, CIRCUIT_BREAKER_THRESHOLD, CIRCUIT_BREAKER_REASONS)
 
     try:
         session.goto(CAFE_MEMBERS_URL)
@@ -317,8 +369,9 @@ def main() -> int:
 
             t0 = time.time()
             exc = None
+            block_signal = None
             try:
-                collect_body(aid, session=session, simulate_fail=effective_sim)
+                _, block_signal = collect_body(aid, session=session, simulate_fail=effective_sim)
             except Exception as e:
                 exc = e
             elapsed = time.time() - t0
@@ -347,6 +400,7 @@ def main() -> int:
                     retry_stats["demoted"] += 1
                     failed_ids.append(aid)
 
+                cb.record(status, block_signal, log_fh=log_fh, i=i, total=total)
                 print(
                     f"[batch] [{i}/{total}] article_id={aid} → "
                     f"status={status} len={body_len} elapsed={elapsed:.1f}s"
@@ -359,6 +413,7 @@ def main() -> int:
                     log_fh, i, total,
                     retry_stats["success"],
                     retry_stats["kept_indexed"] + retry_stats["demoted"],
+                    status_counts.get("EXCEPTION", 0),
                     start_ts,
                 )
 

@@ -2,6 +2,21 @@
 import sys
 from pathlib import Path
 
+
+class BlockReason:
+    LOGIN_REQUIRED = "login_required"
+    CAPTCHA = "captcha"
+    NO_PERMISSION = "no_permission"
+    AGE_VERIFICATION = "age_verification"
+
+
+_BLOCK_SIGNAL_MAP: dict[str, str] = {
+    BlockReason.LOGIN_REQUIRED: BlockReason.LOGIN_REQUIRED,
+    BlockReason.CAPTCHA: BlockReason.CAPTCHA,
+    BlockReason.NO_PERMISSION: BlockReason.NO_PERMISSION,
+    BlockReason.AGE_VERIFICATION: BlockReason.AGE_VERIFICATION,
+}
+
 # python src/collector.py 와 python -m src.collector 양쪽 지원
 _src_dir = str(Path(__file__).parent)
 if _src_dir not in sys.path:
@@ -73,10 +88,11 @@ def collect_body(
     session: Optional[BrowserSession] = None,
     force: bool = False,
     simulate_fail: Optional[str] = None,
-) -> str:
+) -> tuple[str, Optional[str]]:
     """단건 본문 수집.
 
-    Returns: 최종 status 값 (Status.BODY_* 상수 중 하나, 또는 Status.INDEXED)
+    Returns: (status, block_signal) — status는 Status.BODY_* 또는 Status.INDEXED,
+             block_signal은 BlockReason 상수 또는 None
     Raises: ValueError — article_id 가 DB 에 없을 때
             SystemExit — simulate_fail 사용 시 DEV_MODE=1 미설정
     """
@@ -101,7 +117,7 @@ def collect_body(
 
         if article.status != Status.INDEXED:
             print(f"[collector] skip {article_id}: status={article.status}")
-            return article.status
+            return article.status, None
 
         own_session = None
         if session is None:
@@ -119,7 +135,7 @@ def collect_body(
                 )
                 conn.commit()
                 print(f"[collector] DEMOTE pre-flight: count={pre_count} (article_id={article_id})")
-                return Status.BODY_FAILED
+                return Status.BODY_FAILED, None
 
             record_attempt_start(conn, article_id)
             conn.commit()
@@ -136,7 +152,7 @@ def collect_body(
                 reason = "session expired (Phase2 전 임시 처리)"
                 print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
                 _handle_transient(conn, article_id, reason)
-                return Status.INDEXED
+                return Status.INDEXED, BlockReason.LOGIN_REQUIRED
 
             if err == "next_error":
                 reason = "article deleted/not found"
@@ -144,19 +160,19 @@ def collect_body(
                 _save_diagnostic(article_id, session)
                 record_permanent_failure(conn, article_id, reason)
                 conn.commit()
-                return Status.BODY_FAILED
+                return Status.BODY_FAILED, None
 
             if err in ("no_permission", "captcha", "age_verification"):
                 reason = "session expired (Phase2 전 임시 처리)"
                 print(f"[collector] TRANSIENT: err={err} (article_id={article_id})")
                 _handle_transient(conn, article_id, reason)
-                return Status.INDEXED
+                return Status.INDEXED, _BLOCK_SIGNAL_MAP.get(err)
 
             if err is not None:
                 reason = f"navigation: {err}"
                 print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
                 _handle_transient(conn, article_id, reason)
-                return Status.INDEXED
+                return Status.INDEXED, None
 
             # Fix #1: timeout 주입을 frame mount 이전으로 이동 (실 세션 없이도 동작)
             if simulate_fail == "timeout":
@@ -180,7 +196,7 @@ def collect_body(
                 reason = f"timeout: cafe_main frame not found in {FRAME_MOUNT_TIMEOUT_S}s"
                 print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
                 _handle_transient(conn, article_id, reason)
-                return Status.INDEXED
+                return Status.INDEXED, None
 
             # ── selector wait ─────────────────────────────────────────────
             for selector in BODY_SELECTORS:
@@ -197,7 +213,7 @@ def collect_body(
                 reason = f"timeout: no selector matched in {SELECTOR_TIMEOUT_MS // 1000}s"
                 print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
                 _handle_transient(conn, article_id, reason)
-                return Status.INDEXED
+                return Status.INDEXED, None
 
             print(f"[collector] matched: {matched_selector} (article_id={article_id})")
 
@@ -214,7 +230,7 @@ def collect_body(
                 reason = f"empty inner_html: {matched_selector}"
                 print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
                 _handle_transient(conn, article_id, reason)
-                return Status.INDEXED
+                return Status.INDEXED, None
 
             # ── full frame HTML + block check ─────────────────────────────
             try:
@@ -223,7 +239,7 @@ def collect_body(
                 reason = f"navigation: frame.content() failed: {e}"
                 print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
                 _handle_transient(conn, article_id, reason)
-                return Status.INDEXED
+                return Status.INDEXED, None
 
             if simulate_fail == "session":
                 block_reason = "login_required"
@@ -234,12 +250,12 @@ def collect_body(
                 reason = "session expired (Phase2 전 임시 처리)"
                 print(f"[collector] TRANSIENT: {reason} (frame check, article_id={article_id})")
                 _handle_transient(conn, article_id, reason)
-                return Status.INDEXED
+                return Status.INDEXED, BlockReason.LOGIN_REQUIRED
             elif block_reason:
                 reason = "session expired (Phase2 전 임시 처리)"
                 print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
                 _handle_transient(conn, article_id, reason)
-                return Status.INDEXED
+                return Status.INDEXED, _BLOCK_SIGNAL_MAP.get(block_reason)
 
             # ── parse ─────────────────────────────────────────────────────
             try:
@@ -249,32 +265,32 @@ def collect_body(
                 print(f"[collector] PERMANENT: {reason} (article_id={article_id})")
                 record_permanent_failure(conn, article_id, reason)
                 conn.commit()
-                return Status.BODY_FAILED
+                return Status.BODY_FAILED, None
 
             # Path 0: article_viewer는 있으나 ContentRenderer 미로드 → retry
             if not renderer_loaded:
                 reason = "content_renderer_not_loaded"
                 print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
                 _handle_transient(conn, article_id, reason, raw_html=raw_html)
-                return Status.INDEXED
+                return Status.INDEXED, None
 
             if not clean_text.strip() and not has_media:
                 reason = "truly empty: no text, no media"
                 print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
                 _handle_transient(conn, article_id, reason, raw_html=raw_html)
-                return Status.INDEXED
+                return Status.INDEXED, None
 
             record_body_collected(conn, article_id, raw_html, clean_text)
             conn.commit()
             print(f"[collector] BODY_COLLECTED (article_id={article_id})")
-            return Status.BODY_COLLECTED
+            return Status.BODY_COLLECTED, None
 
         except PlaywrightTimeoutError as e:
             sel_desc = matched_selector or BODY_SELECTORS[0]
             reason = f"timeout: {sel_desc} not found in {SELECTOR_TIMEOUT_MS // 1000}s"
             print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
             _handle_transient(conn, article_id, reason)
-            return Status.INDEXED
+            return Status.INDEXED, None
 
         except SystemExit:
             raise
@@ -283,7 +299,7 @@ def collect_body(
             reason = f"navigation: {e}"
             print(f"[collector] TRANSIENT: {reason} (article_id={article_id})")
             _handle_transient(conn, article_id, reason)
-            return Status.INDEXED
+            return Status.INDEXED, None
 
         finally:
             if own_session is not None:
@@ -323,7 +339,7 @@ def _parse_args(argv=None):
 if __name__ == "__main__":
     sys.path.insert(0, "src")
     args = _parse_args()
-    result = collect_body(
+    result, _ = collect_body(
         article_id=args.article_id,
         force=args.force,
         simulate_fail=args.simulate_fail,

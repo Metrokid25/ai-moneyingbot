@@ -169,7 +169,7 @@ def test_collect_body_success():
     session, frame = _make_session()
     with patch("collector.parse_article", return_value=("title", "2026-01-01", LONG_CLEAN_TEXT, "<html/>", False, True)):
         from collector import collect_body
-        result = collect_body(10, session=session)
+        result, _ = collect_body(10, session=session)
     assert result == Status.BODY_COLLECTED
     r = _query(10)
     assert r["status"] == Status.BODY_COLLECTED
@@ -184,7 +184,7 @@ def test_collect_body_transient_increments_attempt():
     frame.wait_for_selector.side_effect = PlaywrightTimeoutError("timeout")
 
     from collector import collect_body
-    result = collect_body(20, session=session)
+    result, _ = collect_body(20, session=session)
     assert result == Status.INDEXED
     r = _query(20)
     assert r["status"] == Status.INDEXED
@@ -213,7 +213,7 @@ def test_preflight_demotes_when_count_already_at_max():
     session, _ = _make_session()
 
     from collector import collect_body
-    result = collect_body(31, session=session)
+    result, _ = collect_body(31, session=session)
     assert result == Status.BODY_FAILED
     r = _query(31)
     assert r["status"] == Status.BODY_FAILED
@@ -227,7 +227,7 @@ def test_collect_body_parse_error_permanent_fail():
     session, _ = _make_session()
     with patch("collector.parse_article", side_effect=Exception("malformed html")):
         from collector import collect_body
-        result = collect_body(40, session=session)
+        result, _ = collect_body(40, session=session)
     assert result == Status.BODY_FAILED
     r = _query(40)
     assert r["status"] == Status.BODY_FAILED
@@ -246,7 +246,7 @@ def test_collect_body_force_resets_attempt_count_from_body_failed():
     session, _ = _make_session()
     with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>", False, True)):
         from collector import collect_body
-        result = collect_body(50, session=session, force=True)
+        result, _ = collect_body(50, session=session, force=True)
 
     assert result == Status.BODY_COLLECTED
     r = _query(50)
@@ -262,7 +262,7 @@ def test_collect_body_force_resets_attempt_count_from_indexed():
     session, _ = _make_session()
     with patch("collector.parse_article", return_value=("t", "d", LONG_CLEAN_TEXT, "<html/>", False, True)):
         from collector import collect_body
-        result = collect_body(51, session=session, force=True)
+        result, _ = collect_body(51, session=session, force=True)
 
     assert result == Status.BODY_COLLECTED
     r = _query(51)
@@ -326,7 +326,7 @@ def test_simulate_fail_timeout_with_dev_mode(monkeypatch):
     session, frame = _make_session()
     # simulate timeout: PlaywrightTimeoutError raised before wait_for_selector
     from collector import collect_body
-    result = collect_body(80, session=session, simulate_fail="timeout")
+    result, _ = collect_body(80, session=session, simulate_fail="timeout")
     assert result == Status.INDEXED
     r = _query(80)
     assert r["status"] == Status.INDEXED
@@ -340,7 +340,7 @@ def test_simulate_fail_empty_with_dev_mode(monkeypatch):
     frame.inner_html.return_value = "<p>real content</p>"
 
     from collector import collect_body
-    result = collect_body(90, session=session, simulate_fail="empty")
+    result, _ = collect_body(90, session=session, simulate_fail="empty")
     assert result == Status.INDEXED
     r = _query(90)
     assert "empty inner_html" in r["last_error_reason"]
@@ -352,7 +352,7 @@ def test_simulate_fail_navigation_with_dev_mode(monkeypatch):
     session, _ = _make_session()
 
     from collector import collect_body
-    result = collect_body(100, session=session, simulate_fail="navigation")
+    result, _ = collect_body(100, session=session, simulate_fail="navigation")
     assert result == Status.INDEXED
     r = _query(100)
     assert "navigation" in r["last_error_reason"]
@@ -365,7 +365,7 @@ def test_simulate_fail_session_with_dev_mode(monkeypatch):
     frame.inner_html.return_value = "<p>충분히 긴 본문 텍스트 입니다 여러 단어가 있어야 합니다</p>"
 
     from collector import collect_body
-    result = collect_body(110, session=session, simulate_fail="session")
+    result, _ = collect_body(110, session=session, simulate_fail="session")
     assert result == Status.INDEXED
     r = _query(110)
     assert "session expired" in r["last_error_reason"]
@@ -381,7 +381,7 @@ def test_collect_body_image_only_body_succeeds():
     frame.content.return_value = "<html><body><img src='x.jpg'></body></html>"
     with patch("collector.parse_article", return_value=("", None, "", "<img src='x.jpg'>", True, True)):
         from collector import collect_body
-        result = collect_body(200, session=session)
+        result, _ = collect_body(200, session=session)
     assert result == Status.BODY_COLLECTED
     conn = get_conn()
     row = conn.execute("SELECT raw_html FROM articles WHERE article_id=200").fetchone()
@@ -395,7 +395,7 @@ def test_collect_body_short_text_succeeds():
     session, frame = _make_session()
     with patch("collector.parse_article", return_value=(None, None, "상승", "<p>상승</p>", False, True)):
         from collector import collect_body
-        result = collect_body(201, session=session)
+        result, _ = collect_body(201, session=session)
     assert result == Status.BODY_COLLECTED
     conn = get_conn()
     row = conn.execute("SELECT clean_text FROM articles WHERE article_id=201").fetchone()
@@ -409,7 +409,7 @@ def test_collect_body_truly_empty_transient():
     session, frame = _make_session()
     with patch("collector.parse_article", return_value=(None, None, "", "", False, True)):
         from collector import collect_body
-        result = collect_body(202, session=session)
+        result, _ = collect_body(202, session=session)
     assert result == Status.INDEXED
     r = _query(202)
     assert r["last_error_reason"] == "truly empty: no text, no media"
@@ -451,7 +451,7 @@ def test_collect_body_content_renderer_not_loaded_transient():
     session, frame = _make_session()
     with patch("collector.parse_article", return_value=("", None, "", "<div class='article_viewer'><img src='loading.gif'></div>", False, False)):
         from collector import collect_body
-        result = collect_body(300, session=session)
+        result, _ = collect_body(300, session=session)
     assert result == Status.INDEXED
     r = _query(300)
     assert r["status"] == Status.INDEXED
@@ -464,7 +464,7 @@ def test_collect_body_renderer_loaded_media_only_succeeds():
     session, frame = _make_session()
     with patch("collector.parse_article", return_value=("", None, "", "<div class='ContentRenderer'><img src='photo.jpg'></div>", True, True)):
         from collector import collect_body
-        result = collect_body(301, session=session)
+        result, _ = collect_body(301, session=session)
     assert result == Status.BODY_COLLECTED
     r = _query(301)
     assert r["status"] == Status.BODY_COLLECTED
@@ -476,7 +476,7 @@ def test_collect_body_renderer_loaded_truly_empty_transient():
     session, frame = _make_session()
     with patch("collector.parse_article", return_value=("", None, "", "", False, True)):
         from collector import collect_body
-        result = collect_body(302, session=session)
+        result, _ = collect_body(302, session=session)
     assert result == Status.INDEXED
     r = _query(302)
     assert r["status"] == Status.INDEXED
