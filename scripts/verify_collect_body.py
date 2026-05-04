@@ -7,6 +7,7 @@ sys.path.insert(0, "src")
 from browser import BrowserSession, wait_for_login
 from collector import collect_body
 from db import get_articles_by_status, get_article_by_id
+from models import Status
 
 CAFE_MEMBERS_URL = (
     "https://cafe.naver.com/f-e/cafes/29082876/members/"
@@ -43,7 +44,7 @@ def main():
         print()
         print(f"[verify] collect_body({target.article_id}) 호출...")
         t0 = time.time()
-        status = collect_body(target.article_id, session=session)
+        status, _ = collect_body(target.article_id, session=session)
         elapsed = time.time() - t0
 
         # 6. 결과
@@ -62,7 +63,7 @@ def main():
         print(f"[result] elapsed    : {elapsed:.1f}초")
         print("─" * 60)
 
-        return 0 if status == "BODY_COLLECTED" else 1
+        return 0 if status == Status.BODY_COLLECTED else 1
 
     finally:
         session.close()

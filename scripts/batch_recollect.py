@@ -166,8 +166,10 @@ def _write_final_report(
     db_counts = {row[0]: row[1] for row in status_rows}
     db_collected = db_counts.get("BODY_COLLECTED", 0)
     db_indexed = db_counts.get("INDEXED", 0)
-    db_total = db_collected + db_indexed
-    progress_pct = db_collected / db_total * 100 if db_total > 0 else 0.0
+    db_failed = db_counts.get("BODY_FAILED", 0)
+    db_total = db_collected + db_indexed + db_failed
+    collect_pct = db_collected / db_total * 100 if db_total > 0 else 0.0
+    done_pct = (db_collected + db_failed) / db_total * 100 if db_total > 0 else 0.0
 
     start_str = datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M:%S")
     end_str = datetime.datetime.fromtimestamp(end_ts).strftime("%H:%M:%S")
@@ -176,7 +178,8 @@ def _write_final_report(
         "",
         "=" * 70,
         "=== 종료 리포트 ===",
-        f"0. DB 누적 현황 : BODY_COLLECTED {db_collected:,}건 / INDEXED {db_indexed:,}건 잔여 (진행률 {progress_pct:.2f}%)",
+        f"0. DB 누적 현황 : COLLECTED {db_collected:,}건 / INDEXED {db_indexed:,}건 잔여 / FAILED {db_failed:,}건",
+        f"   진행률      : {collect_pct:.2f}% (수집 성공) / {done_pct:.2f}% (처리 완료, COLLECTED+FAILED)",
         (
             f"1. 성공률       : {success}/{total} ({success / total * 100:.1f}%)"
             if total else "1. 성공률       : N/A"
