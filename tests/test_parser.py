@@ -10,16 +10,17 @@ from parser import parse_article
 
 
 def test_parse_article_viewer_without_content_renderer():
-    """article_viewer 존재 + ContentRenderer 미로드 → renderer_loaded=False, has_media=False."""
+    """진짜 빈 article_viewer 거부 — 텍스트·미디어 모두 없으면 has_body_container=False."""
+    # 구 안전망: "ContentRenderer 미로드 + placeholder img → has_media 오판 차단"
+    # 새 시스템: img-only 글도 정상 인정 (차트 1장 게시글 실존).
+    # 현재 테스트는 "진짜 빈 article_viewer(텍스트도 미디어도 없음)는 거부"를 검증.
     html = """
     <html><body>
-      <div class="article_viewer">
-        <img src="loading.gif" alt="loading">
-      </div>
+      <div class="article_viewer"></div>
     </body></html>
     """
-    title, posted_at, clean_text, raw_html_frag, has_media, renderer_loaded = parse_article(html)
-    assert renderer_loaded is False
+    title, posted_at, clean_text, raw_html_frag, has_media, has_body_container = parse_article(html)
+    assert has_body_container is False
     assert has_media is False
     assert clean_text == ""
     assert "article_viewer" in raw_html_frag

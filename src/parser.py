@@ -17,7 +17,7 @@ def extract_article_id(url: str) -> Optional[int]:
 
 
 def parse_article(html: str) -> Tuple[Optional[str], Optional[str], str, str, bool, bool]:
-    """(title, posted_at, clean_text, raw_html_fragment, has_media, content_renderer_loaded)"""
+    """(title, posted_at, clean_text, raw_html_fragment, has_media, has_body_container)"""
     soup = BeautifulSoup(html, "html.parser")
 
     title_el = (
@@ -37,12 +37,26 @@ def parse_article(html: str) -> Tuple[Optional[str], Optional[str], str, str, bo
     )
     posted_at = date_el.get_text(strip=True) if date_el else None
 
-    # article_viewer가 있으면 반드시 ContentRenderer가 그 안에 로드돼야 유효한 본문.
-    # ContentRenderer 미로드 상태에서 wrapper에 placeholder 이미지가 있으면
-    # has_media=True로 오판해 silent BODY_COLLECTED 되므로 조기 반환.
     article_viewer_el = soup.select_one("div.article_viewer")
     if article_viewer_el:
+        # 1) article_viewer 내부 ContentRenderer (구 패턴 — 2020.08.03 이전)
         content_el = article_viewer_el.select_one("div.ContentRenderer")
+
+        # 2) frame 전체에서 ContentRenderer (패턴 2 — article_viewer 형제/외부)
+        if content_el is None:
+            content_el = soup.select_one("div.ContentRenderer")
+
+        # 3) article_viewer 자체를 본문으로 사용 (패턴 1 — ContentRenderer 없이 직접 본문)
+        #    안전 잠금: 텍스트 또는 미디어 최소 하나 있어야 인정
+        if content_el is None:
+            has_direct_text = bool(article_viewer_el.get_text(strip=True))
+            has_direct_media = bool(article_viewer_el.find(
+                ["img", "video", "iframe", "embed", "audio", "object"]
+            ))
+            if has_direct_text or has_direct_media:
+                content_el = article_viewer_el
+
+        # 3단계 모두 실패 → 진짜 빈 article_viewer → transient
         if content_el is None:
             return title, posted_at, "", str(article_viewer_el), False, False
     else:
