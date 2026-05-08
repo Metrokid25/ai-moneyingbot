@@ -13,3 +13,10 @@ debug/
 
 # Claude Code local settings
 .claude/
+
+# Diagnostic scripts (one-off, not for repo)
+scripts/probe_dynamic_load.py
+scripts/diag_empty_body.py
+scripts/diag_article_url.py
+scripts/diag_block_pattern.py
+scripts/diag_dom_structure.py

@@ -31,9 +31,6 @@ CIRCUIT_BREAKER_REASONS = {
     BlockReason.NO_PERMISSION,
     BlockReason.AGE_VERIFICATION,
 }
-# TOTAL_ARTICLES_SCALE = 42_386  # deprecated: _write_final_report에서 DB 직접 조회로 교체됨 (2026-05-04)
-# 양산 완전 종료 후 다른 참조 없는지 재확인 후 삭제 예정
-
 # timeout:10, navigation:5, empty:3, session:0 → total 18
 _SIM_PLAN = [("timeout", 10), ("navigation", 5), ("empty", 3)]
 

@@ -27,7 +27,7 @@ def test_parse_article_viewer_without_content_renderer():
 
 
 def test_parse_article_viewer_with_content_renderer_and_text():
-    """article_viewer + ContentRenderer + 텍스트 → renderer_loaded=True, clean_text 추출."""
+    """article_viewer + ContentRenderer + 텍스트 → has_body_container=True, clean_text 추출."""
     html = """
     <html><body>
       <div class="article_viewer">
@@ -37,14 +37,14 @@ def test_parse_article_viewer_with_content_renderer_and_text():
       </div>
     </body></html>
     """
-    title, posted_at, clean_text, raw_html_frag, has_media, renderer_loaded = parse_article(html)
-    assert renderer_loaded is True
+    title, posted_at, clean_text, raw_html_frag, has_media, has_body_container = parse_article(html)
+    assert has_body_container is True
     assert "오늘 시장 분석 내용입니다." in clean_text
     assert has_media is False
 
 
 def test_parse_article_viewer_with_content_renderer_media_only():
-    """article_viewer + ContentRenderer + 이미지만(텍스트 없음) → renderer_loaded=True, has_media=True."""
+    """article_viewer + ContentRenderer + 이미지만(텍스트 없음) → has_body_container=True, has_media=True."""
     html = """
     <html><body>
       <div class="article_viewer">
@@ -54,7 +54,7 @@ def test_parse_article_viewer_with_content_renderer_media_only():
       </div>
     </body></html>
     """
-    title, posted_at, clean_text, raw_html_frag, has_media, renderer_loaded = parse_article(html)
-    assert renderer_loaded is True
+    title, posted_at, clean_text, raw_html_frag, has_media, has_body_container = parse_article(html)
+    assert has_body_container is True
     assert has_media is True
     assert clean_text == ""
