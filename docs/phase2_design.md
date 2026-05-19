@@ -731,3 +731,16 @@ Qdrant local path 저장소는 원본이 아니라 산출물이다.
 - chunk 생성 코드
 - 임베딩 생성/업로드 코드
 - 검색 API 또는 trading-bot 연결
+
+---
+
+## Section 13 - Phase 2 Qdrant Load Implementation Notes
+
+Date: 2026-05-19
+
+- Qdrant point IDs use deterministic UUIDs derived from `uuid.uuid5(POINT_ID_NAMESPACE, chunk_id)`.
+- The original `chunk_id` remains in payload for traceability.
+- The chunk `embedding_text` is stored in Qdrant payload as `text`.
+- Real Qdrant collection creation and upsert require `--execute`.
+- Existing collection recreation requires both `--execute` and `--recreate`.
+- Default validation and `--dry-run` must not create `data/qdrant`.
