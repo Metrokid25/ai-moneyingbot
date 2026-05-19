@@ -757,3 +757,16 @@ Date: 2026-05-19
 - Search execution requires `--execute` because it calls Voyage query embedding.
 - Dry-run checks collection status and query settings without calling Voyage.
 - Query embeddings use `voyage-3-large` with 1024 dimensions.
+
+---
+
+## Section 15 - Phase 2 Retrieval Evaluation Report
+
+Date: 2026-05-19
+
+- Retrieval quality review uses `scripts/evaluate_retrieval_phase2.py`.
+- The script runs 15 fixed Korean evaluation queries across macro, market, and sector themes.
+- Results are written to `data/retrieval_eval_phase2.jsonl`.
+- The report file is a generated data artifact and must not be committed.
+- Real evaluation requires `--execute` because it calls Voyage query embedding.
+- Existing report files are preserved unless `--overwrite --execute` is explicitly used.

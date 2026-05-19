@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from typing import Any, Sequence
@@ -14,6 +15,23 @@ DEFAULT_TOP_K = 5
 VECTOR_SIZE = 1024
 MAX_TOP_K = 20
 SNIPPET_CHARS = 250
+EVALUATION_QUERIES = [
+    "금리 인상 국면에서 주식시장은 어떻게 반응하는가",
+    "원달러 환율 상승이 외국인 수급에 미치는 영향",
+    "외국인 매수와 매도가 코스피에 미치는 영향",
+    "반도체 업황과 삼성전자 주가 전망",
+    "코스피 지수 흐름과 시장 방향성",
+    "경기침체 우려와 경기회복 신호",
+    "인플레이션과 물가 상승이 증시에 주는 부담",
+    "유가와 원자재 가격 상승이 시장에 미치는 영향",
+    "부동산 시장과 금리 상승의 관계",
+    "미국 증시 흐름이 한국 증시에 미치는 영향",
+    "중국 경제 둔화와 한국 주식시장 영향",
+    "채권시장과 국채금리 상승의 의미",
+    "개인투자자 심리와 시장 과열 신호",
+    "신용매수와 레버리지 투자 위험",
+    "기업 실적과 기업이익 전망이 주가에 미치는 영향",
+]
 
 
 def validate_run_mode(dry_run: bool, execute: bool) -> None:
@@ -134,3 +152,53 @@ def format_search_result(point: Any, rank: int) -> dict[str, Any]:
 
 def format_search_results(points: Sequence[Any]) -> list[dict[str, Any]]:
     return [format_search_result(point, rank=index + 1) for index, point in enumerate(points)]
+
+
+def validate_eval_queries(queries: Sequence[str]) -> None:
+    if not queries:
+        raise ValueError("evaluation queries must not be empty")
+    normalized = [query.strip() for query in queries]
+    if any(not query for query in normalized):
+        raise ValueError("evaluation queries must not contain empty values")
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("evaluation queries must not contain duplicates")
+
+
+def format_eval_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "rank": result.get("rank"),
+        "score": result.get("score"),
+        "chunk_id": result.get("chunk_id"),
+        "article_id": result.get("article_id"),
+        "posted_at": result.get("posted_at"),
+        "title": result.get("title"),
+        "snippet": make_snippet(result.get("snippet")),
+        "source": result.get("source"),
+    }
+
+
+def build_eval_record(query: str, results: Sequence[dict[str, Any]], top_k: int = DEFAULT_TOP_K) -> dict[str, Any]:
+    if not query.strip():
+        raise ValueError("query must not be empty")
+    validate_top_k(top_k)
+    return {
+        "query": query,
+        "top_k": top_k,
+        "results": [format_eval_result(result) for result in results],
+    }
+
+
+def validate_output_path(out_path: Path, overwrite: bool, execute: bool) -> None:
+    if overwrite and not execute:
+        raise ValueError("--overwrite requires --execute")
+    if out_path.exists() and not overwrite:
+        raise FileExistsError(f"{out_path} already exists; pass --overwrite to replace it")
+
+
+def write_jsonl(path: Path, records: Sequence[dict[str, Any]], overwrite: bool = False) -> None:
+    if path.exists() and not overwrite:
+        raise FileExistsError(f"{path} already exists; pass --overwrite to replace it")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as fh:
+        for record in records:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
