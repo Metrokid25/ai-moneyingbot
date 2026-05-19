@@ -744,3 +744,16 @@ Date: 2026-05-19
 - Real Qdrant collection creation and upsert require `--execute`.
 - Existing collection recreation requires both `--execute` and `--recreate`.
 - Default validation and `--dry-run` must not create `data/qdrant`.
+
+---
+
+## Section 14 - Phase 2 Qdrant Retrieval Sanity Check
+
+Date: 2026-05-19
+
+- Phase 2 Qdrant local storage was loaded at `data/qdrant`.
+- Collection `goodmorning_chunks` contains 50,131 points.
+- Retrieval sanity checks use `scripts/search_qdrant_phase2.py`.
+- Search execution requires `--execute` because it calls Voyage query embedding.
+- Dry-run checks collection status and query settings without calling Voyage.
+- Query embeddings use `voyage-3-large` with 1024 dimensions.
