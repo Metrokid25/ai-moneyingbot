@@ -770,3 +770,28 @@ Date: 2026-05-19
 - The report file is a generated data artifact and must not be committed.
 - Real evaluation requires `--execute` because it calls Voyage query embedding.
 - Existing report files are preserved unless `--overwrite --execute` is explicitly used.
+
+---
+
+## Section 16 - Phase 2 Answer Context Builder
+
+Date: 2026-05-20
+
+- The answer context builder prepares retrieved Qdrant chunks as grounded context for a later answer-generation step.
+- It does not generate the final LLM answer.
+- Input: a user question, `top_k`, output format, Qdrant local path, and collection name.
+- Output: Markdown by default, or JSON with `question`, `top_k`, and ranked result records.
+- Each result includes rank, score, chunk/article IDs, title, posted date, year/month, source, text snippet, and `empty_text`.
+- `scripts/build_answer_context_phase2.py` calls Voyage query embedding only with `--execute`.
+- `--dry-run` validates settings and collection status without Voyage API calls or output artifacts.
+- Qdrant usage is read/search only against `data/qdrant` and `goodmorning_chunks`.
+- Generated data artifacts under `data`, `.db`, `.npy`, Qdrant storage, snapshots, and context output samples must not be committed.
+
+Example commands:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_answer_context_phase2.py --query "금리 인상 국면에서 주식시장은 어떻게 반응하는가" --dry-run
+.\.venv\Scripts\python.exe scripts\build_answer_context_phase2.py --query "금리 인상 국면에서 주식시장은 어떻게 반응하는가" --execute
+.\.venv\Scripts\python.exe scripts\build_answer_context_phase2.py --query "환율 상승과 외국인 수급" --execute --format json
+.\.venv\Scripts\python.exe scripts\build_answer_context_phase2.py --query "반도체 업황과 삼성전자" --execute --out data/answer_context_sample.md
+```
