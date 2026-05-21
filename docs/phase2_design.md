@@ -787,6 +787,36 @@ Date: 2026-05-20
 - Qdrant usage is read/search only against `data/qdrant` and `goodmorning_chunks`.
 - Generated data artifacts under `data`, `.db`, `.npy`, Qdrant storage, snapshots, and context output samples must not be committed.
 
+---
+
+## Section 17 - Phase 2 Minimal Final Answer Generation
+
+Date: 2026-05-21
+
+- `src/rag_answering.py` adds the minimal prompt, LLM call, and final answer formatting layer.
+- `scripts/answer_question_phase2.py` runs: user query -> Voyage query embedding -> Qdrant top_k search -> answer context -> Korean LLM answer -> sources.
+- Output format is Markdown by default, or JSON with `query`, `answer`, `sources`, `model`, and `top_k`.
+- `--execute` is required before any Voyage or LLM API call can happen.
+- `--dry-run` checks settings and Qdrant collection status, then prints the execution plan without calling Voyage or the LLM.
+- Qdrant usage is read/search only against the existing local collection. The answer script must not create, recreate, upsert, or delete Qdrant points.
+
+Example commands:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\answer_question_phase2.py --query "금리 인상 국면에서 주식시장은 어떻게 반응하는가" --dry-run
+.\.venv\Scripts\python.exe scripts\answer_question_phase2.py --query "금리 인상 국면에서 주식시장은 어떻게 반응하는가" --top-k 5 --format markdown
+.\.venv\Scripts\python.exe scripts\answer_question_phase2.py --query "금리 인상 국면에서 주식시장은 어떻게 반응하는가" --top-k 5 --format json --execute
+```
+
+Excluded from this minimal step:
+
+- MMR
+- dedup
+- reranking
+- score threshold
+- snippet improvement
+- trading-bot integration
+
 Example commands:
 
 ```powershell
