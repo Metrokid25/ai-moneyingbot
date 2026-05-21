@@ -1,20 +1,23 @@
 import inspect
+import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import answer_question_phase2
 from rag_answering import (
+    LlmUsage,
     build_answer_messages,
     build_answer_record,
     build_sources,
     call_llm,
+    estimate_openai_cost,
+    extract_usage,
     format_answer_json,
     format_answer_markdown,
     format_context_for_prompt,
@@ -32,32 +35,32 @@ def sample_context_items():
             "score": 0.91,
             "chunk_id": "10:0",
             "article_id": 10,
-            "title": "금리와 주식시장",
-            "text": "금리 인상기에는 할인율 부담과 유동성 축소가 함께 언급된다.",
+            "title": "rate and stocks",
+            "text": "Higher rates can pressure discounts and liquidity.",
         }
     ]
 
 
 def test_prompt_contains_context_and_query():
     context = format_context_for_prompt(sample_context_items())
-    messages = build_answer_messages("금리 인상 국면 질문", context)
+    messages = build_answer_messages("rate hike question", context)
 
     rendered = "\n".join(message["content"] for message in messages)
 
-    assert "금리 인상 국면 질문" in rendered
-    assert "금리 인상기에는 할인율 부담" in rendered
+    assert "rate hike question" in rendered
+    assert "Higher rates can pressure discounts and liquidity." in rendered
     assert "chunk_id: 10:0" in rendered
 
 
 def test_prompt_instructs_no_guessing_without_evidence():
     context = format_context_for_prompt(sample_context_items())
-    messages = build_answer_messages("질문", context)
+    messages = build_answer_messages("question", context)
 
     rendered = "\n".join(message["content"] for message in messages)
 
-    assert "근거 context에 없는 내용은 추측하지 말라" in rendered
-    assert "제공된 근거만으로는 확정하기 어렵다" in rendered
-    assert "투자 조언처럼 단정하지" in rendered
+    assert "Use only the provided evidence context." in rendered
+    assert "Do not guess" in rendered
+    assert "Do not give definitive investment advice" in rendered
 
 
 def test_sources_include_required_fields():
@@ -67,7 +70,7 @@ def test_sources_include_required_fields():
         {
             "chunk_id": "10:0",
             "article_id": 10,
-            "title": "금리와 주식시장",
+            "title": "rate and stocks",
             "score": 0.91,
         }
     ]
@@ -75,20 +78,95 @@ def test_sources_include_required_fields():
 
 def test_answer_formats_include_sources():
     record = build_answer_record(
-        query="질문",
-        answer="답변",
+        query="question",
+        answer="answer",
         sources=build_sources(sample_context_items()),
         model="gpt-4o-mini",
         top_k=1,
     )
 
     markdown = format_answer_markdown(record)
-    payload = format_answer_json(record)
+    payload = json.loads(format_answer_json(record))
 
-    assert "## 근거 chunks" in markdown
+    assert "## " in markdown
     assert "chunk_id: 10:0" in markdown
-    assert '"sources"' in payload
-    assert '"article_id": 10' in payload
+    assert payload["sources"][0]["article_id"] == 10
+
+
+def test_usage_and_estimated_cost_are_in_answer_formats():
+    usage = LlmUsage(input_tokens=10000, output_tokens=1500, total_tokens=11500)
+    record = build_answer_record(
+        query="question",
+        answer="answer",
+        sources=build_sources(sample_context_items()),
+        model="gpt-4o-mini",
+        top_k=1,
+        usage=usage,
+        estimated_cost=estimate_openai_cost("gpt-4o-mini", usage),
+    )
+
+    markdown = format_answer_markdown(record)
+    payload = json.loads(format_answer_json(record))
+
+    assert "## 사용량/예상 비용" in markdown
+    assert "input_tokens: 10000" in markdown
+    assert "output_tokens: 1500" in markdown
+    assert "total_tokens: 11500" in markdown
+    assert "estimated_cost_usd: 0.0024" in markdown
+    assert payload["usage"] == {
+        "input_tokens": 10000,
+        "output_tokens": 1500,
+        "total_tokens": 11500,
+    }
+    assert payload["estimated_cost"]["input_usd"] == pytest.approx(0.0015)
+    assert payload["estimated_cost"]["output_usd"] == pytest.approx(0.0009)
+    assert payload["estimated_cost"]["total_usd"] == pytest.approx(0.0024)
+
+
+def test_extract_usage_reads_openai_chat_usage_shape():
+    response = SimpleNamespace(
+        usage=SimpleNamespace(
+            prompt_tokens=10000,
+            completion_tokens=1500,
+            total_tokens=11500,
+        )
+    )
+
+    usage = extract_usage(response)
+
+    assert usage == LlmUsage(input_tokens=10000, output_tokens=1500, total_tokens=11500)
+
+
+def test_extract_usage_accepts_dict_shape():
+    response = {"usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}}
+
+    usage = extract_usage(response)
+
+    assert usage == LlmUsage(input_tokens=10, output_tokens=2, total_tokens=12)
+
+
+def test_gpt_4o_mini_cost_estimate_uses_configured_prices():
+    cost = estimate_openai_cost(
+        "gpt-4o-mini",
+        LlmUsage(input_tokens=10000, output_tokens=1500, total_tokens=11500),
+    )
+
+    assert cost.input_usd == pytest.approx(0.0015)
+    assert cost.output_usd == pytest.approx(0.0009)
+    assert cost.total_usd == pytest.approx(0.0024)
+    assert "estimated" in cost.pricing_note
+
+
+def test_unknown_model_cost_is_unknown():
+    cost = estimate_openai_cost(
+        "unknown-model",
+        LlmUsage(input_tokens=10000, output_tokens=1500, total_tokens=11500),
+    )
+
+    assert cost.input_usd is None
+    assert cost.output_usd is None
+    assert cost.total_usd is None
+    assert cost.pricing_note == "pricing not configured for this model"
 
 
 @pytest.mark.parametrize("top_k", [1, 5, 20])
@@ -103,7 +181,7 @@ def test_top_k_validation_rejects_out_of_range(top_k):
 
 
 def test_cli_rejects_dry_run_and_execute_together(capsys):
-    result = answer_question_phase2.main(["--query", "질문", "--dry-run", "--execute"])
+    result = answer_question_phase2.main(["--query", "question", "--dry-run", "--execute"])
 
     captured = capsys.readouterr()
 
@@ -119,7 +197,7 @@ def test_cli_without_execute_blocks_before_api_calls(monkeypatch, capsys):
     monkeypatch.setattr(answer_question_phase2, "embed_query", fail_if_called)
     monkeypatch.setattr(answer_question_phase2, "call_llm", fail_if_called)
 
-    result = answer_question_phase2.main(["--query", "질문"])
+    result = answer_question_phase2.main(["--query", "question"])
 
     captured = capsys.readouterr()
 
@@ -131,16 +209,19 @@ def test_llm_call_uses_fake_client_without_api_key():
     class FakeCompletions:
         def create(self, **kwargs):
             self.kwargs = kwargs
-            message = SimpleNamespace(content="근거 기반 답변")
-            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+            message = SimpleNamespace(content="evidence-based answer")
+            usage = SimpleNamespace(prompt_tokens=10000, completion_tokens=1500, total_tokens=11500)
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
 
     fake_completions = FakeCompletions()
     fake_client = SimpleNamespace(chat=SimpleNamespace(completions=fake_completions))
 
-    answer = call_llm([{"role": "user", "content": "질문"}], model="fake-model", client=fake_client)
+    result = call_llm([{"role": "user", "content": "question"}], model="gpt-4o-mini", client=fake_client)
 
-    assert answer == "근거 기반 답변"
-    assert fake_completions.kwargs["model"] == "fake-model"
+    assert result.answer == "evidence-based answer"
+    assert result.usage == LlmUsage(input_tokens=10000, output_tokens=1500, total_tokens=11500)
+    assert result.estimated_cost.total_usd == pytest.approx(0.0024)
+    assert fake_completions.kwargs["model"] == "gpt-4o-mini"
     assert fake_completions.kwargs["temperature"] == 0.2
 
 

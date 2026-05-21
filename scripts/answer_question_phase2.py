@@ -124,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         print("3. Search Qdrant top_k with payloads and without vectors.")
         print("4. Build answer context from retrieved chunks.")
         print("5. Generate the final Korean answer with the LLM only when --execute is used.")
+        print("6. Print token usage and estimated cost when --execute is used.")
         return 0
 
     try:
@@ -137,14 +138,16 @@ def main(argv: list[str] | None = None) -> int:
         context_items = build_context_items(points)
         context = format_context_for_prompt(context_items)
         messages = build_answer_messages(args.query, context)
-        answer = call_llm(messages, model=args.model)
+        llm_result = call_llm(messages, model=args.model)
         sources = build_sources(context_items)
         record = build_answer_record(
             query=args.query,
-            answer=answer,
+            answer=llm_result.answer,
             sources=sources,
             model=args.model,
             top_k=args.top_k,
+            usage=llm_result.usage,
+            estimated_cost=llm_result.estimated_cost,
         )
         print(render_answer(record, args.format), end="")
     except Exception as exc:

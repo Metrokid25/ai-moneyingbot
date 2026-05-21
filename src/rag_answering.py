@@ -1,11 +1,45 @@
 import json
 import os
+from dataclasses import asdict, dataclass
 from typing import Any, Sequence
 
 from dotenv import load_dotenv
 
 
 DEFAULT_ANSWER_MODEL = "gpt-4o-mini"
+PRICING_NOTE_ESTIMATE = "estimated from configured per-token model pricing; cached input is not included"
+UNKNOWN_PRICING_NOTE = "pricing not configured for this model"
+MISSING_USAGE_NOTE = "usage not returned by provider"
+
+OPENAI_PRICING_USD_PER_1M_TOKENS = {
+    "gpt-4o-mini": {
+        "input": 0.15,
+        "output": 0.60,
+    }
+}
+
+
+@dataclass(frozen=True)
+class LlmUsage:
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+
+
+@dataclass(frozen=True)
+class EstimatedCost:
+    model: str
+    input_usd: float | None
+    output_usd: float | None
+    total_usd: float | None
+    pricing_note: str
+
+
+@dataclass(frozen=True)
+class LlmResult:
+    answer: str
+    usage: LlmUsage | None
+    estimated_cost: EstimatedCost
 
 
 SYSTEM_PROMPT = """You are a Korean RAG answer writer for ai-moneyingbot.
@@ -93,11 +127,73 @@ def _extract_chat_completion_text(response: Any) -> str:
     return str(content)
 
 
+def _get_attr_or_key(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def extract_usage(response: Any) -> LlmUsage | None:
+    usage = _get_attr_or_key(response, "usage")
+    if usage is None:
+        return None
+
+    input_tokens = _get_attr_or_key(usage, "prompt_tokens")
+    output_tokens = _get_attr_or_key(usage, "completion_tokens")
+    total_tokens = _get_attr_or_key(usage, "total_tokens")
+
+    if input_tokens is None or output_tokens is None or total_tokens is None:
+        return None
+
+    return LlmUsage(
+        input_tokens=int(input_tokens),
+        output_tokens=int(output_tokens),
+        total_tokens=int(total_tokens),
+    )
+
+
+def estimate_openai_cost(model: str, usage: LlmUsage | None) -> EstimatedCost:
+    if usage is None:
+        return EstimatedCost(
+            model=model,
+            input_usd=None,
+            output_usd=None,
+            total_usd=None,
+            pricing_note=MISSING_USAGE_NOTE,
+        )
+
+    pricing = OPENAI_PRICING_USD_PER_1M_TOKENS.get(model)
+    if pricing is None:
+        return EstimatedCost(
+            model=model,
+            input_usd=None,
+            output_usd=None,
+            total_usd=None,
+            pricing_note=UNKNOWN_PRICING_NOTE,
+        )
+
+    input_usd = usage.input_tokens * pricing["input"] / 1_000_000
+    output_usd = usage.output_tokens * pricing["output"] / 1_000_000
+    return EstimatedCost(
+        model=model,
+        input_usd=input_usd,
+        output_usd=output_usd,
+        total_usd=input_usd + output_usd,
+        pricing_note=PRICING_NOTE_ESTIMATE,
+    )
+
+
+def format_cost_usd(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    return f"{value:.8f}".rstrip("0").rstrip(".")
+
+
 def call_llm(
     messages: Sequence[dict[str, str]],
     model: str = DEFAULT_ANSWER_MODEL,
     client: Any | None = None,
-) -> str:
+) -> LlmResult:
     if client is None:
         load_openai_api_key()
         try:
@@ -114,7 +210,12 @@ def call_llm(
     text = _extract_chat_completion_text(response).strip()
     if not text:
         raise RuntimeError("LLM returned an empty answer")
-    return text
+    usage = extract_usage(response)
+    return LlmResult(
+        answer=text,
+        usage=usage,
+        estimated_cost=estimate_openai_cost(model, usage),
+    )
 
 
 def build_answer_record(
@@ -123,13 +224,19 @@ def build_answer_record(
     sources: Sequence[dict[str, Any]],
     model: str,
     top_k: int,
+    usage: LlmUsage | None = None,
+    estimated_cost: EstimatedCost | None = None,
 ) -> dict[str, Any]:
+    if estimated_cost is None:
+        estimated_cost = estimate_openai_cost(model, usage)
     return {
         "query": query,
         "answer": answer,
         "sources": list(sources),
         "model": model,
         "top_k": top_k,
+        "usage": asdict(usage) if usage is not None else None,
+        "estimated_cost": asdict(estimated_cost),
     }
 
 
@@ -155,6 +262,20 @@ def format_answer_markdown(record: dict[str, Any]) -> str:
                 f"  score: {source.get('score')}",
             ]
         )
+    usage = record.get("usage")
+    cost = record.get("estimated_cost") or {}
+    lines.extend(
+        [
+            "",
+            "## 사용량/예상 비용",
+            f"- model: {cost.get('model', record.get('model'))}",
+            f"- input_tokens: {usage.get('input_tokens') if usage else 'unknown'}",
+            f"- output_tokens: {usage.get('output_tokens') if usage else 'unknown'}",
+            f"- total_tokens: {usage.get('total_tokens') if usage else 'unknown'}",
+            f"- estimated_cost_usd: {format_cost_usd(cost.get('total_usd'))}",
+            f"- pricing_note: {cost.get('pricing_note', UNKNOWN_PRICING_NOTE)}",
+        ]
+    )
     return "\n".join(lines).rstrip() + "\n"
 
 

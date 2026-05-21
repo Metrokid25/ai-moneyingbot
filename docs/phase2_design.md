@@ -796,6 +796,9 @@ Date: 2026-05-21
 - `src/rag_answering.py` adds the minimal prompt, LLM call, and final answer formatting layer.
 - `scripts/answer_question_phase2.py` runs: user query -> Voyage query embedding -> Qdrant top_k search -> answer context -> Korean LLM answer -> sources.
 - Output format is Markdown by default, or JSON with `query`, `answer`, `sources`, `model`, and `top_k`.
+- Answer generation output also includes LLM token usage and estimated cost when the OpenAI response returns usage metadata.
+- Estimated cost is calculated for `gpt-4o-mini` from the small in-code pricing table. It is an estimate, cached input is not included, and other models return unknown cost unless pricing is configured.
+- Persisted cost logs and monthly cumulative cost tracking are excluded from this step.
 - `--execute` is required before any Voyage or LLM API call can happen.
 - `--dry-run` checks settings and Qdrant collection status, then prints the execution plan without calling Voyage or the LLM.
 - Qdrant usage is read/search only against the existing local collection. The answer script must not create, recreate, upsert, or delete Qdrant points.
