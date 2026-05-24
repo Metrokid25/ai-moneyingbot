@@ -5,26 +5,19 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from rag_answer_context import build_context_items
 from rag_answering import (
     DEFAULT_ANSWER_MODEL,
-    build_answer_messages,
-    build_answer_record,
-    build_sources,
-    call_llm,
     format_answer_json,
     format_answer_markdown,
-    format_context_for_prompt,
+    run_rag_answer,
 )
 from rag_retrieval import (
     DEFAULT_COLLECTION,
     DEFAULT_MODEL,
     DEFAULT_QDRANT_PATH,
     DEFAULT_TOP_K,
-    embed_query,
     get_collection_summary,
     open_qdrant_client,
-    search_qdrant,
     validate_run_mode,
     validate_top_k,
 )
@@ -128,26 +121,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        query_vector = embed_query(args.query, model=args.embedding_model, project_root=PROJECT_ROOT)
-        points = search_qdrant(
-            client=client,
-            collection=args.collection,
-            query_vector=query_vector,
-            top_k=args.top_k,
-        )
-        context_items = build_context_items(points)
-        context = format_context_for_prompt(context_items)
-        messages = build_answer_messages(args.query, context)
-        llm_result = call_llm(messages, model=args.model)
-        sources = build_sources(context_items)
-        record = build_answer_record(
+        record = run_rag_answer(
             query=args.query,
-            answer=llm_result.answer,
-            sources=sources,
-            model=args.model,
             top_k=args.top_k,
-            usage=llm_result.usage,
-            estimated_cost=llm_result.estimated_cost,
+            model=args.model,
+            embedding_model=args.embedding_model,
+            qdrant_path=args.qdrant_path,
+            collection=args.collection,
+            project_root=PROJECT_ROOT,
         )
         print(render_answer(record, args.format), end="")
     except Exception as exc:

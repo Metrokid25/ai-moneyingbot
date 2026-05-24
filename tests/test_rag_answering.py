@@ -194,8 +194,7 @@ def test_cli_without_execute_blocks_before_api_calls(monkeypatch, capsys):
         raise AssertionError("API or Qdrant should not be called without --execute")
 
     monkeypatch.setattr(answer_question_phase2, "open_qdrant_client", fail_if_called)
-    monkeypatch.setattr(answer_question_phase2, "embed_query", fail_if_called)
-    monkeypatch.setattr(answer_question_phase2, "call_llm", fail_if_called)
+    monkeypatch.setattr(answer_question_phase2, "run_rag_answer", fail_if_called)
 
     result = answer_question_phase2.main(["--query", "question"])
 
@@ -243,3 +242,9 @@ def test_requirements_include_openai_dependency_range():
     requirements = (PROJECT_ROOT / "requirements.txt").read_text(encoding="utf-8")
 
     assert "openai>=2.0.0,<3.0.0" in requirements.splitlines()
+
+
+def test_run_rag_answer_symbol_exists():
+    import rag_answering
+
+    assert hasattr(rag_answering, "run_rag_answer")

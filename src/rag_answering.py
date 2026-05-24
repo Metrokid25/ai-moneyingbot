@@ -1,9 +1,12 @@
 import json
 import os
+from pathlib import Path
 from dataclasses import asdict, dataclass
 from typing import Any, Sequence
 
 from dotenv import load_dotenv
+from rag_answer_context import build_context_items
+from rag_retrieval import embed_query, open_qdrant_client, search_qdrant
 
 
 DEFAULT_ANSWER_MODEL = "gpt-4o-mini"
@@ -217,6 +220,43 @@ def call_llm(
         estimated_cost=estimate_openai_cost(model, usage),
     )
 
+
+
+def run_rag_answer(
+    query: str,
+    top_k: int,
+    model: str,
+    embedding_model: str,
+    qdrant_path: str | Path,
+    collection: str,
+    project_root: str | Path | None = None,
+) -> dict[str, Any]:
+    client = open_qdrant_client(Path(qdrant_path))
+    query_vector = embed_query(
+        query,
+        model=embedding_model,
+        project_root=Path(project_root) if project_root is not None else None,
+    )
+    points = search_qdrant(
+        client=client,
+        collection=collection,
+        query_vector=query_vector,
+        top_k=top_k,
+    )
+    context_items = build_context_items(points)
+    context = format_context_for_prompt(context_items)
+    messages = build_answer_messages(query, context)
+    llm_result = call_llm(messages, model=model)
+    sources = build_sources(context_items)
+    return build_answer_record(
+        query=query,
+        answer=llm_result.answer,
+        sources=sources,
+        model=model,
+        top_k=top_k,
+        usage=llm_result.usage,
+        estimated_cost=llm_result.estimated_cost,
+    )
 
 def build_answer_record(
     query: str,
