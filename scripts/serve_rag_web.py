@@ -1,11 +1,14 @@
 import argparse
+import html
 import json
 import re
+import sqlite3
 import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -17,6 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_QDRANT_PATH = PROJECT_ROOT / "data" / "qdrant"
+DEFAULT_ARCHIVE_DB_PATH = PROJECT_ROOT / "data" / "archive.db"
 
 SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_\-]+"),
@@ -136,6 +140,29 @@ HTML_PAGE = """<!doctype html>
       margin: 0;
       overflow-wrap: anywhere;
     }
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .links a {
+      border-radius: 6px;
+      padding: 7px 10px;
+      color: #ffffff;
+      background: #2563eb;
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .links a.secondary {
+      color: #20242a;
+      background: #e8edf4;
+    }
+    .hint {
+      margin-top: 8px;
+      color: #5d6673;
+      font-size: 14px;
+    }
     @media (max-width: 720px) {
       main {
         padding: 16px;
@@ -226,8 +253,37 @@ HTML_PAGE = """<!doctype html>
         appendField(dl, "chunk_id", source.chunk_id);
         appendField(dl, "article_id", source.article_id);
         appendField(dl, "title", source.title);
+        appendField(dl, "posted_at", source.posted_at || "-");
         appendField(dl, "score", source.score);
         article.appendChild(dl);
+
+        const links = document.createElement("div");
+        links.className = "links";
+        if (source.article_page_url) {
+          const localLink = document.createElement("a");
+          localLink.href = source.article_page_url;
+          localLink.target = "_blank";
+          localLink.rel = "noopener noreferrer";
+          localLink.textContent = "저장된 원문 보기";
+          links.appendChild(localLink);
+        }
+        if (typeof source.article_url === "string" &&
+            (source.article_url.startsWith("http://") || source.article_url.startsWith("https://"))) {
+          const sourceLink = document.createElement("a");
+          sourceLink.href = source.article_url;
+          sourceLink.target = "_blank";
+          sourceLink.rel = "noopener noreferrer";
+          sourceLink.className = "secondary";
+          sourceLink.textContent = "네이버 원문 열기";
+          links.appendChild(sourceLink);
+        }
+        if (links.childNodes.length > 0) {
+          article.appendChild(links);
+          const hint = document.createElement("div");
+          hint.className = "hint";
+          hint.textContent = "네이버 원문은 로그인이 필요할 수 있음";
+          article.appendChild(hint);
+        }
         sourcesBox.appendChild(article);
       }
     }
@@ -293,14 +349,208 @@ def sanitize_error(exc: Exception) -> str:
     return message
 
 
-def build_success_response(record: dict[str, Any]) -> dict[str, Any]:
+def parse_article_id(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("article_id must be a number")
+    text = str(value).strip()
+    if not text.isdigit():
+        raise ValueError("article_id must be a number")
+    return int(text)
+
+
+def open_archive_db_readonly(db_path: Path) -> sqlite3.Connection:
+    return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+
+
+def fetch_article_metadata(db_path: Path, article_ids: list[int]) -> dict[int, dict[str, str | None]]:
+    unique_ids = sorted(set(article_ids))
+    if not unique_ids:
+        return {}
+    placeholders = ",".join("?" for _ in unique_ids)
+    sql = (
+        "SELECT article_id, posted_at, url "
+        f"FROM articles WHERE article_id IN ({placeholders})"
+    )
+    with open_archive_db_readonly(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(sql, unique_ids).fetchall()
+    return {
+        int(row["article_id"]): {
+            "posted_at": row["posted_at"],
+            "url": row["url"],
+        }
+        for row in rows
+    }
+
+
+def fetch_article(db_path: Path, article_id: int) -> dict[str, Any] | None:
+    sql = (
+        "SELECT article_id, title, url, author, posted_at, clean_text, raw_html "
+        "FROM articles WHERE article_id = ?"
+    )
+    with open_archive_db_readonly(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(sql, (article_id,)).fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def make_article_page_url(article_id: int) -> str:
+    return f"/article?article_id={article_id}"
+
+
+def is_safe_external_url(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value.startswith("http://") or value.startswith("https://")
+
+
+def enrich_sources_with_article_metadata(
+    sources: list[dict[str, Any]],
+    archive_db_path: Path,
+) -> list[dict[str, Any]]:
+    enriched = [dict(source) for source in sources]
+    article_ids: list[int] = []
+    for source in enriched:
+        try:
+            article_ids.append(parse_article_id(source.get("article_id")))
+        except ValueError:
+            continue
+
+    metadata = fetch_article_metadata(archive_db_path, article_ids)
+    for source in enriched:
+        try:
+            article_id = parse_article_id(source.get("article_id"))
+        except ValueError:
+            source.setdefault("posted_at", None)
+            source.setdefault("article_url", None)
+            source.setdefault("article_page_url", None)
+            continue
+        article_meta = metadata.get(article_id, {})
+        article_url = article_meta.get("url")
+        source["posted_at"] = article_meta.get("posted_at")
+        source["article_url"] = article_url if is_safe_external_url(article_url) else None
+        source["article_page_url"] = make_article_page_url(article_id)
+    return enriched
+
+
+def build_success_response(record: dict[str, Any], archive_db_path: Path) -> dict[str, Any]:
+    sources = record.get("sources", [])
+    if not isinstance(sources, list):
+        sources = []
+    try:
+        sources = enrich_sources_with_article_metadata(sources, archive_db_path)
+    except Exception:
+        sources = [dict(source) for source in sources if isinstance(source, dict)]
     return {
         "ok": True,
         "answer": record.get("answer", ""),
-        "sources": record.get("sources", []),
+        "sources": sources,
         "usage": record.get("usage"),
         "estimated_cost": record.get("estimated_cost"),
     }
+
+
+def escape_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return html.escape(str(value), quote=True)
+
+
+def render_article_page(article: dict[str, Any], used_raw_html_fallback: bool) -> str:
+    url = article.get("url")
+    url_html = escape_text(url)
+    source_link = ""
+    if is_safe_external_url(url):
+        source_link = (
+            f'<a href="{url_html}" target="_blank" rel="noopener noreferrer">'
+            "네이버 원문 열기</a>"
+        )
+    else:
+        source_link = "저장된 원문 기준으로 표시"
+
+    fallback_note = ""
+    if used_raw_html_fallback:
+        fallback_note = "<p class=\"notice\">clean_text가 없어 raw_html을 escape 처리해 표시합니다.</p>"
+
+    body = article.get("clean_text") or article.get("raw_html") or ""
+    return f"""<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape_text(article.get("title") or "Article")}</title>
+  <style>
+    body {{
+      margin: 0;
+      font-family: Arial, "Malgun Gothic", sans-serif;
+      color: #20242a;
+      background: #f6f7f9;
+    }}
+    main {{
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 24px;
+    }}
+    .meta {{
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 8px 12px;
+      margin: 18px 0;
+      padding: 14px;
+      border: 1px solid #d7dce2;
+      border-radius: 8px;
+      background: #ffffff;
+    }}
+    .meta dt {{
+      font-weight: 700;
+    }}
+    .meta dd {{
+      margin: 0;
+      overflow-wrap: anywhere;
+    }}
+    .notice {{
+      border-left: 4px solid #b45309;
+      background: #fff7ed;
+      padding: 12px 14px;
+    }}
+    .body {{
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      border: 1px solid #d7dce2;
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 16px;
+      line-height: 1.55;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{escape_text(article.get("title") or "(제목 없음)")}</h1>
+    <dl class="meta">
+      <dt>article_id</dt><dd>{escape_text(article.get("article_id"))}</dd>
+      <dt>작성일</dt><dd>{escape_text(article.get("posted_at") or "-")}</dd>
+      <dt>작성자</dt><dd>{escape_text(article.get("author") or "-")}</dd>
+      <dt>원문 URL</dt><dd>{source_link}</dd>
+    </dl>
+    {fallback_note}
+    <pre class="body">{escape_text(body)}</pre>
+  </main>
+</body>
+</html>
+"""
+
+
+def render_error_page(message: str) -> bytes:
+    body = f"""<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>Error</title></head>
+<body><main><h1>오류</h1><p>{escape_text(message)}</p></main></body>
+</html>
+"""
+    return body.encode("utf-8")
 
 
 class RagWebHandler(BaseHTTPRequestHandler):
@@ -310,15 +560,17 @@ class RagWebHandler(BaseHTTPRequestHandler):
         sys.stderr.write("%s - - [%s] %s\n" % (self.client_address[0], self.log_date_time_string(), format % args))
 
     def do_GET(self) -> None:
-        if self.path != "/":
+        parsed = urlparse(self.path)
+        if parsed.path == "/":
+            body = HTML_PAGE.encode("utf-8")
+            self.send_html(body, HTTPStatus.OK)
+            return
+        if parsed.path == "/article":
+            self.handle_article_page(parsed.query)
+            return
+        else:
             self.send_json({"ok": False, "error": "not found"}, HTTPStatus.NOT_FOUND)
             return
-        body = HTML_PAGE.encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
     def do_POST(self) -> None:
         if self.path != "/api/answer":
@@ -363,12 +615,42 @@ class RagWebHandler(BaseHTTPRequestHandler):
             collection=self.server.collection,
             project_root=self.server.project_root,
         )
-        return build_success_response(record)
+        return build_success_response(record, self.server.archive_db_path)
+
+    def handle_article_page(self, query_string: str) -> None:
+        query = parse_qs(query_string)
+        article_values = query.get("article_id", [])
+        if len(article_values) != 1:
+            self.send_html(render_error_page("article_id is required"), HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            article_id = parse_article_id(article_values[0])
+        except ValueError as exc:
+            self.send_html(render_error_page(sanitize_error(exc)), HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            article = fetch_article(self.server.archive_db_path, article_id)
+        except Exception:
+            self.send_html(render_error_page("article lookup failed"), HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        if article is None:
+            self.send_html(render_error_page("article not found"), HTTPStatus.NOT_FOUND)
+            return
+        used_raw_html_fallback = not bool(article.get("clean_text")) and bool(article.get("raw_html"))
+        body = render_article_page(article, used_raw_html_fallback).encode("utf-8")
+        self.send_html(body, HTTPStatus.OK)
 
     def send_json(self, payload: dict[str, Any], status: HTTPStatus) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_html(self, body: bytes, status: HTTPStatus) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -381,11 +663,13 @@ class RagHTTPServer(HTTPServer):
         handler_class: type[BaseHTTPRequestHandler],
         *,
         qdrant_path: Path,
+        archive_db_path: Path,
         collection: str,
         project_root: Path,
     ) -> None:
         super().__init__(server_address, handler_class)
         self.qdrant_path = qdrant_path
+        self.archive_db_path = archive_db_path
         self.collection = collection
         self.project_root = project_root
 
@@ -397,6 +681,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default=DEFAULT_HOST, help="Bind host for local use only. Default: 127.0.0.1")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Bind port. Default: 8000")
     parser.add_argument("--qdrant-path", type=Path, default=DEFAULT_QDRANT_PATH)
+    parser.add_argument("--archive-db-path", type=Path, default=DEFAULT_ARCHIVE_DB_PATH)
     parser.add_argument("--collection", default=DEFAULT_COLLECTION)
     return parser.parse_args(argv)
 
@@ -406,6 +691,7 @@ def run_server(args: argparse.Namespace) -> None:
         (args.host, args.port),
         RagWebHandler,
         qdrant_path=args.qdrant_path,
+        archive_db_path=args.archive_db_path,
         collection=args.collection,
         project_root=PROJECT_ROOT,
     )
