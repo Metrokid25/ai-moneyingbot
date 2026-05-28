@@ -19,8 +19,11 @@ Implement RAG-related features only:
 ## Hard Rules
 
 - Do not modify archive write logic unless the task explicitly says so.
+- Do not modify archive crawling, browser, parser, collector, or archive DB write logic.
 - Treat `archive.db` as read-only.
+- Read archive data only through read-only interfaces or JSONL exports.
 - RAG may write only RAG-owned artifacts such as chunks, embeddings, progress files, and vector indexes.
+- RAG owns chunking, embedding, retrieval, answering, eval, and web UI.
 - Do not delete `data/`.
 - Do not modify `.env`.
 - Do not print API keys or secrets.
