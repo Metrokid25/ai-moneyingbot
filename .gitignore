@@ -20,3 +20,8 @@ scripts/diag_empty_body.py
 scripts/diag_article_url.py
 scripts/diag_block_pattern.py
 scripts/diag_dom_structure.py
+
+# Runtime outputs
+.tmp/
+reports/
+state/

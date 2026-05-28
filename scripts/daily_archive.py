@@ -1,0 +1,364 @@
+"""Daily archive pipeline entry point.
+
+This script is intentionally safe by default for local validation:
+`--dry-run` uses mock articles, never logs in, never sends requests to Naver
+Cafe, and does not write to the production `data/` directory.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import tempfile
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Iterable
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from db import article_exists, init_db, upsert_article  # noqa: E402
+from models import Article, Status  # noqa: E402
+
+KST = timezone(timedelta(hours=9))
+DEFAULT_STATE_DIR = PROJECT_ROOT / "state"
+DEFAULT_REPORTS_DIR = PROJECT_ROOT / "reports" / "daily"
+
+
+@dataclass
+class DailyStats:
+    discovered: int = 0
+    duplicates: int = 0
+    saved: int = 0
+    failed: int = 0
+    dry_run: bool = False
+    failed_items: list[dict[str, Any]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def now_kst() -> datetime:
+    return datetime.now(KST)
+
+
+def default_crawl_state() -> dict[str, Any]:
+    return {
+        "last_run_at": None,
+        "last_article_id": None,
+        "last_article_url": None,
+        "total_runs": 0,
+    }
+
+
+def load_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
+    if not path.exists():
+        return dict(default)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"invalid JSON file: {path}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(f"JSON root must be an object: {path}")
+    merged = dict(default)
+    merged.update(data)
+    return merged
+
+
+def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=path.parent,
+        delete=False,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    ) as fh:
+        tmp_path = Path(fh.name)
+        fh.write(payload)
+    tmp_path.replace(path)
+
+
+def load_crawl_state(path: Path) -> dict[str, Any]:
+    return load_json(path, default_crawl_state())
+
+
+def save_crawl_state(path: Path, state: dict[str, Any]) -> None:
+    atomic_write_json(path, state)
+
+
+def default_failed_queue() -> dict[str, Any]:
+    return {"items": []}
+
+
+def load_failed_queue(path: Path) -> dict[str, Any]:
+    queue = load_json(path, default_failed_queue())
+    if not isinstance(queue.get("items"), list):
+        raise RuntimeError(f"failed queue items must be a list: {path}")
+    return queue
+
+
+def save_failed_queue(path: Path, queue: dict[str, Any]) -> None:
+    atomic_write_json(path, queue)
+
+
+def add_failed_item(
+    queue: dict[str, Any],
+    *,
+    article_id: int | str | None,
+    url: str | None,
+    reason: str,
+    failed_at: str,
+) -> None:
+    article_id_text = str(article_id) if article_id is not None else None
+    items = queue.setdefault("items", [])
+    for item in items:
+        if str(item.get("article_id")) == article_id_text and item.get("url") == url:
+            item["reason"] = reason
+            item["retry_count"] = int(item.get("retry_count", 0)) + 1
+            item["last_failed_at"] = failed_at
+            return
+    items.append(
+        {
+            "article_id": article_id_text,
+            "url": url,
+            "reason": reason,
+            "retry_count": 1,
+            "last_failed_at": failed_at,
+        }
+    )
+
+
+def mock_articles() -> list[dict[str, Any]]:
+    return [
+        {
+            "article_id": 900001,
+            "url": "mock://naver-cafe/articles/900001",
+            "title": "mock daily article 1",
+            "author": "mock",
+            "posted_at": "2026-05-28 08:00",
+            "body": "dry-run body 1",
+        },
+        {
+            "article_id": 900001,
+            "url": "mock://naver-cafe/articles/900001",
+            "title": "mock duplicate article",
+            "author": "mock",
+            "posted_at": "2026-05-28 08:00",
+            "body": "duplicate body",
+        },
+        {
+            "article_id": 900002,
+            "url": "mock://naver-cafe/articles/900002",
+            "title": "mock parse failure",
+            "author": "mock",
+            "posted_at": "2026-05-28 08:10",
+            "simulate_failure": "parse_failed",
+        },
+        {
+            "article_id": 900003,
+            "url": "mock://naver-cafe/articles/900003",
+            "title": "mock daily article 2",
+            "author": "mock",
+            "posted_at": "2026-05-28 08:20",
+            "body": "dry-run body 2",
+        },
+    ]
+
+
+def collect_new_articles(*, dry_run: bool) -> list[dict[str, Any]]:
+    if dry_run:
+        return mock_articles()
+    raise NotImplementedError(
+        "real daily collection is not wired yet; run with --dry-run in this phase"
+    )
+
+
+def is_duplicate(article_id: int, seen_ids: set[int], *, dry_run: bool) -> bool:
+    if article_id in seen_ids:
+        return True
+    if dry_run:
+        return False
+    return article_exists(article_id)
+
+
+def save_article(row: dict[str, Any], *, dry_run: bool) -> None:
+    if dry_run:
+        return
+    upsert_article(
+        Article(
+            article_id=int(row["article_id"]),
+            url=str(row["url"]),
+            title=row.get("title"),
+            author=row.get("author"),
+            posted_at=row.get("posted_at"),
+            raw_html=row.get("raw_html"),
+            clean_text=row.get("body") or row.get("clean_text"),
+            source_page=row.get("source_page"),
+            status=Status.INDEXED,
+        )
+    )
+
+
+def run_daily_archive(
+    *,
+    dry_run: bool,
+    state_dir: Path = DEFAULT_STATE_DIR,
+    reports_dir: Path = DEFAULT_REPORTS_DIR,
+    today: datetime | None = None,
+) -> tuple[DailyStats, Path]:
+    run_at = today or now_kst()
+    state_path = state_dir / ("crawl_state.dry-run.json" if dry_run else "crawl_state.json")
+    failed_queue_path = state_dir / (
+        "failed_queue.dry-run.json" if dry_run else "failed_queue.json"
+    )
+
+    state = load_crawl_state(state_path)
+    failed_queue = load_failed_queue(failed_queue_path)
+    stats = DailyStats(dry_run=dry_run)
+    seen_ids: set[int] = set()
+    max_article: dict[str, Any] | None = None
+
+    if not dry_run:
+        init_db()
+
+    try:
+        rows = collect_new_articles(dry_run=dry_run)
+    except Exception as exc:
+        failed_at = run_at.isoformat()
+        add_failed_item(
+            failed_queue,
+            article_id=None,
+            url=None,
+            reason=f"list_collection_failed: {exc}",
+            failed_at=failed_at,
+        )
+        stats.failed += 1
+        stats.failed_items.append(failed_queue["items"][-1])
+        rows = []
+
+    stats.discovered = len(rows)
+
+    for row in rows:
+        article_id = int(row["article_id"])
+        if is_duplicate(article_id, seen_ids, dry_run=dry_run):
+            stats.duplicates += 1
+            continue
+
+        seen_ids.add(article_id)
+        if max_article is None or article_id > int(max_article["article_id"]):
+            max_article = row
+
+        try:
+            if row.get("simulate_failure"):
+                raise RuntimeError(str(row["simulate_failure"]))
+            save_article(row, dry_run=dry_run)
+            stats.saved += 1
+        except Exception as exc:
+            failed_at = run_at.isoformat()
+            add_failed_item(
+                failed_queue,
+                article_id=article_id,
+                url=row.get("url"),
+                reason=str(exc),
+                failed_at=failed_at,
+            )
+            stats.failed += 1
+            stats.failed_items.append(failed_queue["items"][-1])
+
+    state["last_run_at"] = run_at.isoformat()
+    state["total_runs"] = int(state.get("total_runs") or 0) + 1
+    if max_article is not None:
+        state["last_article_id"] = int(max_article["article_id"])
+        state["last_article_url"] = max_article.get("url")
+    if dry_run:
+        stats.notes.append("dry-run: mock data only; data/archive.db was not modified.")
+    else:
+        stats.notes.append("real collection is a later phase; this run used DB duplicate checks.")
+
+    save_crawl_state(state_path, state)
+    save_failed_queue(failed_queue_path, failed_queue)
+    report_path = write_daily_report(reports_dir, run_at, stats)
+    return stats, report_path
+
+
+def write_daily_report(reports_dir: Path, run_at: datetime, stats: DailyStats) -> Path:
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    suffix = "-dry-run" if stats.dry_run else ""
+    report_path = reports_dir / f"{run_at.date().isoformat()}{suffix}.md"
+    failed_lines = []
+    if stats.failed_items:
+        for item in stats.failed_items:
+            failed_lines.append(
+                "- article_id={article_id} url={url} reason={reason} retry_count={retry_count}".format(
+                    article_id=item.get("article_id") or "-",
+                    url=item.get("url") or "-",
+                    reason=item.get("reason") or "-",
+                    retry_count=item.get("retry_count", 0),
+                )
+            )
+    else:
+        failed_lines.append("- 없음")
+
+    notes = stats.notes or ["추가 확인 필요 사항 없음"]
+    content = "\n".join(
+        [
+            f"# Daily Archive Report - {run_at.date().isoformat()}",
+            "",
+            "## Summary",
+            f"- 신규 수집: {stats.discovered}",
+            f"- 중복 제외: {stats.duplicates}",
+            f"- 저장 성공: {stats.saved}",
+            f"- 실패: {stats.failed}",
+            f"- dry-run 여부: {'yes' if stats.dry_run else 'no'}",
+            "",
+            "## Failed Items",
+            *failed_lines,
+            "",
+            "## Notes",
+            *[f"- {note}" for note in notes],
+            "",
+        ]
+    )
+    report_path.write_text(content, encoding="utf-8")
+    return report_path
+
+
+def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the daily archive pipeline")
+    parser.add_argument("--dry-run", action="store_true", help="use mock data and avoid data/")
+    parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
+    parser.add_argument("--reports-dir", type=Path, default=DEFAULT_REPORTS_DIR)
+    return parser.parse_args(argv)
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        stats, report_path = run_daily_archive(
+            dry_run=args.dry_run,
+            state_dir=args.state_dir,
+            reports_dir=args.reports_dir,
+        )
+    except NotImplementedError as exc:
+        print(f"[daily_archive] {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"[daily_archive] ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    print("[daily_archive] done")
+    print(f"  dry_run    : {stats.dry_run}")
+    print(f"  discovered : {stats.discovered}")
+    print(f"  duplicates : {stats.duplicates}")
+    print(f"  saved      : {stats.saved}")
+    print(f"  failed     : {stats.failed}")
+    print(f"  report     : {report_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
