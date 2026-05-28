@@ -1,0 +1,128 @@
+# RAG Autorunner
+
+## Purpose
+
+The RAG autorunner gives the ai-moneyingbot RAG Agent a guarded one-task execution path. It can inspect pending tasks, run Codex once, run verification, write reports, and, only after its safety gate passes, commit and push RAG-scoped changes on an `agent/rag-*` branch.
+
+This is for RAG work only. It is not an archive crawler, archive writer, or unrestricted auto-merge system.
+
+## Run Once
+
+```powershell
+cd C:\projects\ai_moneyingbot_rag_agent
+.\.venv\Scripts\Activate.ps1
+.\scripts\run_rag_agent_once.ps1
+```
+
+## Repeat
+
+```powershell
+.\scripts\run_rag_agent_loop.ps1 -Iterations 3 -SleepSeconds 300
+```
+
+Long-running mode must be explicit:
+
+```powershell
+.\scripts\run_rag_agent_loop.ps1 -Forever -SleepSeconds 600
+```
+
+## Check Without Commit
+
+```powershell
+.\scripts\run_rag_agent_once.ps1 -NoCommit
+```
+
+Commit locally but do not push:
+
+```powershell
+.\scripts\run_rag_agent_once.ps1 -NoPush
+```
+
+Dry-run mode skips Codex execution, commit, and push:
+
+```powershell
+.\scripts\run_rag_agent_once.ps1 -DryRun -NoCommit -NoPush
+```
+
+## Reports
+
+Reports are written under `agent_reports/`. Each once-run creates a timestamped Markdown report, and Codex execution logs are written beside it when Codex is actually executed.
+
+## What Automation Does
+
+- Moves to the repository root.
+- Lists pending agent tasks.
+- Reads `agent_prompts/rag_autorunner.md`.
+- Runs Codex once unless `-DryRun` is set.
+- Records `git status -sb`, `git diff --stat`, `git diff --check`, task queue state, and pytest output.
+- Collects changed files from Git status.
+- Validates changed files against the RAG allowlist.
+- Blocks forbidden paths.
+- Stages only validated files one by one.
+- Commits only after the safety gate passes.
+- Pushes only to `origin/<current-branch>` for the current `agent/rag-*` branch.
+
+## What Automation Never Does
+
+- It never protects or bypasses a dirty non-RAG branch.
+- It never commits or pushes `main` or `master` automatically.
+- It never edits `.env`.
+- It never writes, deletes, or resets `archive.db`.
+- It never modifies raw `data/` originals.
+- It never accesses Naver Cafe.
+- It never modifies archive crawling or archive write code.
+- It never uses a bulk Git stage command.
+
+## Automatic Commit And Push Conditions
+
+Automatic commit and push require all of these conditions:
+
+- Current branch starts with `agent/rag-`.
+- Current branch is not `main` or `master`.
+- Git status shows changed files.
+- Every changed file is inside the RAG allowlist.
+- No forbidden path changed.
+- `.env`, `archive.db`, raw `data/`, and `scripts/_step3_verify_v2.py` are untouched.
+- `git diff --check` passes.
+- Pytest was executed and recorded in the report.
+- Staging is performed only for individually validated files.
+- Push target is `origin/<current-branch>`.
+
+If pytest collection fails because existing optional dependencies such as Playwright, BeautifulSoup, or Qdrant client are missing, the report must preserve that failure. The run may commit only when the failure is clearly unrelated to the current change and no newly added test fails.
+
+## Windows Task Scheduler Notes
+
+Use the repository path as the working directory:
+
+```text
+C:\projects\ai_moneyingbot_rag_agent
+```
+
+Call PowerShell with an explicit script path and parameters. Do not schedule the `-Forever` mode unless the machine is intended to keep the task running continuously. Prefer a bounded `-Iterations` value for unattended runs.
+
+Make sure the scheduled account has:
+
+- Access to the repository.
+- A configured Git identity.
+- Credentials for the intended `origin` remote.
+- The same Python environment and Codex CLI available on PATH.
+
+## Reverting A Bad Automatic Commit
+
+First inspect the current branch and recent commits:
+
+```powershell
+git status -sb
+git log --oneline -3
+```
+
+If the bad commit has not been pushed, use a normal local reset only after confirming the commit hash and branch with a human reviewer.
+
+If the bad commit has been pushed, prefer a revert commit:
+
+```powershell
+git revert <bad-commit-sha>
+git push origin HEAD
+```
+
+Do not rewrite shared history unless the repository owner explicitly approves it.
