@@ -25,3 +25,7 @@ scripts/diag_dom_structure.py
 .tmp/
 reports/
 state/
+
+# Agent runtime reports
+agent_reports/*
+!agent_reports/.gitkeep
