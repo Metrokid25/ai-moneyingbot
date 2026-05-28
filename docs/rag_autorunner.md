@@ -46,7 +46,7 @@ Dry-run mode skips Codex execution, commit, and push:
 
 ## Reports
 
-Reports are written under `agent_reports/`. Each once-run creates a timestamped Markdown report, and Codex execution logs are written beside it when Codex is actually executed.
+Reports are written under `agent_reports/`. Each once-run creates a timestamped Markdown report, and Codex execution logs are written beside it when Codex is actually executed. The `.codex.log` file captures both stdout and stderr so the Markdown report can continue even when Codex exits with an error.
 
 ## What Automation Does
 

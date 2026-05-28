@@ -33,6 +33,8 @@ function Add-ReportCommand {
   Add-Report "## $Title"
   Add-Report ""
   Add-Report '```text'
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
   try {
     $output = & $Command 2>&1 | Out-String
     if ([string]::IsNullOrWhiteSpace($output)) {
@@ -42,8 +44,8 @@ function Add-ReportCommand {
     }
   } catch {
     Add-Report $_.Exception.Message
-    throw
   } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
     Add-Report '```'
   }
 }
@@ -131,13 +133,59 @@ function Invoke-LoggedProcess {
   Add-Report ""
   Add-Report '```text'
   Add-Report "$FilePath $($Arguments -join ' ')"
-  $output = & $FilePath @Arguments 2>&1 | Out-String
-  $exitCode = $LASTEXITCODE
-  if (-not [string]::IsNullOrWhiteSpace($output)) {
-    Add-Report $output.TrimEnd()
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $output = & $FilePath @Arguments 2>&1 | Out-String
+    $exitCode = $LASTEXITCODE
+    if (-not [string]::IsNullOrWhiteSpace($output)) {
+      Add-Report $output.TrimEnd()
+    }
+  } catch {
+    $exitCode = 1
+    Add-Report $_.Exception.Message
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
   }
   Add-Report "exit_code=$exitCode"
   Add-Report '```'
+  return $exitCode
+}
+
+function Invoke-CodexExec {
+  param(
+    [string]$PromptText,
+    [string]$LogPath
+  )
+
+  $stdoutPath = "$LogPath.stdout.tmp"
+  $stderrPath = "$LogPath.stderr.tmp"
+  Remove-Item -Path $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+  try {
+    # Primary command for current Codex CLI builds:
+    #   codex exec --sandbox workspace-write -
+    # The prompt is written to stdin to avoid PowerShell argument quoting issues.
+    # If a local CLI build uses different option names, run the equivalent
+    # non-interactive exec command with workspace-write sandboxing.
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $PromptText | & codex exec --sandbox workspace-write - 1> $stdoutPath 2> $stderrPath
+    $exitCode = $LASTEXITCODE
+  } catch {
+    $exitCode = 1
+    Set-Content -Path $stderrPath -Value $_.Exception.Message -Encoding UTF8
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+    $stdout = if (Test-Path $stdoutPath) { Get-Content -Path $stdoutPath -Raw -Encoding UTF8 } else { "" }
+    $stderr = if (Test-Path $stderrPath) { Get-Content -Path $stderrPath -Raw -Encoding UTF8 } else { "" }
+    Set-Content -Path $LogPath -Value "## stdout" -Encoding UTF8
+    Add-Content -Path $LogPath -Value $stdout -Encoding UTF8
+    Add-Content -Path $LogPath -Value "## stderr" -Encoding UTF8
+    Add-Content -Path $LogPath -Value $stderr -Encoding UTF8
+    Remove-Item -Path $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+  }
+
   return $exitCode
 }
 
@@ -163,6 +211,8 @@ if (-not (Test-Path "agent_prompts/rag_autorunner.md")) {
 }
 
 $PromptText = Get-Content -Path "agent_prompts/rag_autorunner.md" -Raw -Encoding UTF8
+$codexExit = 0
+$codexFailed = $false
 
 if ($DryRun) {
   Add-Report ""
@@ -172,15 +222,11 @@ if ($DryRun) {
   Add-Report "## codex exec"
   Add-Report ""
   Add-Report "Log: $CodexLogPath"
-  # Primary command for current Codex CLI builds:
-  #   codex exec --sandbox workspace-write $PromptText
-  # If a local CLI build uses different option names, run the equivalent
-  # non-interactive exec command with workspace-write sandboxing.
-  & codex exec --sandbox workspace-write $PromptText *> $CodexLogPath
-  $codexExit = $LASTEXITCODE
+  $codexExit = Invoke-CodexExec -PromptText $PromptText -LogPath $CodexLogPath
   Add-Report "codex_exit_code=$codexExit"
   if ($codexExit -ne 0) {
-    Add-Report "BLOCKED: codex exec failed."
+    $codexFailed = $true
+    Add-Report "blocked: codex exec failed"
   }
 }
 
@@ -245,6 +291,10 @@ if ($forbidden.Count -gt 0) {
 if ($diffCheckExit -ne 0) {
   $canCommit = $false
   Add-Report "- blocked: git diff --check failed."
+}
+if ($codexFailed) {
+  $canCommit = $false
+  Add-Report "- blocked: codex exec failed"
 }
 
 if ($canCommit) {
