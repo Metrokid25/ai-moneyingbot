@@ -1,8 +1,9 @@
 """Daily archive pipeline entry point.
 
-This script is intentionally safe by default for local validation:
-`--dry-run` uses mock articles, never logs in, never sends requests to Naver
-Cafe, and does not write to the production `data/` directory.
+Safety defaults:
+- `--dry-run` uses mock articles and never touches production `data/`.
+- `--execute` is required for bounded real collection.
+- Running with no mode prints guidance and exits without collecting.
 """
 from __future__ import annotations
 
@@ -26,6 +27,11 @@ from models import Article, Status  # noqa: E402
 KST = timezone(timedelta(hours=9))
 DEFAULT_STATE_DIR = PROJECT_ROOT / "state"
 DEFAULT_REPORTS_DIR = PROJECT_ROOT / "reports" / "daily"
+DEFAULT_LIMIT = 10
+DEFAULT_PAGE_LIMIT = 1
+MAX_LIMIT = 100
+MAX_PAGE_LIMIT = 10
+DEFAULT_DELAY_SECONDS = 3.0
 
 
 @dataclass
@@ -35,6 +41,9 @@ class DailyStats:
     saved: int = 0
     failed: int = 0
     dry_run: bool = False
+    mode: str = "dry-run"
+    limit: int = DEFAULT_LIMIT
+    page_limit: int | None = DEFAULT_PAGE_LIMIT
     failed_items: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -172,9 +181,55 @@ def mock_articles() -> list[dict[str, Any]]:
 def collect_new_articles(*, dry_run: bool) -> list[dict[str, Any]]:
     if dry_run:
         return mock_articles()
-    raise NotImplementedError(
-        "real daily collection is not wired yet; run with --dry-run in this phase"
-    )
+    raise RuntimeError("collect_new_articles only supports dry-run")
+
+
+def collect_execute_articles(
+    *,
+    list_url: str | None,
+    limit: int,
+    page_limit: int | None,
+    delay_seconds: float = DEFAULT_DELAY_SECONDS,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Collect article list rows in execute mode with strict bounds.
+
+    This is the single real-collection bridge. It reuses:
+    - `BrowserSession` from `src/browser.py`
+    - `_fetch_rows` from `scripts/index_tail.py`
+
+    If `list_url` is omitted, no browser is opened and no network request is sent.
+    """
+    if not list_url:
+        return [], ["execute mode skipped: --list-url was not provided"]
+
+    import time  # noqa: WPS433
+
+    from browser import BrowserSession  # noqa: WPS433
+    from index_tail import _fetch_rows  # noqa: WPS433
+
+    pages_to_scan = page_limit if page_limit is not None else DEFAULT_PAGE_LIMIT
+    rows: list[dict[str, Any]] = []
+    session = BrowserSession()
+    try:
+        for page_num in range(1, pages_to_scan + 1):
+            page_rows, err = _fetch_rows(session, list_url, page_num)
+            if err:
+                raise RuntimeError(f"list page {page_num} failed: {err}")
+            for row in page_rows or []:
+                rows.append(row)
+                if len(rows) >= limit:
+                    return rows, []
+            if page_num < pages_to_scan:
+                time.sleep(delay_seconds)
+    finally:
+        session.close()
+    return rows, []
+
+
+def collect_article_body(article_id: int) -> tuple[str, str | None]:
+    from collector import collect_body  # noqa: WPS433
+
+    return collect_body(article_id)
 
 
 def is_duplicate(article_id: int, seen_ids: set[int], *, dry_run: bool) -> bool:
@@ -206,6 +261,12 @@ def save_article(row: dict[str, Any], *, dry_run: bool) -> None:
 def run_daily_archive(
     *,
     dry_run: bool,
+    execute: bool = False,
+    limit: int = DEFAULT_LIMIT,
+    page_limit: int | None = DEFAULT_PAGE_LIMIT,
+    list_url: str | None = None,
+    collect_body: bool = False,
+    delay_seconds: float = DEFAULT_DELAY_SECONDS,
     state_dir: Path = DEFAULT_STATE_DIR,
     reports_dir: Path = DEFAULT_REPORTS_DIR,
     today: datetime | None = None,
@@ -218,21 +279,35 @@ def run_daily_archive(
 
     state = load_crawl_state(state_path)
     failed_queue = load_failed_queue(failed_queue_path)
-    stats = DailyStats(dry_run=dry_run)
+    stats = DailyStats(
+        dry_run=dry_run,
+        mode="dry-run" if dry_run else "execute",
+        limit=limit,
+        page_limit=page_limit,
+    )
     seen_ids: set[int] = set()
     max_article: dict[str, Any] | None = None
 
-    if not dry_run:
-        init_db()
-
     try:
-        rows = collect_new_articles(dry_run=dry_run)
+        if dry_run:
+            rows = collect_new_articles(dry_run=True)
+        elif execute:
+            rows, notes = collect_execute_articles(
+                list_url=list_url,
+                limit=limit,
+                page_limit=page_limit,
+                delay_seconds=delay_seconds,
+            )
+            stats.notes.extend(notes)
+        else:
+            rows = []
+            stats.notes.append("no mode selected; use --dry-run or --execute")
     except Exception as exc:
         failed_at = run_at.isoformat()
         add_failed_item(
             failed_queue,
             article_id=None,
-            url=None,
+            url=list_url,
             reason=f"list_collection_failed: {exc}",
             failed_at=failed_at,
         )
@@ -240,9 +315,11 @@ def run_daily_archive(
         stats.failed_items.append(failed_queue["items"][-1])
         rows = []
 
-    stats.discovered = len(rows)
+    stats.discovered = min(len(rows), limit)
+    if not dry_run and rows:
+        init_db()
 
-    for row in rows:
+    for row in rows[:limit]:
         article_id = int(row["article_id"])
         if is_duplicate(article_id, seen_ids, dry_run=dry_run):
             stats.duplicates += 1
@@ -256,6 +333,13 @@ def run_daily_archive(
             if row.get("simulate_failure"):
                 raise RuntimeError(str(row["simulate_failure"]))
             save_article(row, dry_run=dry_run)
+            if collect_body and not dry_run:
+                body_status, block_signal = collect_article_body(article_id)
+                if body_status != Status.BODY_COLLECTED:
+                    reason = f"body_collection_status={body_status}"
+                    if block_signal:
+                        reason += f", block_signal={block_signal}"
+                    raise RuntimeError(reason)
             stats.saved += 1
         except Exception as exc:
             failed_at = run_at.isoformat()
@@ -277,7 +361,9 @@ def run_daily_archive(
     if dry_run:
         stats.notes.append("dry-run: mock data only; data/archive.db was not modified.")
     else:
-        stats.notes.append("real collection is a later phase; this run used DB duplicate checks.")
+        stats.notes.append("execute: bounded archive collection path; DB duplicate checks enabled.")
+        if not collect_body:
+            stats.notes.append("body collection skipped; pass --collect-body to call collector.collect_body.")
 
     save_crawl_state(state_path, state)
     save_failed_queue(failed_queue_path, failed_queue)
@@ -309,11 +395,14 @@ def write_daily_report(reports_dir: Path, run_at: datetime, stats: DailyStats) -
             f"# Daily Archive Report - {run_at.date().isoformat()}",
             "",
             "## Summary",
-            f"- 신규 수집: {stats.discovered}",
+            f"- 신규 발견: {stats.discovered}",
             f"- 중복 제외: {stats.duplicates}",
             f"- 저장 성공: {stats.saved}",
             f"- 실패: {stats.failed}",
+            f"- 실행 모드: {stats.mode}",
             f"- dry-run 여부: {'yes' if stats.dry_run else 'no'}",
+            f"- limit: {stats.limit}",
+            f"- page_limit: {stats.page_limit if stats.page_limit is not None else '-'}",
             "",
             "## Failed Items",
             *failed_lines,
@@ -330,28 +419,63 @@ def write_daily_report(reports_dir: Path, run_at: datetime, stats: DailyStats) -
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the daily archive pipeline")
     parser.add_argument("--dry-run", action="store_true", help="use mock data and avoid data/")
+    parser.add_argument("--execute", action="store_true", help="run bounded archive collection")
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--page-limit", type=int, default=DEFAULT_PAGE_LIMIT)
+    parser.add_argument("--list-url", default=None, help="Naver Cafe article-list URL for execute mode")
+    parser.add_argument(
+        "--collect-body",
+        action="store_true",
+        help="after indexing list rows, call collector.collect_body for saved articles",
+    )
+    parser.add_argument("--delay-seconds", type=float, default=DEFAULT_DELAY_SECONDS)
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
     parser.add_argument("--reports-dir", type=Path, default=DEFAULT_REPORTS_DIR)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.dry_run and args.execute:
+        parser.error("--dry-run and --execute are mutually exclusive")
+    if args.execute and args.limit is None:
+        parser.error("--execute requires --limit N")
+    if args.limit is None:
+        args.limit = DEFAULT_LIMIT
+    if args.limit < 1 or args.limit > MAX_LIMIT:
+        parser.error(f"--limit must be between 1 and {MAX_LIMIT}")
+    if args.page_limit < 1 or args.page_limit > MAX_PAGE_LIMIT:
+        parser.error(f"--page-limit must be between 1 and {MAX_PAGE_LIMIT}")
+    if args.delay_seconds < 0:
+        parser.error("--delay-seconds must be non-negative")
+    return args
 
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
+    if not args.dry_run and not args.execute:
+        print("[daily_archive] no collection mode selected")
+        print("  use --dry-run for mock validation")
+        print("  use --execute --limit N --list-url <URL> for bounded real collection")
+        return 0
+
     try:
         stats, report_path = run_daily_archive(
             dry_run=args.dry_run,
+            execute=args.execute,
+            limit=args.limit,
+            page_limit=args.page_limit,
+            list_url=args.list_url,
+            collect_body=args.collect_body,
+            delay_seconds=args.delay_seconds,
             state_dir=args.state_dir,
             reports_dir=args.reports_dir,
         )
-    except NotImplementedError as exc:
-        print(f"[daily_archive] {exc}", file=sys.stderr)
-        return 2
     except Exception as exc:
         print(f"[daily_archive] ERROR: {exc}", file=sys.stderr)
         return 1
 
     print("[daily_archive] done")
+    print(f"  mode       : {stats.mode}")
     print(f"  dry_run    : {stats.dry_run}")
+    print(f"  limit      : {stats.limit}")
+    print(f"  page_limit : {stats.page_limit}")
     print(f"  discovered : {stats.discovered}")
     print(f"  duplicates : {stats.duplicates}")
     print(f"  saved      : {stats.saved}")

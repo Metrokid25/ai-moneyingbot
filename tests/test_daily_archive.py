@@ -1,7 +1,8 @@
 import json
 import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, "scripts")
 
@@ -135,3 +136,227 @@ def test_write_daily_report_without_failed_items(tmp_path):
     text = path.read_text(encoding="utf-8")
     assert "## Failed Items" in text
     assert "- 없음" in text
+
+
+def test_main_without_mode_does_not_collect(monkeypatch, capsys):
+    def fail_if_called(**_kwargs):
+        raise AssertionError("run_daily_archive should not be called")
+
+    monkeypatch.setattr(daily_archive, "run_daily_archive", fail_if_called)
+
+    rc = daily_archive.main([])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "no collection mode selected" in captured.out
+    assert "--dry-run" in captured.out
+    assert "--execute" in captured.out
+
+
+def test_execute_requires_explicit_limit():
+    with pytest.raises(SystemExit) as exc_info:
+        daily_archive.parse_args(["--execute"])
+
+    assert exc_info.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--execute", "--limit", "0"],
+        ["--execute", "--limit", "101"],
+        ["--execute", "--limit", "2", "--page-limit", "0"],
+        ["--execute", "--limit", "2", "--page-limit", "11"],
+    ],
+)
+def test_execute_rejects_out_of_range_limits(argv):
+    with pytest.raises(SystemExit) as exc_info:
+        daily_archive.parse_args(argv)
+
+    assert exc_info.value.code == 2
+
+
+def test_dry_run_does_not_use_execute_or_db(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        daily_archive,
+        "collect_execute_articles",
+        lambda **_kwargs: pytest.fail("execute collector should not be called"),
+    )
+    monkeypatch.setattr(daily_archive, "init_db", lambda: pytest.fail("init_db should not be called"))
+    monkeypatch.setattr(
+        daily_archive,
+        "article_exists",
+        lambda _article_id: pytest.fail("article_exists should not be called"),
+    )
+    monkeypatch.setattr(
+        daily_archive,
+        "upsert_article",
+        lambda _article: pytest.fail("upsert_article should not be called"),
+    )
+
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=True,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+
+    assert stats.dry_run is True
+    assert stats.saved == 2
+
+
+def test_execute_uses_mockable_collector_and_applies_limit(tmp_path, monkeypatch):
+    rows = [
+        {"article_id": 1, "url": "mock://1", "title": "one"},
+        {"article_id": 2, "url": "mock://2", "title": "two"},
+        {"article_id": 3, "url": "mock://3", "title": "three"},
+    ]
+    saved: list[int] = []
+
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: (rows, []))
+    monkeypatch.setattr(daily_archive, "init_db", lambda: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "is_duplicate",
+        lambda article_id, seen_ids, *, dry_run: article_id in seen_ids,
+    )
+    monkeypatch.setattr(
+        daily_archive,
+        "save_article",
+        lambda row, *, dry_run: saved.append(int(row["article_id"])),
+    )
+
+    stats, report_path = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=2,
+        page_limit=1,
+        list_url="https://example.test/list",
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+
+    assert stats.mode == "execute"
+    assert stats.discovered == 2
+    assert stats.saved == 2
+    assert saved == [1, 2]
+    assert report_path == tmp_path / "reports" / "2026-05-28.md"
+
+
+def test_execute_state_is_separate_from_dry_run_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: ([], []))
+
+    daily_archive.run_daily_archive(
+        dry_run=True,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+    daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=2,
+        page_limit=1,
+        list_url=None,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+
+    assert (tmp_path / "state" / "crawl_state.dry-run.json").exists()
+    assert (tmp_path / "state" / "failed_queue.dry-run.json").exists()
+    assert (tmp_path / "state" / "crawl_state.json").exists()
+    assert (tmp_path / "state" / "failed_queue.json").exists()
+
+
+def test_execute_records_failed_item(tmp_path, monkeypatch):
+    rows = [
+        {
+            "article_id": 10,
+            "url": "mock://10",
+            "title": "bad",
+            "simulate_failure": "parse_failed",
+        }
+    ]
+
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: (rows, []))
+    monkeypatch.setattr(daily_archive, "init_db", lambda: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "is_duplicate",
+        lambda article_id, seen_ids, *, dry_run: False,
+    )
+
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=10,
+        page_limit=1,
+        list_url="https://example.test/list",
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+
+    queue = json.loads((tmp_path / "state" / "failed_queue.json").read_text())
+    assert stats.failed == 1
+    assert queue["items"][0]["article_id"] == "10"
+    assert queue["items"][0]["reason"] == "parse_failed"
+
+
+def test_execute_without_list_url_does_not_initialize_db(tmp_path, monkeypatch):
+    called = False
+
+    def record_init_db():
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(daily_archive, "init_db", record_init_db)
+
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=2,
+        page_limit=1,
+        list_url=None,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+
+    assert stats.saved == 0
+    assert not called
+    assert "execute mode skipped" in stats.notes[0]
+
+
+def test_execute_without_collect_body_does_not_call_body_collector(tmp_path, monkeypatch):
+    rows = [{"article_id": 1, "url": "mock://1", "title": "one"}]
+
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: (rows, []))
+    monkeypatch.setattr(daily_archive, "init_db", lambda: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "is_duplicate",
+        lambda article_id, seen_ids, *, dry_run: False,
+    )
+    monkeypatch.setattr(daily_archive, "save_article", lambda row, *, dry_run: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "collect_article_body",
+        lambda _article_id: pytest.fail("collect_article_body should not be called"),
+    )
+
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=1,
+        page_limit=1,
+        list_url="https://example.test/list",
+        collect_body=False,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+
+    assert stats.saved == 1
