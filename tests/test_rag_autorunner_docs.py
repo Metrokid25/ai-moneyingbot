@@ -62,3 +62,23 @@ def test_autorunner_prompt_selects_actionable_rag_tasks_only():
     assert "Skip tasks that are archive-owned or already completed by current git history." in prompt
     assert "If no actionable RAG pending task exists" in prompt
     assert "Do not repeatedly re-process completed task definitions." in prompt
+
+
+def test_autorunner_prompt_forces_jsonl_ingest_task_execution():
+    prompt = read_text("agent_prompts/rag_autorunner.md")
+
+    assert "004-rag-jsonl-ingest.md" in prompt
+    assert "a no-op run is a failure" in prompt
+    assert "Open/read the selected task file and implement it." in prompt
+    assert "001-real-daily-archive-wiring.md" in prompt
+    assert "because it is archive-owned" in prompt
+
+
+def test_autorunner_docs_describe_jsonl_ingest_task_selection():
+    docs = read_text("docs/rag_autorunner.md")
+
+    assert "004-rag-jsonl-ingest.md" in docs
+    assert "next actionable RAG implementation task" in docs
+    assert "001-real-daily-archive-wiring.md" in docs
+    assert "archive-owned" in docs
+    assert "silently doing nothing" in docs

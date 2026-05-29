@@ -53,6 +53,10 @@ Reports are written under `agent_reports/`. Each once-run creates a timestamped 
 - Moves to the repository root.
 - Lists pending agent tasks.
 - Reads `agent_prompts/rag_autorunner.md`.
+- Selects `agent_tasks/pending/004-rag-jsonl-ingest.md` as the next implementation task when it exists.
+- Skips `agent_tasks/pending/001-real-daily-archive-wiring.md` because it is archive-owned.
+- Opens and reads the selected task file before implementation.
+- Treats a no-op run as a failure when an actionable RAG pending task exists, unless the task is already implemented and verified.
 - Runs Codex once unless `-DryRun` is set.
 - Records `git status -sb`, `git diff --stat`, `git diff --check`, task queue state, and pytest output.
 - Collects changed files from Git status.
@@ -71,7 +75,18 @@ Reports are written under `agent_reports/`. Each once-run creates a timestamped 
 - It never modifies raw `data/` originals.
 - It never accesses Naver Cafe.
 - It never modifies archive crawling or archive write code.
+- It never repeatedly inspects pending tasks and exits without action when a RAG task is actionable.
 - It never uses a bulk Git stage command.
+
+## Task Selection
+
+When `agent_tasks/pending/004-rag-jsonl-ingest.md` exists, the autorunner should choose it as the next actionable RAG implementation task. It must read that task file and implement the requested files:
+
+- `scripts/ingest_archive_export.py`
+- `tests/fixtures/sample_articles.jsonl`
+- `tests/test_ingest_archive_export.py`
+
+The autorunner must skip `agent_tasks/pending/001-real-daily-archive-wiring.md` because that task is archive-owned. If a selected RAG task appears already complete, the autorunner must verify the completion criteria and report the result instead of silently doing nothing.
 
 ## Automatic Commit And Push Conditions
 
