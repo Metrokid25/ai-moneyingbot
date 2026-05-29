@@ -35,6 +35,13 @@ def sample_context_items():
             "score": 0.91,
             "chunk_id": "10:0",
             "article_id": 10,
+            "content_hash": "hash-10",
+            "url": "https://example.test/articles/10",
+            "source_url": "https://example.test/articles/10",
+            "created_at": "2026.05.18.",
+            "collected_at": "2026-05-18T09:00:00+09:00",
+            "posted_at": "2026.05.18.",
+            "source": "sample_archive_export",
             "title": "rate and stocks",
             "text": "Higher rates can pressure discounts and liquidity.",
         }
@@ -50,6 +57,8 @@ def test_prompt_contains_context_and_query():
     assert "rate hike question" in rendered
     assert "Higher rates can pressure discounts and liquidity." in rendered
     assert "chunk_id: 10:0" in rendered
+    assert "url: https://example.test/articles/10" in rendered
+    assert "content_hash: hash-10" in rendered
 
 
 def test_prompt_instructs_no_guessing_without_evidence():
@@ -70,6 +79,13 @@ def test_sources_include_required_fields():
         {
             "chunk_id": "10:0",
             "article_id": 10,
+            "content_hash": "hash-10",
+            "url": "https://example.test/articles/10",
+            "source_url": "https://example.test/articles/10",
+            "created_at": "2026.05.18.",
+            "collected_at": "2026-05-18T09:00:00+09:00",
+            "posted_at": "2026.05.18.",
+            "source": "sample_archive_export",
             "title": "rate and stocks",
             "score": 0.91,
         }
@@ -90,7 +106,10 @@ def test_answer_formats_include_sources():
 
     assert "## " in markdown
     assert "chunk_id: 10:0" in markdown
+    assert "url: https://example.test/articles/10" in markdown
     assert payload["sources"][0]["article_id"] == 10
+    assert payload["sources"][0]["content_hash"] == "hash-10"
+    assert payload["sources"][0]["url"] == "https://example.test/articles/10"
 
 
 def test_usage_and_estimated_cost_are_in_answer_formats():

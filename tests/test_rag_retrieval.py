@@ -1,10 +1,15 @@
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
 from rag_retrieval import (
     VECTOR_SIZE,
+    extract_source_metadata,
     format_search_result,
     make_snippet,
     validate_query_vector,
@@ -29,6 +34,11 @@ def test_format_search_result_handles_payload_fields():
         payload={
             "chunk_id": "1:0",
             "article_id": 1,
+            "content_hash": "hash-1",
+            "url": "https://example.test/articles/1",
+            "source_url": "https://example.test/articles/1",
+            "created_at": "2026.05.18.",
+            "collected_at": "2026-05-18T09:00:00+09:00",
             "posted_at": "2026.05.18.",
             "title": "title",
             "text": "body text",
@@ -43,6 +53,11 @@ def test_format_search_result_handles_payload_fields():
         "score": 0.87,
         "chunk_id": "1:0",
         "article_id": 1,
+        "content_hash": "hash-1",
+        "url": "https://example.test/articles/1",
+        "source_url": "https://example.test/articles/1",
+        "created_at": "2026.05.18.",
+        "collected_at": "2026-05-18T09:00:00+09:00",
         "posted_at": "2026.05.18.",
         "title": "title",
         "snippet": "body text",
@@ -56,9 +71,38 @@ def test_format_search_result_handles_missing_payload_fields():
     assert row["rank"] == 3
     assert row["chunk_id"] is None
     assert row["article_id"] is None
+    assert row["content_hash"] is None
+    assert row["url"] is None
+    assert row["source_url"] is None
+    assert row["created_at"] is None
+    assert row["collected_at"] is None
     assert row["title"] is None
     assert row["snippet"] == ""
     assert row["source"] is None
+
+
+def test_extract_source_metadata_accepts_nested_metadata_fallback():
+    payload = {
+        "metadata": {
+            "chunk_id": "1:0",
+            "article_id": 1,
+            "content_hash": "hash-1",
+            "url": "https://example.test/articles/1",
+            "source_url": "https://example.test/articles/1",
+            "created_at": "2026.05.18.",
+            "collected_at": "2026-05-18T09:00:00+09:00",
+            "posted_at": "2026.05.18.",
+            "source": "source",
+            "title": "title",
+        }
+    }
+
+    metadata = extract_source_metadata(payload)
+
+    assert metadata["chunk_id"] == "1:0"
+    assert metadata["content_hash"] == "hash-1"
+    assert metadata["url"] == "https://example.test/articles/1"
+    assert metadata["created_at"] == "2026.05.18."
 
 
 @pytest.mark.parametrize("top_k", [1, 5, 20])

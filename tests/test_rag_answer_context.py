@@ -56,6 +56,11 @@ def test_build_context_item_extracts_payload_fields():
             "chunk_id": "1:0",
             "article_id": 1,
             "title": "title",
+            "content_hash": "hash-1",
+            "url": "https://example.test/articles/1",
+            "source_url": "https://example.test/articles/1",
+            "created_at": "2026.05.18.",
+            "collected_at": "2026-05-18T09:00:00+09:00",
             "posted_at": "2026.05.18.",
             "year": 2026,
             "month": 5,
@@ -72,6 +77,11 @@ def test_build_context_item_extracts_payload_fields():
         "chunk_id": "1:0",
         "article_id": 1,
         "title": "title",
+        "content_hash": "hash-1",
+        "url": "https://example.test/articles/1",
+        "source_url": "https://example.test/articles/1",
+        "created_at": "2026.05.18.",
+        "collected_at": "2026-05-18T09:00:00+09:00",
         "posted_at": "2026.05.18.",
         "year": 2026,
         "month": 5,
@@ -99,6 +109,11 @@ def test_markdown_context_contains_question_rank_title_chunk_score_and_text():
         "chunk_id": "1:0",
         "article_id": 1,
         "title": "title",
+        "content_hash": "hash-1",
+        "url": "https://example.test/articles/1",
+        "source_url": "https://example.test/articles/1",
+        "created_at": "2026.05.18.",
+        "collected_at": "2026-05-18T09:00:00+09:00",
         "posted_at": "2026.05.18.",
         "year": 2026,
         "month": 5,
@@ -112,6 +127,11 @@ def test_markdown_context_contains_question_rank_title_chunk_score_and_text():
     assert "Question: question" in markdown
     assert "1. title" in markdown
     assert "chunk_id: 1:0" in markdown
+    assert "content_hash: hash-1" in markdown
+    assert "url: https://example.test/articles/1" in markdown
+    assert "source_url: https://example.test/articles/1" in markdown
+    assert "created_at: 2026.05.18." in markdown
+    assert "collected_at: 2026-05-18T09:00:00+09:00" in markdown
     assert "score: 0.87" in markdown
     assert "body text" in markdown
 
@@ -128,6 +148,35 @@ def test_json_context_shape():
     assert payload["results"][0]["chunk_id"] == "2:0"
     assert payload["results"][0]["text"] == "text"
     assert payload["results"][0]["empty_text"] is False
+
+
+def test_build_context_item_accepts_nested_metadata_fallback():
+    point = SimpleNamespace(
+        score=0.87,
+        payload={
+            "text": "body text",
+            "metadata": {
+                "chunk_id": "1:0",
+                "article_id": 1,
+                "content_hash": "hash-1",
+                "url": "https://example.test/articles/1",
+                "source_url": "https://example.test/articles/1",
+                "created_at": "2026.05.18.",
+                "collected_at": "2026-05-18T09:00:00+09:00",
+                "posted_at": "2026.05.18.",
+                "title": "title",
+                "source": "source",
+            },
+        },
+    )
+
+    item = build_context_item(point, rank=1)
+
+    assert item["chunk_id"] == "1:0"
+    assert item["content_hash"] == "hash-1"
+    assert item["url"] == "https://example.test/articles/1"
+    assert item["created_at"] == "2026.05.18."
+    assert item["text"] == "body text"
 
 
 @pytest.mark.parametrize("top_k", [1, 5, 10])
