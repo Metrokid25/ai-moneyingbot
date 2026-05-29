@@ -55,6 +55,8 @@ Do not give definitive investment advice. Frame the answer as an interpretation 
 
 def build_source(item: dict[str, Any]) -> dict[str, Any]:
     return {
+        "source_id": item.get("source_id"),
+        "source_path": item.get("source_path"),
         "chunk_id": item.get("chunk_id"),
         "article_id": item.get("article_id"),
         "content_hash": item.get("content_hash"),
@@ -311,6 +313,8 @@ def format_answer_markdown(record: dict[str, Any]) -> str:
             [
                 "",
                 f"- chunk_id: {source.get('chunk_id')}",
+                f"  source_id: {source.get('source_id')}",
+                f"  source_path: {source.get('source_path')}",
                 f"  article_id: {source.get('article_id')}",
                 f"  content_hash: {source.get('content_hash')}",
                 f"  url: {source.get('url')}",

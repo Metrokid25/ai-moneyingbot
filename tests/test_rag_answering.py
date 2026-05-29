@@ -77,6 +77,8 @@ def test_sources_include_required_fields():
 
     assert sources == [
         {
+            "source_id": None,
+            "source_path": None,
             "chunk_id": "10:0",
             "article_id": 10,
             "content_hash": "hash-10",

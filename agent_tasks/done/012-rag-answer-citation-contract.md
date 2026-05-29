@@ -73,3 +73,12 @@ Completion criteria:
 - source metadata/citation fields are present and not silently dropped.
 - python scripts/run_rag_focused_tests.py passes.
 - no archive-owned files are touched.
+
+Completed by:
+- Implement RAG answer citation contract
+
+Verified:
+- pytest tests/test_rag_answer_citation_contract.py --basetemp=.tmp\pytest
+- pytest tests/test_rag_focused_tests.py --basetemp=.tmp\pytest
+- pytest tests/test_rag_autorunner_docs.py --basetemp=.tmp\pytest
+- python scripts/run_rag_focused_tests.py
