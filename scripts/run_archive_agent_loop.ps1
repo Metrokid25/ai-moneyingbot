@@ -80,7 +80,7 @@ function Test-AllowedPath {
 }
 
 function Assert-NoForbiddenChanges {
-    $changed = Get-ChangedPaths
+    $changed = @(Get-ChangedPaths)
 
     $forbidden = @()
     foreach ($path in $changed) {
@@ -252,7 +252,7 @@ python scripts/daily_archive.py --execute --limit 2 --list-url "<URL>"
 
     Assert-NoForbiddenChanges
 
-    $changed = Get-ChangedPaths
+    $changed = @(Get-ChangedPaths)
 
     if ($changed.Count -eq 0) {
         Write-Host "No commit-worthy changes in this cycle."
@@ -331,6 +331,7 @@ Write-Host ""
 Write-Host "Archive auto loop finished." -ForegroundColor Green
 Run-Cmd "git status -sb"
 Run-Cmd "git log --oneline -10"
+
 
 
 
