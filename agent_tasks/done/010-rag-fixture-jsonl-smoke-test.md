@@ -58,3 +58,16 @@ Completion criteria:
 - The smoke test verifies ingest, chunking, metadata preservation, and retrieval-ready output.
 - The focused RAG test runner includes the smoke test if it remains reliable.
 - No Archive-owned files are touched.
+
+## Completion note
+
+Completed by:
+- Implement RAG fixture JSONL smoke test
+
+Verified:
+- python scripts/run_rag_focused_tests.py
+- pytest tests/test_rag_fixture_jsonl_smoke.py --basetemp=.tmp\pytest
+- pytest tests/test_rag_focused_tests.py --basetemp=.tmp\pytest
+- pytest tests/test_rag_autorunner_docs.py --basetemp=.tmp\pytest
+- python scripts/agent_next_task.py --list
+- git status -sb

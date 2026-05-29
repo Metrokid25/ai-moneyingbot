@@ -62,6 +62,8 @@ This command runs only reliable RAG-focused checks and does not call full pytest
 
 The runner uses a repo-local pytest base temp directory under `.tmp/` so focused tests do not depend on the Windows user temp directory.
 
+The focused suite includes the fixture JSONL smoke test for the RAG ingest -> chunking -> retrieval-ready boundary.
+
 ## Reports
 
 Reports are written under `agent_reports/`. Each once-run creates a timestamped Markdown report, and Codex execution logs are written beside it when Codex is actually executed. The `.codex.log` file captures both stdout and stderr so the Markdown report can continue even when Codex exits with an error.
