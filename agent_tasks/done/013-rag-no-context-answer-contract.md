@@ -74,3 +74,12 @@ Completion criteria:
 - source/citation output is empty or clearly marked as no-context/insufficient-context.
 - python scripts/run_rag_focused_tests.py passes.
 - no archive-owned files are touched.
+
+Completed by:
+- Implement RAG no-context answer contract
+
+Verified:
+- pytest tests/test_rag_no_context_answer_contract.py --basetemp=.tmp\pytest
+- pytest tests/test_rag_focused_tests.py --basetemp=.tmp\pytest
+- pytest tests/test_rag_autorunner_docs.py --basetemp=.tmp\pytest
+- python scripts/run_rag_focused_tests.py

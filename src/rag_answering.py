@@ -13,6 +13,7 @@ DEFAULT_ANSWER_MODEL = "gpt-4o-mini"
 PRICING_NOTE_ESTIMATE = "estimated from configured per-token model pricing; cached input is not included"
 UNKNOWN_PRICING_NOTE = "pricing not configured for this model"
 MISSING_USAGE_NOTE = "usage not returned by provider"
+NO_CONTEXT_ANSWER = "No related evidence was found, so this question cannot be answered from the provided RAG context."
 
 OPENAI_PRICING_USD_PER_1M_TOKENS = {
     "gpt-4o-mini": {
@@ -260,6 +261,13 @@ def run_rag_answer(
         top_k=top_k,
     )
     context_items = build_context_items(points)
+    if not context_items:
+        return build_no_context_answer_record(
+            query=query,
+            model=model,
+            top_k=top_k,
+        )
+
     context = format_context_for_prompt(context_items)
     messages = build_answer_messages(query, context)
     llm_result = call_llm(messages, model=model)
@@ -285,15 +293,30 @@ def build_answer_record(
 ) -> dict[str, Any]:
     if estimated_cost is None:
         estimated_cost = estimate_openai_cost(model, usage)
+    source_list = list(sources)
     return {
         "query": query,
         "answer": answer,
-        "sources": list(sources),
+        "sources": source_list,
+        "citations": source_list,
+        "no_context": not bool(source_list),
+        "insufficient_context": not bool(source_list),
         "model": model,
         "top_k": top_k,
         "usage": asdict(usage) if usage is not None else None,
         "estimated_cost": asdict(estimated_cost),
     }
+
+
+def build_no_context_answer_record(query: str, model: str, top_k: int) -> dict[str, Any]:
+    return build_answer_record(
+        query=query,
+        answer=NO_CONTEXT_ANSWER,
+        sources=[],
+        model=model,
+        top_k=top_k,
+        usage=None,
+    )
 
 
 def format_answer_markdown(record: dict[str, Any]) -> str:
@@ -308,6 +331,16 @@ def format_answer_markdown(record: dict[str, Any]) -> str:
         "",
         "## 근거 chunks",
     ]
+    lines.extend(
+        [
+            "",
+            "## Context status",
+            f"- no_context: {bool(record.get('no_context'))}",
+            f"- insufficient_context: {bool(record.get('insufficient_context'))}",
+        ]
+    )
+    if not record["sources"]:
+        lines.append("- No related evidence.")
     for source in record["sources"]:
         lines.extend(
             [

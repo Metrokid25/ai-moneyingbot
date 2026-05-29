@@ -65,6 +65,7 @@ The runner uses a repo-local pytest base temp directory under `.tmp/` so focused
 The focused suite includes the fixture JSONL smoke test for the RAG ingest -> chunking -> retrieval-ready boundary.
 It also includes a fixture retrieval eval that checks expected source metadata with an in-memory retrieval path.
 It also includes an answer citation contract test that checks source metadata survives into answer output.
+It also includes a no-context answer contract test that checks empty retrieval does not produce unsupported answers.
 
 ## Reports
 
