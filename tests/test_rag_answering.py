@@ -107,9 +107,18 @@ def test_answer_formats_include_sources():
     assert "## " in markdown
     assert "chunk_id: 10:0" in markdown
     assert "url: https://example.test/articles/10" in markdown
+    assert "source_url: https://example.test/articles/10" in markdown
+    assert "created_at: 2026.05.18." in markdown
+    assert "collected_at: 2026-05-18T09:00:00+09:00" in markdown
+    assert "source: sample_archive_export" in markdown
+    assert "title: rate and stocks" in markdown
     assert payload["sources"][0]["article_id"] == 10
     assert payload["sources"][0]["content_hash"] == "hash-10"
     assert payload["sources"][0]["url"] == "https://example.test/articles/10"
+    assert payload["sources"][0]["source_url"] == "https://example.test/articles/10"
+    assert payload["sources"][0]["created_at"] == "2026.05.18."
+    assert payload["sources"][0]["collected_at"] == "2026-05-18T09:00:00+09:00"
+    assert payload["sources"][0]["source"] == "sample_archive_export"
 
 
 def test_usage_and_estimated_cost_are_in_answer_formats():

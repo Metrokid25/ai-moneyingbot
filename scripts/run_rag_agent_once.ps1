@@ -93,6 +93,7 @@ function Test-AllowlistedPath {
     "scripts/ingest_archive_export.py",
     "scripts/build_chunks_phase2.py",
     "scripts/load_qdrant_phase2.py",
+    "scripts/serve_rag_web.py",
     "src/rag_chunking.py",
     "src/rag_qdrant.py",
     "src/rag_retrieval.py",

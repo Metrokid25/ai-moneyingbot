@@ -250,9 +250,14 @@ HTML_PAGE = """<!doctype html>
         const article = document.createElement("article");
         article.className = "source";
         const dl = document.createElement("dl");
-        appendField(dl, "chunk_id", source.chunk_id);
-        appendField(dl, "article_id", source.article_id);
         appendField(dl, "title", source.title);
+        appendField(dl, "url", source.url);
+        appendField(dl, "source_url", source.source_url);
+        appendField(dl, "source", source.source);
+        appendField(dl, "article_id", source.article_id);
+        appendField(dl, "chunk_id", source.chunk_id);
+        appendField(dl, "created_at", source.created_at);
+        appendField(dl, "collected_at", source.collected_at);
         appendField(dl, "posted_at", source.posted_at || "-");
         appendField(dl, "score", source.score);
         article.appendChild(dl);
@@ -267,10 +272,11 @@ HTML_PAGE = """<!doctype html>
           localLink.textContent = "저장된 원문 보기";
           links.appendChild(localLink);
         }
-        if (typeof source.article_url === "string" &&
-            (source.article_url.startsWith("http://") || source.article_url.startsWith("https://"))) {
+        const sourceUrl = source.article_url || source.url || source.source_url;
+        if (typeof sourceUrl === "string" &&
+            (sourceUrl.startsWith("http://") || sourceUrl.startsWith("https://"))) {
           const sourceLink = document.createElement("a");
-          sourceLink.href = source.article_url;
+          sourceLink.href = sourceUrl;
           sourceLink.target = "_blank";
           sourceLink.rel = "noopener noreferrer";
           sourceLink.className = "secondary";
@@ -428,8 +434,12 @@ def enrich_sources_with_article_metadata(
             source.setdefault("article_page_url", None)
             continue
         article_meta = metadata.get(article_id, {})
-        article_url = article_meta.get("url")
-        source["posted_at"] = article_meta.get("posted_at")
+        posted_at = article_meta.get("posted_at")
+        if posted_at:
+            source["posted_at"] = posted_at
+        else:
+            source.setdefault("posted_at", None)
+        article_url = article_meta.get("url") or source.get("url") or source.get("source_url")
         source["article_url"] = article_url if is_safe_external_url(article_url) else None
         source["article_page_url"] = make_article_page_url(article_id)
     return enriched

@@ -117,6 +117,7 @@ def test_once_script_allowlist_includes_rag_task_completion_and_chunking_script(
     assert 'StartsWith("agent_tasks/failed/")' in script
     assert '"scripts/build_chunks_phase2.py"' in script
     assert '"scripts/load_qdrant_phase2.py"' in script
+    assert '"scripts/serve_rag_web.py"' in script
     assert 'StartsWith("scripts/")' not in script
 
 
@@ -128,4 +129,5 @@ def test_docs_describe_limited_rag_script_allowlist():
     assert "agent_tasks/failed/" in docs
     assert "scripts/build_chunks_phase2.py" in docs
     assert "scripts/load_qdrant_phase2.py" in docs
+    assert "scripts/serve_rag_web.py" in docs
     assert "does not allow `scripts/` broadly" in docs

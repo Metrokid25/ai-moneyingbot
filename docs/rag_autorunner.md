@@ -102,7 +102,7 @@ This is intentionally narrow: safety is enforced by the runner safety gate. The 
 
 ## RAG Allowlist Notes
 
-Task files may move through `agent_tasks/pending/`, `agent_tasks/done/`, and `agent_tasks/failed/`. RAG pipeline scripts are allowlisted by exact path, including `scripts/ingest_archive_export.py`, `scripts/build_chunks_phase2.py`, `scripts/load_qdrant_phase2.py`, `scripts/run_rag_agent_once.ps1`, and `scripts/run_rag_agent_loop.ps1`.
+Task files may move through `agent_tasks/pending/`, `agent_tasks/done/`, and `agent_tasks/failed/`. RAG pipeline scripts are allowlisted by exact path, including `scripts/ingest_archive_export.py`, `scripts/build_chunks_phase2.py`, `scripts/load_qdrant_phase2.py`, `scripts/serve_rag_web.py`, `scripts/run_rag_agent_once.ps1`, and `scripts/run_rag_agent_loop.ps1`.
 
 The runner does not allow `scripts/` broadly. Archive crawler and archive write scripts remain forbidden unless explicitly handled by a human outside the RAG autorunner.
 

@@ -162,6 +162,11 @@ def test_post_answer_returns_mocked_result_and_expected_arguments(monkeypatch, a
                 {
                     "chunk_id": "10:0",
                     "article_id": 10,
+                    "url": "https://example.test/exported/10",
+                    "source_url": "https://example.test/exported/10",
+                    "created_at": "2026.05.18.",
+                    "collected_at": "2026-05-18T09:00:00+09:00",
+                    "source": "sample_archive_export",
                     "title": "sample title",
                     "score": 0.91,
                 }
@@ -194,6 +199,11 @@ def test_post_answer_returns_mocked_result_and_expected_arguments(monkeypatch, a
             {
                 "chunk_id": "10:0",
                 "article_id": 10,
+                "url": "https://example.test/exported/10",
+                "source_url": "https://example.test/exported/10",
+                "created_at": "2026.05.18.",
+                "collected_at": "2026-05-18T09:00:00+09:00",
+                "source": "sample_archive_export",
                 "title": "sample title",
                 "posted_at": "2024.01.02.",
                 "score": 0.91,
@@ -212,6 +222,45 @@ def test_post_answer_returns_mocked_result_and_expected_arguments(monkeypatch, a
         "qdrant_path": PROJECT_ROOT / "data" / "qdrant",
         "collection": "goodmorning_chunks",
         "project_root": PROJECT_ROOT,
+    }
+
+
+def test_success_response_preserves_source_metadata_without_archive_match(archive_db_path):
+    record = {
+        "answer": "answer",
+        "sources": [
+            {
+                "chunk_id": "999:0",
+                "article_id": 999,
+                "url": "https://example.test/exported/999",
+                "source_url": "https://example.test/exported/999",
+                "created_at": "2026.05.18.",
+                "collected_at": "2026-05-18T09:00:00+09:00",
+                "posted_at": "2026.05.18.",
+                "source": "sample_archive_export",
+                "title": "exported title",
+                "score": 0.7,
+            }
+        ],
+        "usage": None,
+        "estimated_cost": None,
+    }
+
+    payload = serve_rag_web.build_success_response(record, archive_db_path)
+
+    assert payload["sources"][0] == {
+        "chunk_id": "999:0",
+        "article_id": 999,
+        "url": "https://example.test/exported/999",
+        "source_url": "https://example.test/exported/999",
+        "created_at": "2026.05.18.",
+        "collected_at": "2026-05-18T09:00:00+09:00",
+        "posted_at": "2026.05.18.",
+        "source": "sample_archive_export",
+        "title": "exported title",
+        "score": 0.7,
+        "article_url": "https://example.test/exported/999",
+        "article_page_url": "/article?article_id=999",
     }
 
 
