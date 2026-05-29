@@ -390,6 +390,43 @@ def test_execute_without_collect_body_does_not_call_body_collector(tmp_path, mon
     assert stats.saved == 1
 
 
+def test_execute_collect_body_failure_records_failed_queue(tmp_path, monkeypatch):
+    rows = [{"article_id": 1, "url": "mock://1", "title": "one"}]
+
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: (rows, []))
+    monkeypatch.setattr(daily_archive, "init_db", lambda: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "is_duplicate",
+        lambda article_id, seen_ids, *, dry_run: False,
+    )
+    monkeypatch.setattr(daily_archive, "save_article", lambda row, *, dry_run: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "collect_article_body",
+        lambda _article_id: (daily_archive.Status.INDEXED, "login_required"),
+    )
+
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=1,
+        page_limit=1,
+        list_url="https://example.test/list",
+        collect_body=True,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+
+    queue = json.loads((tmp_path / "state" / "failed_queue.json").read_text())
+    assert stats.failed == 1
+    assert stats.saved == 0
+    assert queue["items"][0]["article_id"] == "1"
+    assert "body_collection_status=INDEXED" in queue["items"][0]["reason"]
+    assert "block_signal=login_required" in queue["items"][0]["reason"]
+
+
 def test_collect_execute_without_list_url_does_not_open_browser():
     rows, notes = daily_archive.collect_execute_articles(
         list_url=None,
