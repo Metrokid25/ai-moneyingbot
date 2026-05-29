@@ -377,6 +377,12 @@ def test_collect_execute_without_list_url_does_not_open_browser():
     assert notes == ["execute mode skipped: --list-url was not provided"]
 
 
+def test_build_page_url_replaces_page_parameter():
+    url = daily_archive.build_page_url("https://example.test/list?clubid=1&page=9", 2)
+
+    assert url == "https://example.test/list?clubid=1&page=2"
+
+
 def test_collect_execute_articles_fetches_bounded_pages(monkeypatch):
     calls: list[int] = []
     closed = False
@@ -395,10 +401,8 @@ def test_collect_execute_articles_fetches_bounded_pages(monkeypatch):
 
     fake_browser = types.ModuleType("browser")
     fake_browser.BrowserSession = FakeSession
-    fake_index_tail = types.ModuleType("index_tail")
-    fake_index_tail._fetch_rows = fake_fetch_rows
+    monkeypatch.setattr(daily_archive, "fetch_list_rows", fake_fetch_rows)
     monkeypatch.setitem(sys.modules, "browser", fake_browser)
-    monkeypatch.setitem(sys.modules, "index_tail", fake_index_tail)
 
     rows, notes = daily_archive.collect_execute_articles(
         list_url="https://example.test/list",

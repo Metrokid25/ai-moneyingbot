@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = PROJECT_ROOT / "src"
@@ -195,7 +196,7 @@ def collect_execute_articles(
 
     This is the single real-collection bridge. It reuses:
     - `BrowserSession` from `src/browser.py`
-    - `_fetch_rows` from `scripts/index_tail.py`
+    - `parse_article_list` from `src/parser.py`
 
     If `list_url` is omitted, no browser is opened and no network request is sent.
     """
@@ -205,14 +206,13 @@ def collect_execute_articles(
     import time  # noqa: WPS433
 
     from browser import BrowserSession  # noqa: WPS433
-    from index_tail import _fetch_rows  # noqa: WPS433
 
     pages_to_scan = page_limit if page_limit is not None else DEFAULT_PAGE_LIMIT
     rows: list[dict[str, Any]] = []
     session = BrowserSession()
     try:
         for page_num in range(1, pages_to_scan + 1):
-            page_rows, err = _fetch_rows(session, list_url, page_num)
+            page_rows, err = fetch_list_rows(session, list_url, page_num)
             if err:
                 raise RuntimeError(f"list page {page_num} failed: {err}")
             for row in page_rows or []:
@@ -224,6 +224,36 @@ def collect_execute_articles(
     finally:
         session.close()
     return rows, []
+
+
+def fetch_list_rows(
+    session: Any,
+    list_url: str,
+    page_num: int,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Fetch and parse one Cafe list page using the existing archive primitives."""
+    from browser import check_blocked  # noqa: WPS433
+    from parser import parse_article_list  # noqa: WPS433
+
+    page_url = build_page_url(list_url, page_num)
+    final_url, err = session.goto(page_url)
+    if err:
+        return None, err
+    html, frame_err = session.get_frame_html()
+    if frame_err or html is None:
+        return None, frame_err or "frame_load_failed"
+    blocked = check_blocked(final_url, html)
+    if blocked:
+        return None, blocked
+    return parse_article_list(html, final_url), None
+
+
+def build_page_url(base_url: str, page: int) -> str:
+    parsed = urlparse(base_url)
+    qs = parse_qs(parsed.query, keep_blank_values=True)
+    qs["page"] = [str(page)]
+    new_query = urlencode({key: value[0] for key, value in qs.items()})
+    return urlunparse(parsed._replace(query=new_query))
 
 
 def collect_article_body(article_id: int) -> tuple[str, str | None]:
