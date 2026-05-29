@@ -49,6 +49,12 @@ class DailyStats:
     notes: list[str] = field(default_factory=list)
 
 
+def mode_safety_message(stats: DailyStats) -> str:
+    if stats.dry_run:
+        return "dry-run used mock data only; no browser, network, or archive DB writes."
+    return "execute mode is bounded by --limit/--page-limit and requires --list-url from the CLI."
+
+
 def now_kst() -> datetime:
     return datetime.now(KST)
 
@@ -436,6 +442,9 @@ def write_daily_report(reports_dir: Path, run_at: datetime, stats: DailyStats) -
             f"- limit: {stats.limit}",
             f"- page_limit: {stats.page_limit if stats.page_limit is not None else '-'}",
             "",
+            "## Safety",
+            f"- {mode_safety_message(stats)}",
+            "",
             "## Failed Items",
             *failed_lines,
             "",
@@ -468,6 +477,8 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         parser.error("--dry-run and --execute are mutually exclusive")
     if args.execute and args.limit is None:
         parser.error("--execute requires --limit N")
+    if args.execute and not args.list_url:
+        parser.error("--execute requires --list-url <URL>")
     if args.limit is None:
         args.limit = DEFAULT_LIMIT
     if args.limit < 1 or args.limit > MAX_LIMIT:
@@ -483,8 +494,10 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     if not args.dry_run and not args.execute:
         print("[daily_archive] no collection mode selected")
-        print("  use --dry-run for mock validation")
-        print("  use --execute --limit N --list-url <URL> for bounded real collection")
+        print("  no browser, network, DB, state, or report changes were made")
+        print("  safe validation : python scripts/daily_archive.py --dry-run")
+        print("  real collection : python scripts/daily_archive.py --execute --limit N --list-url <URL>")
+        print("  execute mode requires both --limit and --list-url and remains bounded")
         return 0
 
     try:
@@ -513,6 +526,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     print(f"  saved      : {stats.saved}")
     print(f"  failed     : {stats.failed}")
     print(f"  report     : {report_path}")
+    print(f"  safety     : {mode_safety_message(stats)}")
+    if stats.notes:
+        print("  notes      :")
+        for note in stats.notes:
+            print(f"    - {note}")
     return 0
 
 

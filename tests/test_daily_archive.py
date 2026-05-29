@@ -136,6 +136,8 @@ def test_write_daily_report_without_failed_items(tmp_path):
 
     text = path.read_text(encoding="utf-8")
     assert "## Failed Items" in text
+    assert "## Safety" in text
+    assert "mock data only" in text
     assert "- none" in text
     assert "- discovered: 1" in text
 
@@ -151,6 +153,8 @@ def test_main_without_mode_does_not_collect(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert rc == 0
     assert "no collection mode selected" in captured.out
+    assert "no browser, network, DB, state, or report changes were made" in captured.out
+    assert "execute mode requires both --limit and --list-url" in captured.out
     assert "--dry-run" in captured.out
     assert "--execute" in captured.out
 
@@ -158,6 +162,13 @@ def test_main_without_mode_does_not_collect(monkeypatch, capsys):
 def test_execute_requires_explicit_limit():
     with pytest.raises(SystemExit) as exc_info:
         daily_archive.parse_args(["--execute"])
+
+    assert exc_info.value.code == 2
+
+
+def test_execute_requires_list_url():
+    with pytest.raises(SystemExit) as exc_info:
+        daily_archive.parse_args(["--execute", "--limit", "2"])
 
     assert exc_info.value.code == 2
 
@@ -205,6 +216,24 @@ def test_dry_run_does_not_use_execute_or_db(tmp_path, monkeypatch):
 
     assert stats.dry_run is True
     assert stats.saved == 2
+
+
+def test_main_dry_run_prints_safety_notes(tmp_path, capsys):
+    rc = daily_archive.main(
+        [
+            "--dry-run",
+            "--state-dir",
+            str(tmp_path / "state"),
+            "--reports-dir",
+            str(tmp_path / "reports"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "safety" in captured.out
+    assert "mock data only" in captured.out
+    assert "notes" in captured.out
 
 
 def test_execute_uses_mockable_collector_and_applies_limit(tmp_path, monkeypatch):
