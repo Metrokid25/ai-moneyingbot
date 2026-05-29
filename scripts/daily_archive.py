@@ -446,45 +446,6 @@ def write_daily_report(reports_dir: Path, run_at: datetime, stats: DailyStats) -
     )
     report_path.write_text(content, encoding="utf-8")
     return report_path
-    failed_lines = []
-    if stats.failed_items:
-        for item in stats.failed_items:
-            failed_lines.append(
-                "- article_id={article_id} url={url} reason={reason} retry_count={retry_count}".format(
-                    article_id=item.get("article_id") or "-",
-                    url=item.get("url") or "-",
-                    reason=item.get("reason") or "-",
-                    retry_count=item.get("retry_count", 0),
-                )
-            )
-    else:
-        failed_lines.append("- 없음")
-
-    notes = stats.notes or ["추가 확인 필요 사항 없음"]
-    content = "\n".join(
-        [
-            f"# Daily Archive Report - {run_at.date().isoformat()}",
-            "",
-            "## Summary",
-            f"- 신규 발견: {stats.discovered}",
-            f"- 중복 제외: {stats.duplicates}",
-            f"- 저장 성공: {stats.saved}",
-            f"- 실패: {stats.failed}",
-            f"- 실행 모드: {stats.mode}",
-            f"- dry-run 여부: {'yes' if stats.dry_run else 'no'}",
-            f"- limit: {stats.limit}",
-            f"- page_limit: {stats.page_limit if stats.page_limit is not None else '-'}",
-            "",
-            "## Failed Items",
-            *failed_lines,
-            "",
-            "## Notes",
-            *[f"- {note}" for note in notes],
-            "",
-        ]
-    )
-    report_path.write_text(content, encoding="utf-8")
-    return report_path
 
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:

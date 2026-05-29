@@ -138,8 +138,6 @@ def test_write_daily_report_without_failed_items(tmp_path):
     assert "## Failed Items" in text
     assert "- none" in text
     assert "- discovered: 1" in text
-    return
-    assert "- 없음" in text
 
 
 def test_main_without_mode_does_not_collect(monkeypatch, capsys):
