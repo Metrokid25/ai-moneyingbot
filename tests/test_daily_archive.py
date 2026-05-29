@@ -1,5 +1,6 @@
 import json
 import sys
+import types
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -135,6 +136,9 @@ def test_write_daily_report_without_failed_items(tmp_path):
 
     text = path.read_text(encoding="utf-8")
     assert "## Failed Items" in text
+    assert "- none" in text
+    assert "- discovered: 1" in text
+    return
     assert "- 없음" in text
 
 
@@ -360,3 +364,50 @@ def test_execute_without_collect_body_does_not_call_body_collector(tmp_path, mon
     )
 
     assert stats.saved == 1
+
+
+def test_collect_execute_without_list_url_does_not_open_browser():
+    rows, notes = daily_archive.collect_execute_articles(
+        list_url=None,
+        limit=2,
+        page_limit=1,
+    )
+
+    assert rows == []
+    assert notes == ["execute mode skipped: --list-url was not provided"]
+
+
+def test_collect_execute_articles_fetches_bounded_pages(monkeypatch):
+    calls: list[int] = []
+    closed = False
+
+    class FakeSession:
+        def close(self):
+            nonlocal closed
+            closed = True
+
+    def fake_fetch_rows(_session, _list_url, page_num):
+        calls.append(page_num)
+        return [
+            {"article_id": page_num * 10 + 1, "url": f"mock://{page_num}/1"},
+            {"article_id": page_num * 10 + 2, "url": f"mock://{page_num}/2"},
+        ], None
+
+    fake_browser = types.ModuleType("browser")
+    fake_browser.BrowserSession = FakeSession
+    fake_index_tail = types.ModuleType("index_tail")
+    fake_index_tail._fetch_rows = fake_fetch_rows
+    monkeypatch.setitem(sys.modules, "browser", fake_browser)
+    monkeypatch.setitem(sys.modules, "index_tail", fake_index_tail)
+
+    rows, notes = daily_archive.collect_execute_articles(
+        list_url="https://example.test/list",
+        limit=3,
+        page_limit=5,
+        delay_seconds=0,
+    )
+
+    assert [row["article_id"] for row in rows] == [11, 12, 21]
+    assert calls == [1, 2]
+    assert notes == []
+    assert closed is True

@@ -375,6 +375,40 @@ def write_daily_report(reports_dir: Path, run_at: datetime, stats: DailyStats) -
     reports_dir.mkdir(parents=True, exist_ok=True)
     suffix = "-dry-run" if stats.dry_run else ""
     report_path = reports_dir / f"{run_at.date().isoformat()}{suffix}.md"
+    failed_lines = [
+        "- article_id={article_id} url={url} reason={reason} retry_count={retry_count}".format(
+            article_id=item.get("article_id") or "-",
+            url=item.get("url") or "-",
+            reason=item.get("reason") or "-",
+            retry_count=item.get("retry_count", 0),
+        )
+        for item in stats.failed_items
+    ] or ["- none"]
+    notes = stats.notes or ["No additional notes."]
+    content = "\n".join(
+        [
+            f"# Daily Archive Report - {run_at.date().isoformat()}",
+            "",
+            "## Summary",
+            f"- discovered: {stats.discovered}",
+            f"- duplicates skipped: {stats.duplicates}",
+            f"- saved: {stats.saved}",
+            f"- failed: {stats.failed}",
+            f"- mode: {stats.mode}",
+            f"- dry-run: {'yes' if stats.dry_run else 'no'}",
+            f"- limit: {stats.limit}",
+            f"- page_limit: {stats.page_limit if stats.page_limit is not None else '-'}",
+            "",
+            "## Failed Items",
+            *failed_lines,
+            "",
+            "## Notes",
+            *[f"- {note}" for note in notes],
+            "",
+        ]
+    )
+    report_path.write_text(content, encoding="utf-8")
+    return report_path
     failed_lines = []
     if stats.failed_items:
         for item in stats.failed_items:
