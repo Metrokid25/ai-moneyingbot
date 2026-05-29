@@ -11,6 +11,20 @@ import daily_archive
 
 
 KST = timezone(timedelta(hours=9))
+FAILED_QUEUE_FIELDS = {
+    "article_id",
+    "url",
+    "reason",
+    "retry_count",
+    "last_failed_at",
+}
+
+
+def assert_failed_item_schema(item):
+    assert set(item) == FAILED_QUEUE_FIELDS
+    assert isinstance(item["retry_count"], int)
+    assert item["retry_count"] >= 1
+    assert isinstance(item["last_failed_at"], str)
 
 
 def test_crawl_state_defaults_when_missing(tmp_path):
@@ -55,6 +69,7 @@ def test_failed_queue_save_and_load(tmp_path):
     daily_archive.save_failed_queue(path, queue)
 
     loaded = daily_archive.load_failed_queue(path)
+    assert_failed_item_schema(loaded["items"][0])
     assert loaded["items"][0]["article_id"] == "12345"
     assert loaded["items"][0]["reason"] == "parse_failed"
     assert loaded["items"][0]["retry_count"] == 1
@@ -72,7 +87,54 @@ def test_failed_queue_increments_retry_count(tmp_path):
         )
 
     assert len(queue["items"]) == 1
+    assert_failed_item_schema(queue["items"][0])
     assert queue["items"][0]["retry_count"] == 2
+
+
+def test_failed_queue_updates_existing_target_reason_and_timestamp():
+    queue = daily_archive.default_failed_queue()
+    daily_archive.add_failed_item(
+        queue,
+        article_id=12345,
+        url="https://example.test/12345",
+        reason="first failure",
+        failed_at="2026-05-28T00:00:00+09:00",
+    )
+    daily_archive.add_failed_item(
+        queue,
+        article_id="12345",
+        url="https://example.test/12345",
+        reason="second failure",
+        failed_at="2026-05-28T01:00:00+09:00",
+    )
+
+    assert len(queue["items"]) == 1
+    item = queue["items"][0]
+    assert_failed_item_schema(item)
+    assert item["reason"] == "second failure"
+    assert item["retry_count"] == 2
+    assert item["last_failed_at"] == "2026-05-28T01:00:00+09:00"
+
+
+def test_failed_queue_keeps_distinct_targets_separate():
+    queue = daily_archive.default_failed_queue()
+    daily_archive.add_failed_item(
+        queue,
+        article_id=12345,
+        url="https://example.test/12345",
+        reason="first failure",
+        failed_at="2026-05-28T00:00:00+09:00",
+    )
+    daily_archive.add_failed_item(
+        queue,
+        article_id=12345,
+        url="https://example.test/other-url",
+        reason="other target",
+        failed_at="2026-05-28T00:10:00+09:00",
+    )
+
+    assert len(queue["items"]) == 2
+    assert all(set(item) == FAILED_QUEUE_FIELDS for item in queue["items"])
 
 
 def test_duplicate_article_is_not_saved_in_dry_run(tmp_path, monkeypatch):
@@ -332,8 +394,36 @@ def test_execute_records_failed_item(tmp_path, monkeypatch):
 
     queue = json.loads((tmp_path / "state" / "failed_queue.json").read_text())
     assert stats.failed == 1
+    assert_failed_item_schema(queue["items"][0])
     assert queue["items"][0]["article_id"] == "10"
     assert queue["items"][0]["reason"] == "parse_failed"
+
+
+def test_execute_list_collection_failure_records_failed_queue(tmp_path, monkeypatch):
+    def fail_collect(**_kwargs):
+        raise RuntimeError("list unavailable")
+
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", fail_collect)
+    monkeypatch.setattr(daily_archive, "init_db", lambda: pytest.fail("init_db should not be called"))
+
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=10,
+        page_limit=1,
+        list_url="https://example.test/list",
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+
+    queue = json.loads((tmp_path / "state" / "failed_queue.json").read_text())
+    assert stats.failed == 1
+    assert len(queue["items"]) == 1
+    assert_failed_item_schema(queue["items"][0])
+    assert queue["items"][0]["article_id"] is None
+    assert queue["items"][0]["url"] == "https://example.test/list"
+    assert queue["items"][0]["reason"] == "list_collection_failed: list unavailable"
 
 
 def test_execute_records_malformed_row_in_failed_queue(tmp_path, monkeypatch):
@@ -355,9 +445,43 @@ def test_execute_records_malformed_row_in_failed_queue(tmp_path, monkeypatch):
 
     queue = json.loads((tmp_path / "state" / "failed_queue.json").read_text())
     assert stats.failed == 1
+    assert_failed_item_schema(queue["items"][0])
     assert queue["items"][0]["article_id"] is None
     assert queue["items"][0]["url"] == "mock://missing-id"
     assert "invalid article row" in queue["items"][0]["reason"]
+
+
+def test_repeated_row_failure_updates_failed_queue_item(tmp_path, monkeypatch):
+    rows = [{"article_id": 10, "url": "mock://10", "simulate_failure": "first"}]
+
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: (rows, []))
+    monkeypatch.setattr(daily_archive, "init_db", lambda: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "is_duplicate",
+        lambda article_id, seen_ids, *, dry_run: False,
+    )
+
+    for reason in ("first", "second"):
+        rows[0]["simulate_failure"] = reason
+        daily_archive.run_daily_archive(
+            dry_run=False,
+            execute=True,
+            limit=10,
+            page_limit=1,
+            list_url="https://example.test/list",
+            state_dir=tmp_path / "state",
+            reports_dir=tmp_path / "reports",
+            today=datetime(2026, 5, 28, tzinfo=KST),
+        )
+
+    queue = json.loads((tmp_path / "state" / "failed_queue.json").read_text())
+    assert len(queue["items"]) == 1
+    assert_failed_item_schema(queue["items"][0])
+    assert queue["items"][0]["article_id"] == "10"
+    assert queue["items"][0]["url"] == "mock://10"
+    assert queue["items"][0]["reason"] == "second"
+    assert queue["items"][0]["retry_count"] == 2
 
 
 def test_execute_without_list_url_does_not_initialize_db(tmp_path, monkeypatch):
@@ -449,6 +573,7 @@ def test_execute_collect_body_failure_records_failed_queue(tmp_path, monkeypatch
     queue = json.loads((tmp_path / "state" / "failed_queue.json").read_text())
     assert stats.failed == 1
     assert stats.saved == 0
+    assert_failed_item_schema(queue["items"][0])
     assert queue["items"][0]["article_id"] == "1"
     assert "body_collection_status=INDEXED" in queue["items"][0]["reason"]
     assert "block_signal=login_required" in queue["items"][0]["reason"]
