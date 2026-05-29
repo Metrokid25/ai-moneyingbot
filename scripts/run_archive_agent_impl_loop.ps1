@@ -6,6 +6,12 @@
     [switch]$PlanOnly
 )
 
+# Operational note:
+# Start this script from a branch that contains it. The script may checkout
+# main/work branches during setup; PowerShell has already loaded this file for
+# the current run, but future invocations still need the file to exist on the
+# starting branch.
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -129,6 +135,21 @@ function Invoke-ArchiveAgentCycle {
         $pendingTaskContent = "No pending agent task was found by the PowerShell loop."
     }
     $Prompt = @"
+PRELOADED CONTEXT FROM POWERSHELL LOOP
+ARCHIVE_BUILDER_PROMPT:
+$($builderContent)
+
+SELECTED_PENDING_TASK_NAME:
+$($pendingTaskName)
+
+SELECTED_PENDING_TASK_PATH:
+$($pendingTaskPath)
+
+SELECTED_PENDING_TASK_CONTENT:
+$($pendingTaskContent)
+
+END_PRELOADED_CONTEXT
+
 You are the Archive Bot / Naver Cafe Archive Bot automation agent.
 Write all reports in English only to avoid Windows console encoding issues.
 Do not use Korean in generated markdown reports.
@@ -142,8 +163,8 @@ C:\projects\naver_cafe_archive
 pending task 하나를 읽고, Archive 범위 안에서 작고 안전한 구현만 수행한다.
 
 목표:
-scripts/agent_next_task.py로 다음 pending task를 확인하고,
-agent_prompts/archive_builder.md 원칙에 따라 Archive 작업을 작게 구현한다.
+PRELOADED CONTEXT에 포함된 selected pending task를 사용하고,
+ARCHIVE_BUILDER_PROMPT 원칙에 따라 Archive 작업을 작게 구현한다.
 실제 코드 수정은 허용 파일 안에서만 수행한다.
 
 반드시 먼저 확인:
@@ -213,8 +234,9 @@ agent_prompts/archive_builder.md 원칙에 따라 Archive 작업을 작게 구�
 git status -sb
 git diff --stat
 
-이번 PLAN-ONLY 모드에서는 pytest와 daily_archive 실행은 하지 않는다.
-Also, do not run python scripts/agent_next_task.py or shell commands for task discovery in PLAN-ONLY mode.
+AUTO-IMPLEMENT 모드에서 task discovery 명령은 실행하지 않는다.
+Do not run python scripts/agent_next_task.py or shell commands for task discovery.
+The PowerShell loop runs pytest and daily_archive safety checks after Codex finishes.
 
 실제 수집 명령은 실행하지 말고 필요 여부만 보고:
 python scripts/daily_archive.py --execute --limit 2 --list-url "<URL>"
@@ -357,12 +379,5 @@ Write-Host ""
 Write-Host "Archive auto loop finished." -ForegroundColor Green
 Run-Cmd "git status -sb"
 Run-Cmd "git log --oneline -10"
-
-
-
-
-
-
-
 
 
