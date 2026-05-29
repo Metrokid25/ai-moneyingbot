@@ -89,6 +89,7 @@ This is intentionally narrow: safety is enforced by the runner safety gate. The 
 
 - Moves to the repository root.
 - Lists pending agent tasks.
+- Skips archive-owned pending tasks such as `agent_tasks/pending/001-real-daily-archive-wiring.md` and records the skip reason.
 - Reads `agent_prompts/rag_autorunner.md`.
 - Selects `agent_tasks/pending/004-rag-jsonl-ingest.md` as the next implementation task when it exists.
 - Skips `agent_tasks/pending/001-real-daily-archive-wiring.md` because it is archive-owned.
@@ -122,6 +123,8 @@ This is intentionally narrow: safety is enforced by the runner safety gate. The 
 Task files may move through `agent_tasks/pending/`, `agent_tasks/done/`, and `agent_tasks/failed/`. RAG pipeline scripts are allowlisted by exact path, including `scripts/ingest_archive_export.py`, `scripts/build_chunks_phase2.py`, `scripts/load_qdrant_phase2.py`, `scripts/serve_rag_web.py`, `scripts/run_rag_focused_tests.py`, `scripts/run_rag_agent_once.ps1`, and `scripts/run_rag_agent_loop.ps1`.
 
 The runner does not allow `scripts/` broadly. Archive crawler and archive write scripts remain forbidden unless explicitly handled by a human outside the RAG autorunner.
+
+The queue helper treats `-rag-` task filenames as RAG-owned. Archive-owned tasks such as `001-real-daily-archive-wiring.md` may remain in `agent_tasks/pending/`, but the RAG autorunner must skip them, leave them pending, and include a skip reason in report or log output.
 
 ## Task Selection
 

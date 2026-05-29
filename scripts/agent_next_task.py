@@ -12,6 +12,9 @@ from typing import Iterable
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 QUEUE_NAMES = ("pending", "running", "done", "failed")
+ARCHIVE_OWNED_TASKS = {
+    "001-real-daily-archive-wiring.md",
+}
 
 
 def task_root(project_root: Path) -> Path:
@@ -25,18 +28,50 @@ def list_queue_files(project_root: Path, queue_name: str) -> list[Path]:
     return sorted(path for path in queue_dir.glob("*.md") if path.is_file())
 
 
+def is_rag_owned_task(path: Path) -> bool:
+    return "-rag-" in path.name
+
+
+def is_archive_owned_task(path: Path) -> bool:
+    return path.name in ARCHIVE_OWNED_TASKS or not is_rag_owned_task(path)
+
+
+def split_pending_tasks(project_root: Path) -> tuple[list[Path], list[Path]]:
+    actionable: list[Path] = []
+    skipped: list[Path] = []
+    for task in list_queue_files(project_root, "pending"):
+        if is_archive_owned_task(task):
+            skipped.append(task)
+        else:
+            actionable.append(task)
+    return actionable, skipped
+
+
 def find_next_pending(project_root: Path) -> Path | None:
-    tasks = list_queue_files(project_root, "pending")
+    tasks, _skipped = split_pending_tasks(project_root)
     return tasks[0] if tasks else None
 
 
 def print_next_task(project_root: Path) -> int:
+    _tasks, skipped = split_pending_tasks(project_root)
     task = find_next_pending(project_root)
     if task is None:
-        print("No pending agent tasks.")
+        print("No actionable RAG pending agent tasks.")
+        for skipped_task in skipped:
+            print(
+                "Skipped archive-owned task: "
+                f"{skipped_task.relative_to(project_root)} "
+                "(not selected by RAG autorunner)"
+            )
         return 0
 
     print(f"Next pending task: {task.relative_to(project_root)}")
+    for skipped_task in skipped:
+        print(
+            "Skipped archive-owned task: "
+            f"{skipped_task.relative_to(project_root)} "
+            "(not selected by RAG autorunner)"
+        )
     print()
     print(task.read_text(encoding="utf-8").rstrip())
     return 0

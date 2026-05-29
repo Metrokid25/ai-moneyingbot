@@ -90,6 +90,7 @@ function Test-AllowlistedPath {
   $exact = @(
     "scripts/run_rag_agent_once.ps1",
     "scripts/run_rag_agent_loop.ps1",
+    "scripts/agent_next_task.py",
     "scripts/ingest_archive_export.py",
     "scripts/build_chunks_phase2.py",
     "scripts/load_qdrant_phase2.py",

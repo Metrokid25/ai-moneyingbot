@@ -70,3 +70,15 @@ Completion criteria:
 - RAG-owned task selection still works.
 - Focused tests pass.
 - no archive-owned files are touched.
+
+Completed by:
+- Implement RAG autorunner archive task skip
+
+Verified:
+- pytest tests/test_rag_agent_next_task.py --basetemp=.tmp\pytest
+- pytest tests/test_rag_autorunner_docs.py --basetemp=.tmp\pytest
+- pytest tests/test_rag_focused_tests.py --basetemp=.tmp\pytest
+- python scripts/run_rag_focused_tests.py
+- python scripts/agent_next_task.py
+- python scripts/agent_next_task.py --list
+- git diff --check
