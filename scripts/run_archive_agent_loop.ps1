@@ -2,7 +2,8 @@
     [int]$Hours = 24,
     [int]$MaxCycles = 50,
     [int]$SleepMinutes = 3,
-    [string]$Branch = "archive-agent-auto"
+    [string]$Branch = "archive-agent-auto",
+    [switch]$PlanOnly
 )
 
 Set-StrictMode -Version Latest
@@ -103,7 +104,9 @@ function Invoke-ArchiveAgentCycle {
     $logPath = Join-Path $LogDir "archive-agent-cycle-$timestamp.log"
 
     $Prompt = @"
-너는 Archive Bot / 네이버카페 아카이빙봇 전용 자동 개발 에이전트다.
+You are the Archive Bot / Naver Cafe Archive Bot automation agent.
+Write all reports in English only to avoid Windows console encoding issues.
+Do not use Korean in generated markdown reports.
 
 작업 폴더:
 C:\projects\naver_cafe_archive
@@ -236,9 +239,16 @@ python scripts/daily_archive.py --execute --limit 2 --list-url "<URL>"
 
     Assert-NoForbiddenChanges
 
-    Run-Cmd "pytest --basetemp=.tmp\pytest"
-    Run-Cmd "python scripts\daily_archive.py --dry-run"
-    Run-Cmd "python scripts\daily_archive.py"
+    if ($PlanOnly) {
+        Write-Host "PLAN-ONLY mode: skipping pytest and daily_archive runtime checks."
+        Run-Cmd "git status -sb"
+        Run-Cmd "git diff --stat"
+    }
+    else {
+        Run-Cmd "pytest --basetemp=.tmp\pytest"
+        Run-Cmd "python scripts\daily_archive.py --dry-run"
+        Run-Cmd "python scripts\daily_archive.py"
+    }
 
     Assert-NoForbiddenChanges
 
@@ -278,9 +288,18 @@ Write-Host "Preparing archive auto branch: $Branch" -ForegroundColor Green
 Run-Cmd "git status -sb"
 Assert-NoForbiddenChanges
 
+Run-Cmd "git fetch origin"
 Run-Cmd "git checkout main"
 Run-Cmd "git pull --ff-only"
-Run-Cmd "git checkout -B $Branch"
+
+$remoteBranch = git ls-remote --heads origin $Branch
+if (-not [string]::IsNullOrWhiteSpace($remoteBranch)) {
+    Run-Cmd "git checkout $Branch"
+    Run-Cmd "git pull --ff-only"
+}
+else {
+    Run-Cmd "git checkout -B $Branch"
+}
 
 $stopAt = (Get-Date).AddHours($Hours)
 $cycle = 1
@@ -312,6 +331,7 @@ Write-Host ""
 Write-Host "Archive auto loop finished." -ForegroundColor Green
 Run-Cmd "git status -sb"
 Run-Cmd "git log --oneline -10"
+
 
 
 
