@@ -102,11 +102,18 @@ Defaults:
 - `--duration-hours 24`
 - `--interval-seconds 600`
 - `--limit 10`
+- status file: `state/archive_loop_status.json`
 
 The loop runs one `daily_archive.py --execute --limit N --list-url <URL>` pass
 at a time, waits for the pass to finish, then sleeps for the interval. It stops
 on non-zero return codes, block/login/captcha/permission signals, or failed
 count above the configured threshold.
+
+Check loop health without running collection:
+
+```powershell
+python scripts/run_daily_archive_loop.py --status
+```
 
 ## 7. Stop Conditions
 

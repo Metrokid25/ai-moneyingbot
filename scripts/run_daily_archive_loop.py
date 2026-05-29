@@ -7,6 +7,8 @@ It does not perform collection directly.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import re
 import subprocess
@@ -23,6 +25,7 @@ DEFAULT_INTERVAL_SECONDS = 600
 DEFAULT_DURATION_HOURS = 24.0
 DEFAULT_LIMIT = 10
 DEFAULT_LOG_DIR = PROJECT_ROOT / "logs" / "archive_loop"
+DEFAULT_STATUS_FILE = PROJECT_ROOT / "state" / "archive_loop_status.json"
 BLOCK_PATTERNS = (
     "captcha",
     "로그인",
@@ -54,6 +57,7 @@ class LoopConfig:
     stop_on_failed: int = 0
     python: str = sys.executable
     log_dir: Path = DEFAULT_LOG_DIR
+    status_file: Path = DEFAULT_STATUS_FILE
 
 
 @dataclass
@@ -69,6 +73,14 @@ class RunResult:
 
 def is_placeholder_url(url: str) -> bool:
     return any(pattern in url for pattern in PLACEHOLDER_PATTERNS)
+
+
+def list_url_hash(url: str) -> str:
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()
+
+
+def list_url_preview(url: str, *, keep: int = 32) -> str:
+    return url[:keep] + "..."
 
 
 def calculate_max_runs(duration_hours: float, interval_seconds: int) -> int:
@@ -114,6 +126,20 @@ def parse_failed_count(stdout: str) -> int | None:
     return int(match.group(1))
 
 
+def parse_summary_value(stdout: str, name: str) -> int | None:
+    match = re.search(rf"^\s*{re.escape(name)}\s*:\s*(\d+)\s*$", stdout, flags=re.MULTILINE)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def parse_report_path(stdout: str) -> str | None:
+    match = re.search(r"^\s*report\s*:\s*(.+?)\s*$", stdout, flags=re.MULTILINE)
+    if not match:
+        return None
+    return match.group(1)
+
+
 def log_path_for(log_dir: Path, started_at: datetime) -> Path:
     return log_dir / f"{started_at.date().isoformat()}.log"
 
@@ -138,6 +164,84 @@ def append_log(config: LoopConfig, result: RunResult, stop_reason: str | None = 
         fh.write("\n".join(lines))
         fh.write("\n")
     return path
+
+
+def base_status(config: LoopConfig, started_at: datetime, max_runs: int) -> dict[str, object]:
+    return {
+        "started_at": started_at.isoformat(),
+        "updated_at": started_at.isoformat(),
+        "current_run": 0,
+        "max_runs": max_runs,
+        "interval_seconds": config.interval_seconds,
+        "duration_hours": config.duration_hours,
+        "limit": config.limit,
+        "list_url_hash": list_url_hash(config.list_url),
+        "list_url_preview": list_url_preview(config.list_url),
+        "last_run_started_at": None,
+        "last_run_finished_at": None,
+        "last_return_code": None,
+        "last_saved": None,
+        "last_duplicates": None,
+        "last_failed": None,
+        "last_report_path": None,
+        "stop_reason": None,
+        "is_running": True,
+    }
+
+
+def write_status(config: LoopConfig, status: dict[str, object]) -> None:
+    config.status_file.parent.mkdir(parents=True, exist_ok=True)
+    status["updated_at"] = datetime.now().isoformat()
+    config.status_file.write_text(
+        json.dumps(status, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def update_status_for_run_start(
+    config: LoopConfig,
+    status: dict[str, object],
+    run_number: int,
+    started_at: datetime,
+) -> None:
+    status["current_run"] = run_number
+    status["last_run_started_at"] = started_at.isoformat()
+    status["last_run_finished_at"] = None
+    status["last_return_code"] = None
+    status["is_running"] = True
+    write_status(config, status)
+
+
+def update_status_for_run_finish(
+    config: LoopConfig,
+    status: dict[str, object],
+    result: RunResult,
+    stop_reason: str | None,
+) -> None:
+    status["last_run_started_at"] = result.started_at.isoformat()
+    status["last_run_finished_at"] = result.finished_at.isoformat()
+    status["last_return_code"] = result.returncode
+    status["last_saved"] = parse_summary_value(result.stdout, "saved")
+    status["last_duplicates"] = parse_summary_value(result.stdout, "duplicates")
+    status["last_failed"] = parse_summary_value(result.stdout, "failed")
+    status["last_report_path"] = parse_report_path(result.stdout)
+    status["stop_reason"] = stop_reason
+    write_status(config, status)
+
+
+def finalize_status(config: LoopConfig, status: dict[str, object], stop_reason: str) -> None:
+    status["is_running"] = False
+    status["stop_reason"] = stop_reason
+    write_status(config, status)
+
+
+def print_status(path: Path) -> int:
+    if not path.exists():
+        print(f"[archive_loop] no status file: {path}")
+        return 0
+    data = json.loads(path.read_text(encoding="utf-8"))
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+    return 0
 
 
 def run_once(
@@ -186,25 +290,34 @@ def run_loop(
         config.duration_hours,
         config.interval_seconds,
     )
-    stop_at = datetime.now() + timedelta(hours=config.duration_hours)
+    loop_started_at = datetime.now()
+    status = base_status(config, loop_started_at, max_runs)
+    write_status(config, status)
+    stop_at = loop_started_at + timedelta(hours=config.duration_hours)
 
     for run_number in range(1, max_runs + 1):
         if datetime.now() >= stop_at:
             print("[archive_loop] duration reached before next run.")
+            finalize_status(config, status, "duration reached before next run")
             return 0
 
+        run_started_at = datetime.now()
+        update_status_for_run_start(config, status, run_number, run_started_at)
         result = run_once(config, run_number, runner=runner)
         stop_reason = stop_reason_for(config, result)
+        update_status_for_run_finish(config, status, result, stop_reason)
         path = append_log(config, result, stop_reason=stop_reason)
         print_run_summary(result, path)
 
         if stop_reason:
             print(f"[archive_loop] stopping: {stop_reason}")
+            finalize_status(config, status, stop_reason)
             return 1 if result.returncode != 0 else 0
 
         if run_number < max_runs:
             sleeper(config.interval_seconds)
 
+    finalize_status(config, status, "max runs completed")
     return 0
 
 
@@ -224,7 +337,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run daily_archive.py execute mode on a bounded interval.",
     )
-    parser.add_argument("--list-url", required=True, help="Naver Cafe list URL")
+    parser.add_argument("--list-url", help="Naver Cafe list URL")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--interval-seconds", type=int, default=DEFAULT_INTERVAL_SECONDS)
     parser.add_argument("--duration-hours", type=float, default=DEFAULT_DURATION_HOURS)
@@ -232,7 +345,13 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stop-on-failed", type=int, default=0)
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
+    parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_FILE)
+    parser.add_argument("--status", action="store_true", help="print loop status and exit")
     args = parser.parse_args(argv)
+    if args.status:
+        return args
+    if not args.list_url:
+        parser.error("--list-url is required unless --status is used")
     if args.max_runs is not None and args.max_runs < 1:
         parser.error("--max-runs must be positive")
     if args.stop_on_failed < 0:
@@ -242,6 +361,8 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.status:
+        return print_status(args.status_file)
     config = LoopConfig(
         list_url=args.list_url,
         limit=args.limit,
@@ -251,6 +372,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         stop_on_failed=args.stop_on_failed,
         python=args.python,
         log_dir=args.log_dir,
+        status_file=args.status_file,
     )
     return run_loop(config)
 
