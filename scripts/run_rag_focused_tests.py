@@ -27,6 +27,10 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("pytest", "tests/test_rag_fixture_jsonl_smoke.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
     (
+        f"pytest tests/test_rag_fixture_retrieval_eval.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_fixture_retrieval_eval.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
         f"pytest tests/test_rag_autorunner_docs.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_autorunner_docs.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),

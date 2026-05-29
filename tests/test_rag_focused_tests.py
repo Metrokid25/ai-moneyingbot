@@ -23,6 +23,7 @@ def test_focused_runner_uses_only_explicit_rag_commands():
         "pytest tests/test_rag_answering.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_web.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_fixture_jsonl_smoke.py --basetemp=.tmp/rag_focused_pytest",
+        "pytest tests/test_rag_fixture_retrieval_eval.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_autorunner_docs.py --basetemp=.tmp/rag_focused_pytest",
     ]
     assert all(display != "pytest" for display in displays)

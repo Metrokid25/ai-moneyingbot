@@ -64,3 +64,16 @@ Completion criteria:
 - It verifies source metadata preservation.
 - It is included in the focused RAG test runner if it remains reliable.
 - No Archive-owned files are touched.
+
+## Completion note
+
+Completed by:
+- Implement RAG fixture retrieval eval
+
+Verified:
+- pytest tests/test_rag_fixture_retrieval_eval.py --basetemp=.tmp\pytest
+- pytest tests/test_rag_focused_tests.py --basetemp=.tmp\pytest
+- pytest tests/test_rag_autorunner_docs.py --basetemp=.tmp\pytest
+- python scripts/run_rag_focused_tests.py
+- python scripts/agent_next_task.py --list
+- git status -sb
