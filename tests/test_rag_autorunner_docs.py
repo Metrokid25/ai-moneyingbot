@@ -53,3 +53,12 @@ def test_once_script_blocks_commit_when_codex_fails():
     assert "$codexFailed = $true" in script
     assert "blocked: codex exec failed" in script
     assert "$canCommit = $false" in script
+
+
+def test_autorunner_prompt_selects_actionable_rag_tasks_only():
+    prompt = read_text("agent_prompts/rag_autorunner.md")
+
+    assert "Prefer the lowest-numbered pending task that is clearly RAG-owned." in prompt
+    assert "Skip tasks that are archive-owned or already completed by current git history." in prompt
+    assert "If no actionable RAG pending task exists" in prompt
+    assert "Do not repeatedly re-process completed task definitions." in prompt
