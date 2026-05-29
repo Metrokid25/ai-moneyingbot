@@ -5,12 +5,11 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from qdrant_client import QdrantClient
-
 from rag_qdrant import (
     DEFAULT_COLLECTION,
     DEFAULT_QDRANT_PATH,
     DEFAULT_VECTOR_SIZE,
+    QdrantClient,
     build_points,
     ensure_collection_for_load,
     load_chunks_jsonl,
@@ -134,6 +133,10 @@ def main() -> int:
         points = build_points(selected_chunks, selected_embeddings, selected_ids)
     except Exception as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
+        return 1
+
+    if QdrantClient is None:
+        print("[ERROR] qdrant_client is required for --execute", file=sys.stderr)
         return 1
 
     client = QdrantClient(path=str(args.qdrant_path))
