@@ -44,9 +44,29 @@ Dry-run mode skips Codex execution, commit, and push:
 .\scripts\run_rag_agent_once.ps1 -DryRun -NoCommit -NoPush
 ```
 
+Use Codex's internal workspace sandbox only when the local Windows environment supports it:
+
+```powershell
+.\scripts\run_rag_agent_once.ps1 -UseCodexSandbox
+```
+
 ## Reports
 
 Reports are written under `agent_reports/`. Each once-run creates a timestamped Markdown report, and Codex execution logs are written beside it when Codex is actually executed. The `.codex.log` file captures both stdout and stderr so the Markdown report can continue even when Codex exits with an error.
+
+The report records the Codex sandbox mode as either `bypassed` or `workspace-write`.
+
+## Windows Codex Sandbox Mode
+
+By default, the Windows autorunner starts Codex with:
+
+```powershell
+codex exec --dangerously-bypass-approvals-and-sandbox -
+```
+
+The Codex internal sandbox is bypassed for Windows autorunner compatibility. The older `codex exec --sandbox workspace-write -` mode can fail inside automatic Windows sessions with `windows sandbox: spawn setup refresh`.
+
+This is intentionally narrow: safety is enforced by the runner safety gate. The runner must keep branch guard, allowlist validation, forbidden path checks, `git diff --check`, no `git add .`, and main/master commit/push protection.
 
 ## What Automation Does
 

@@ -2,6 +2,7 @@ param(
   [switch]$DryRun,
   [switch]$NoCommit,
   [switch]$NoPush,
+  [switch]$UseCodexSandbox,
   [string]$CommitMessagePrefix = "RAG autorunner"
 )
 
@@ -155,7 +156,8 @@ function Invoke-LoggedProcess {
 function Invoke-CodexExec {
   param(
     [string]$PromptText,
-    [string]$LogPath
+    [string]$LogPath,
+    [switch]$UseCodexSandbox
   )
 
   $stdoutPath = "$LogPath.stdout.tmp"
@@ -164,13 +166,20 @@ function Invoke-CodexExec {
 
   try {
     # Primary command for current Codex CLI builds:
+    #   codex exec --dangerously-bypass-approvals-and-sandbox -
+    # Use -UseCodexSandbox to run the older workspace-write sandbox mode:
     #   codex exec --sandbox workspace-write -
     # The prompt is written to stdin to avoid PowerShell argument quoting issues.
-    # If a local CLI build uses different option names, run the equivalent
-    # non-interactive exec command with workspace-write sandboxing.
+    # The bypass mode is used by default because Windows automatic sessions can
+    # fail inside Codex's internal sandbox with "windows sandbox: spawn setup refresh".
+    $codexArgs = if ($UseCodexSandbox) {
+      @("exec", "--sandbox", "workspace-write", "-")
+    } else {
+      @("exec", "--dangerously-bypass-approvals-and-sandbox", "-")
+    }
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $PromptText | & codex exec --sandbox workspace-write - 1> $stdoutPath 2> $stderrPath
+    $PromptText | & codex @codexArgs 1> $stdoutPath 2> $stderrPath
     $exitCode = $LASTEXITCODE
   } catch {
     $exitCode = 1
@@ -194,12 +203,19 @@ Add-Report ""
 Add-Report "- DryRun: $DryRun"
 Add-Report "- NoCommit: $NoCommit"
 Add-Report "- NoPush: $NoPush"
+Add-Report "- UseCodexSandbox: $UseCodexSandbox"
 
 $branch = Get-CurrentBranch
 $branchAllowsAutomation = $branch -like "agent/rag-*"
 $protectedBranch = $branch -in @("main", "master")
+$codexSandboxMode = if ($UseCodexSandbox) { "workspace-write" } else { "bypassed" }
 Add-Report "- Branch: $branch"
 Add-Report "- Branch allows automation: $branchAllowsAutomation"
+Add-Report "- Codex sandbox mode: $codexSandboxMode"
+if (-not $UseCodexSandbox) {
+  Add-Report "- Codex internal sandbox is bypassed for Windows autorunner compatibility."
+  Add-Report "- Safety is enforced by the runner safety gate."
+}
 
 Add-ReportCommand "Pre-run git status" { git status -sb }
 Add-ReportCommand "Pending tasks before run" { python scripts/agent_next_task.py --list }
@@ -222,7 +238,8 @@ if ($DryRun) {
   Add-Report "## codex exec"
   Add-Report ""
   Add-Report "Log: $CodexLogPath"
-  $codexExit = Invoke-CodexExec -PromptText $PromptText -LogPath $CodexLogPath
+  Add-Report "Codex sandbox mode: $codexSandboxMode"
+  $codexExit = Invoke-CodexExec -PromptText $PromptText -LogPath $CodexLogPath -UseCodexSandbox:$UseCodexSandbox
   Add-Report "codex_exit_code=$codexExit"
   if ($codexExit -ne 0) {
     $codexFailed = $true

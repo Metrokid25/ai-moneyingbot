@@ -41,7 +41,8 @@ def test_once_script_has_allowlist_validation_without_bulk_stage():
 def test_once_script_captures_codex_output_and_exit_code():
     script = read_text("scripts/run_rag_agent_once.ps1")
 
-    assert "$PromptText | & codex exec --sandbox workspace-write -" in script
+    assert "--dangerously-bypass-approvals-and-sandbox" in script
+    assert "$PromptText | & codex @codexArgs" in script
     assert "1> $stdoutPath" in script
     assert "2> $stderrPath" in script
     assert "codex_exit_code=$codexExit" in script
@@ -82,3 +83,28 @@ def test_autorunner_docs_describe_jsonl_ingest_task_selection():
     assert "001-real-daily-archive-wiring.md" in docs
     assert "archive-owned" in docs
     assert "silently doing nothing" in docs
+
+
+def test_windows_autorunner_documents_codex_sandbox_bypass():
+    docs = read_text("docs/rag_autorunner.md")
+
+    assert "The Codex internal sandbox is bypassed for Windows autorunner compatibility." in docs
+    assert "safety is enforced by the runner safety gate" in docs
+    assert "branch guard" in docs
+    assert "allowlist" in docs
+    assert "forbidden path" in docs
+    assert "git diff --check" in docs
+    assert "no `git add .`" in docs
+    assert "main/master" in docs
+
+
+def test_once_script_keeps_safety_gate_with_bypass_mode():
+    script = read_text("scripts/run_rag_agent_once.ps1")
+
+    assert "--dangerously-bypass-approvals-and-sandbox" in script
+    assert "UseCodexSandbox" in script
+    assert "branch must start with agent/rag-" in script
+    assert "main/master automatic commit is forbidden" in script
+    assert "main/master automatic push is forbidden" in script
+    assert "Test-ForbiddenPath" in script
+    assert "git add ." not in script
