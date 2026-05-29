@@ -89,6 +89,25 @@ After an approved real run, inspect:
 - DB counts and any newly indexed article IDs, using read-only queries unless a
   specific follow-up fix is approved.
 
+## 6.1 Optional 24-Hour Loop
+
+After a successful first bounded run, an operator may approve the loop wrapper:
+
+```powershell
+python scripts/run_daily_archive_loop.py --list-url "<URL>"
+```
+
+Defaults:
+
+- `--duration-hours 24`
+- `--interval-seconds 600`
+- `--limit 10`
+
+The loop runs one `daily_archive.py --execute --limit N --list-url <URL>` pass
+at a time, waits for the pass to finish, then sleeps for the interval. It stops
+on non-zero return codes, block/login/captcha/permission signals, or failed
+count above the configured threshold.
+
 ## 7. Stop Conditions
 
 Stop immediately and inspect before retrying if any of these occur:

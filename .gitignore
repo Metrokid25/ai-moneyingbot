@@ -24,6 +24,7 @@ scripts/diag_dom_structure.py
 # Runtime outputs
 .tmp/
 backups/
+logs/
 reports/
 state/
 
