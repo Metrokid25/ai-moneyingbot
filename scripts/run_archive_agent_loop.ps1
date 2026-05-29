@@ -103,6 +103,30 @@ function Invoke-ArchiveAgentCycle {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $logPath = Join-Path $LogDir "archive-agent-cycle-$timestamp.log"
 
+    $builderPath = Join-Path $Repo "agent_prompts\archive_builder.md"
+    $pendingDir = Join-Path $Repo "agent_tasks\pending"
+
+    $builderContent = if (Test-Path $builderPath) {
+        Get-Content -Raw -Encoding UTF8 $builderPath
+    }
+    else {
+        "ARCHIVE_BUILDER_PROMPT_NOT_FOUND"
+    }
+
+    $pendingTask = Get-ChildItem -Path $pendingDir -Filter "*.md" -File -ErrorAction SilentlyContinue |
+        Sort-Object Name |
+        Select-Object -First 1
+
+    if ($null -ne $pendingTask) {
+        $pendingTaskName = $pendingTask.Name
+        $pendingTaskPath = $pendingTask.FullName
+        $pendingTaskContent = Get-Content -Raw -Encoding UTF8 $pendingTask.FullName
+    }
+    else {
+        $pendingTaskName = "NO_PENDING_TASK"
+        $pendingTaskPath = "NO_PENDING_TASK"
+        $pendingTaskContent = "No pending agent task was found by the PowerShell loop."
+    }
     $Prompt = @"
 You are the Archive Bot / Naver Cafe Archive Bot automation agent.
 Write all reports in English only to avoid Windows console encoding issues.
@@ -122,10 +146,10 @@ agent_prompts/archive_builder.md 원칙에 따라 Archive 작업 계획만 작�
 실제 코드 수정은 하지 않는다.
 
 반드시 먼저 확인:
-1. git status -sb
-2. python scripts/agent_next_task.py
-3. agent_prompts/archive_builder.md
-4. 선택된 agent_tasks/pending 작업 파일
+1. In PLAN-ONLY mode, do not run shell commands to discover the task.
+2. Use PRELOADED CONTEXT FROM POWERSHELL LOOP.
+3. The selected pending task content is already included in this prompt.
+4. If the selected pending task is NO_PENDING_TASK, write a report saying there is no pending task.
 
 수정 허용:
 - scripts/daily_archive.py
@@ -188,6 +212,7 @@ git status -sb
 git diff --stat
 
 이번 PLAN-ONLY 모드에서는 pytest와 daily_archive 실행은 하지 않는다.
+Also, do not run python scripts/agent_next_task.py or shell commands for task discovery in PLAN-ONLY mode.
 
 실제 수집 명령은 실행하지 말고 필요 여부만 보고:
 python scripts/daily_archive.py --execute --limit 2 --list-url "<URL>"
@@ -331,6 +356,9 @@ Write-Host ""
 Write-Host "Archive auto loop finished." -ForegroundColor Green
 Run-Cmd "git status -sb"
 Run-Cmd "git log --oneline -10"
+
+
+
 
 
 
