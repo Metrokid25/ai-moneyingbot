@@ -81,6 +81,7 @@ This is intentionally narrow: safety is enforced by the runner safety gate. The 
 - Records `git status -sb`, `git diff --stat`, `git diff --check`, task queue state, and pytest output.
 - Collects changed files from Git status.
 - Validates changed files against the RAG allowlist.
+- Allows task completion moves from `agent_tasks/pending/` to `agent_tasks/done/`.
 - Blocks forbidden paths.
 - Stages only validated files one by one.
 - Commits only after the safety gate passes.
@@ -95,8 +96,15 @@ This is intentionally narrow: safety is enforced by the runner safety gate. The 
 - It never modifies raw `data/` originals.
 - It never accesses Naver Cafe.
 - It never modifies archive crawling or archive write code.
+- It never allows all of `scripts/`; only named RAG-related scripts are allowlisted.
 - It never repeatedly inspects pending tasks and exits without action when a RAG task is actionable.
 - It never uses a bulk Git stage command.
+
+## RAG Allowlist Notes
+
+Task files may move through `agent_tasks/pending/`, `agent_tasks/done/`, and `agent_tasks/failed/`. RAG pipeline scripts are allowlisted by exact path, including `scripts/ingest_archive_export.py`, `scripts/build_chunks_phase2.py`, `scripts/run_rag_agent_once.ps1`, and `scripts/run_rag_agent_loop.ps1`.
+
+The runner does not allow `scripts/` broadly. Archive crawler and archive write scripts remain forbidden unless explicitly handled by a human outside the RAG autorunner.
 
 ## Task Selection
 

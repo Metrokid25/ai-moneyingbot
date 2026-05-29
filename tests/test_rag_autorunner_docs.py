@@ -108,3 +108,22 @@ def test_once_script_keeps_safety_gate_with_bypass_mode():
     assert "main/master automatic push is forbidden" in script
     assert "Test-ForbiddenPath" in script
     assert "git add ." not in script
+
+
+def test_once_script_allowlist_includes_rag_task_completion_and_chunking_script():
+    script = read_text("scripts/run_rag_agent_once.ps1")
+
+    assert 'StartsWith("agent_tasks/done/")' in script
+    assert 'StartsWith("agent_tasks/failed/")' in script
+    assert '"scripts/build_chunks_phase2.py"' in script
+    assert 'StartsWith("scripts/")' not in script
+
+
+def test_docs_describe_limited_rag_script_allowlist():
+    docs = read_text("docs/rag_autorunner.md")
+
+    assert "agent_tasks/pending/" in docs
+    assert "agent_tasks/done/" in docs
+    assert "agent_tasks/failed/" in docs
+    assert "scripts/build_chunks_phase2.py" in docs
+    assert "does not allow `scripts/` broadly" in docs

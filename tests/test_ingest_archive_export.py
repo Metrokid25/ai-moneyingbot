@@ -125,3 +125,49 @@ def test_write_cli_outputs_normalized_jsonl(tmp_path):
     assert len(rows) == 2
     assert rows[0]["article_id"] == 1001
     assert rows[0]["url"] == "https://example.test/articles/1001"
+
+
+def test_normalized_output_can_feed_chunk_builder(tmp_path):
+    normalized = tmp_path / "normalized.jsonl"
+    chunks_path = tmp_path / "chunks.jsonl"
+
+    ingest_result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "--input",
+            str(FIXTURE_PATH),
+            "--output",
+            str(normalized),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert ingest_result.returncode == 0
+
+    chunk_result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "build_chunks_phase2.py"),
+            "--input-jsonl",
+            str(normalized),
+            "--out-path",
+            str(chunks_path),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert chunk_result.returncode == 0
+    chunks = [json.loads(line) for line in chunks_path.read_text(encoding="utf-8").splitlines()]
+    assert len(chunks) == 2
+    assert chunks[0]["article_id"] == 1001
+    assert chunks[0]["metadata"]["content_hash"] == "hash-1001"
+    assert chunks[0]["metadata"]["url"] == "https://example.test/articles/1001"
+    assert chunks[0]["metadata"]["created_at"] == "2026.05.20."
+    assert chunks[0]["metadata"]["collected_at"] == "2026-05-20T09:00:00+09:00"
+    assert chunks[0]["metadata"]["source"] == "sample_archive_export"

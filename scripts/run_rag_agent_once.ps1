@@ -80,6 +80,8 @@ function Test-AllowlistedPath {
   $p = $Path.Replace("\", "/")
   if ($p.StartsWith("agent_prompts/")) { return $true }
   if ($p.StartsWith("agent_tasks/pending/")) { return $true }
+  if ($p.StartsWith("agent_tasks/done/")) { return $true }
+  if ($p.StartsWith("agent_tasks/failed/")) { return $true }
   if ($p.StartsWith("agent_reports/")) { return $true }
   if ($p.StartsWith("docs/")) { return $true }
   if ($p.StartsWith("tests/fixtures/")) { return $true }
@@ -89,6 +91,7 @@ function Test-AllowlistedPath {
     "scripts/run_rag_agent_once.ps1",
     "scripts/run_rag_agent_loop.ps1",
     "scripts/ingest_archive_export.py",
+    "scripts/build_chunks_phase2.py",
     "src/rag_chunking.py",
     "src/rag_qdrant.py",
     "src/rag_retrieval.py",

@@ -81,6 +81,28 @@ def test_metadata_required_fields_included():
     assert REQUIRED_METADATA_FIELDS <= set(record["metadata"])
 
 
+def test_ingest_metadata_fields_are_preserved():
+    record = build_chunk_records(
+        _article(
+            article_id=1001,
+            source="sample_archive_export",
+            url="https://example.test/articles/1001",
+            source_url="https://example.test/articles/1001",
+            created_at="2026.05.20.",
+            collected_at="2026-05-20T09:00:00+09:00",
+            content_hash="hash-1001",
+        )
+    )[0]
+
+    assert record["metadata"]["article_id"] == 1001
+    assert record["metadata"]["source"] == "sample_archive_export"
+    assert record["metadata"]["url"] == "https://example.test/articles/1001"
+    assert record["metadata"]["source_url"] == "https://example.test/articles/1001"
+    assert record["metadata"]["created_at"] == "2026.05.20."
+    assert record["metadata"]["collected_at"] == "2026-05-20T09:00:00+09:00"
+    assert record["metadata"]["content_hash"] == "hash-1001"
+
+
 def test_body_len_zero_is_preserved_with_title():
     records = build_chunk_records(_article(title="제목만 있음", clean_text=""))
     assert len(records) == 1

@@ -8,12 +8,17 @@ REQUIRED_METADATA_FIELDS = {
     "chunk_id",
     "chunk_index",
     "posted_at",
+    "created_at",
+    "collected_at",
     "year",
     "month",
     "title",
     "body_len",
     "author",
     "source",
+    "url",
+    "source_url",
+    "content_hash",
     "status",
 }
 
@@ -76,7 +81,13 @@ def build_chunk_records(
     title = article.get("title") or ""
     clean_text = article.get("clean_text") or ""
     posted_at = article.get("posted_at")
+    created_at = article.get("created_at")
+    collected_at = article.get("collected_at")
     author = article.get("author")
+    source = article.get("source") or SOURCE
+    url = article.get("url")
+    source_url = article.get("source_url") or url
+    content_hash = article.get("content_hash")
     status = article.get("status") or ""
 
     embedding_text = build_embedding_text(title, clean_text)
@@ -97,12 +108,17 @@ def build_chunk_records(
             "chunk_id": chunk_id,
             "chunk_index": chunk_index,
             "posted_at": posted_at,
+            "created_at": created_at,
+            "collected_at": collected_at,
             "year": year,
             "month": month,
             "title": title,
             "body_len": body_len,
             "author": author,
-            "source": SOURCE,
+            "source": source,
+            "url": url,
+            "source_url": source_url,
+            "content_hash": content_hash,
             "status": status,
         }
         records.append(

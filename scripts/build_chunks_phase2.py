@@ -37,6 +37,25 @@ def fetch_articles(db_path: Path, limit: int | None = None) -> list[dict[str, An
         conn.close()
 
 
+def read_jsonl_articles(input_jsonl: Path, limit: int | None = None) -> list[dict[str, Any]]:
+    articles: list[dict[str, Any]] = []
+    with input_jsonl.open("r", encoding="utf-8") as fh:
+        for line_no, line in enumerate(fh, start=1):
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                article = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"line {line_no}: invalid JSON: {exc.msg}") from exc
+            if not isinstance(article, dict):
+                raise ValueError(f"line {line_no}: expected JSON object")
+            articles.append(article)
+            if limit is not None and len(articles) >= limit:
+                break
+    return articles
+
+
 def build_chunks(
     articles: list[dict[str, Any]],
     threshold: int,
@@ -102,6 +121,12 @@ def write_jsonl(out_path: Path, chunks: list[dict[str, Any]], overwrite: bool) -
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Phase 2 RAG chunks JSONL")
     parser.add_argument("--db-path", type=Path, default=DEFAULT_DB_PATH)
+    parser.add_argument(
+        "--input-jsonl",
+        type=Path,
+        default=None,
+        help="Normalized ingest JSONL path; when provided, archive.db is not read",
+    )
     parser.add_argument("--out-path", type=Path, default=DEFAULT_OUT_PATH)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true")
@@ -122,7 +147,18 @@ def main() -> int:
         print(f"[ERROR] {args.out_path} already exists; pass --overwrite", file=sys.stderr)
         return 1
 
-    articles = fetch_articles(args.db_path, args.limit)
+    try:
+        if args.input_jsonl is not None:
+            if not args.input_jsonl.exists():
+                print(f"[ERROR] input JSONL not found: {args.input_jsonl}", file=sys.stderr)
+                return 1
+            articles = read_jsonl_articles(args.input_jsonl, args.limit)
+        else:
+            articles = fetch_articles(args.db_path, args.limit)
+    except (OSError, ValueError) as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        return 1
+
     chunks = build_chunks(
         articles,
         threshold=args.threshold,
@@ -130,6 +166,8 @@ def main() -> int:
         overlap=args.overlap,
     )
     summary = summarize(articles, chunks)
+    summary["input_jsonl"] = str(args.input_jsonl) if args.input_jsonl is not None else None
+    summary["db_path"] = None if args.input_jsonl is not None else str(args.db_path)
     summary["output_path"] = str(args.out_path)
     summary["dry_run"] = bool(args.dry_run)
 
