@@ -118,6 +118,7 @@ def test_once_script_allowlist_includes_rag_task_completion_and_chunking_script(
     assert '"scripts/build_chunks_phase2.py"' in script
     assert '"scripts/load_qdrant_phase2.py"' in script
     assert '"scripts/serve_rag_web.py"' in script
+    assert '"scripts/run_rag_focused_tests.py"' in script
     assert 'StartsWith("scripts/")' not in script
 
 
@@ -130,4 +131,12 @@ def test_docs_describe_limited_rag_script_allowlist():
     assert "scripts/build_chunks_phase2.py" in docs
     assert "scripts/load_qdrant_phase2.py" in docs
     assert "scripts/serve_rag_web.py" in docs
+    assert "scripts/run_rag_focused_tests.py" in docs
     assert "does not allow `scripts/` broadly" in docs
+
+
+def test_docs_describe_focused_rag_test_runner():
+    docs = read_text("docs/rag_autorunner.md")
+
+    assert "python scripts/run_rag_focused_tests.py" in docs
+    assert "does not call full pytest by default" in docs

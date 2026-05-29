@@ -50,6 +50,18 @@ Use Codex's internal workspace sandbox only when the local Windows environment s
 .\scripts\run_rag_agent_once.ps1 -UseCodexSandbox
 ```
 
+## Focused RAG Tests
+
+Use the focused RAG test runner for routine RAG Bot validation:
+
+```powershell
+python scripts/run_rag_focused_tests.py
+```
+
+This command runs only reliable RAG-focused checks and does not call full pytest by default. It avoids Archive Bot collection tests and does not require Naver Cafe access, archive DB writes, or raw `data/` mutation.
+
+The runner uses a repo-local pytest base temp directory under `.tmp/` so focused tests do not depend on the Windows user temp directory.
+
 ## Reports
 
 Reports are written under `agent_reports/`. Each once-run creates a timestamped Markdown report, and Codex execution logs are written beside it when Codex is actually executed. The `.codex.log` file captures both stdout and stderr so the Markdown report can continue even when Codex exits with an error.
@@ -102,7 +114,7 @@ This is intentionally narrow: safety is enforced by the runner safety gate. The 
 
 ## RAG Allowlist Notes
 
-Task files may move through `agent_tasks/pending/`, `agent_tasks/done/`, and `agent_tasks/failed/`. RAG pipeline scripts are allowlisted by exact path, including `scripts/ingest_archive_export.py`, `scripts/build_chunks_phase2.py`, `scripts/load_qdrant_phase2.py`, `scripts/serve_rag_web.py`, `scripts/run_rag_agent_once.ps1`, and `scripts/run_rag_agent_loop.ps1`.
+Task files may move through `agent_tasks/pending/`, `agent_tasks/done/`, and `agent_tasks/failed/`. RAG pipeline scripts are allowlisted by exact path, including `scripts/ingest_archive_export.py`, `scripts/build_chunks_phase2.py`, `scripts/load_qdrant_phase2.py`, `scripts/serve_rag_web.py`, `scripts/run_rag_focused_tests.py`, `scripts/run_rag_agent_once.ps1`, and `scripts/run_rag_agent_loop.ps1`.
 
 The runner does not allow `scripts/` broadly. Archive crawler and archive write scripts remain forbidden unless explicitly handled by a human outside the RAG autorunner.
 

@@ -52,3 +52,14 @@ Completion criteria:
 - The focused command is documented.
 - New or updated tests pass.
 - No archive-owned files are touched.
+
+## Completion note
+
+Completed by:
+- Implement RAG focused test runner
+
+Verified:
+- python scripts/run_rag_focused_tests.py
+- pytest tests/test_rag_autorunner_docs.py
+- pytest tests/test_rag_focused_tests.py
+- git status -sb

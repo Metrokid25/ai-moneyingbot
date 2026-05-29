@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+from typing import Sequence
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PYTEST_BASETEMP = ".tmp/rag_focused_pytest"
+
+FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "python scripts/answer_question_phase2.py --help",
+        (sys.executable, "scripts/answer_question_phase2.py", "--help"),
+    ),
+    (
+        f"pytest tests/test_rag_answering.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_answering.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_rag_web.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_web.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_rag_autorunner_docs.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_autorunner_docs.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+)
+
+
+def run_command(display: str, argv: Sequence[str]) -> int:
+    print(f"$ {display}", flush=True)
+    result = subprocess.run(argv, cwd=PROJECT_ROOT, check=False)
+    return int(result.returncode)
+
+
+def main() -> int:
+    (PROJECT_ROOT / ".tmp").mkdir(exist_ok=True)
+    for display, argv in FOCUSED_COMMANDS:
+        exit_code = run_command(display, argv)
+        if exit_code != 0:
+            print(f"FAILED: {display} exited with {exit_code}", file=sys.stderr)
+            return exit_code
+    print("RAG focused test suite passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
