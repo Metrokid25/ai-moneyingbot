@@ -309,6 +309,30 @@ def test_execute_records_failed_item(tmp_path, monkeypatch):
     assert queue["items"][0]["reason"] == "parse_failed"
 
 
+def test_execute_records_malformed_row_in_failed_queue(tmp_path, monkeypatch):
+    rows = [{"url": "mock://missing-id", "title": "bad row"}]
+
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: (rows, []))
+    monkeypatch.setattr(daily_archive, "init_db", lambda: None)
+
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=10,
+        page_limit=1,
+        list_url="https://example.test/list",
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+
+    queue = json.loads((tmp_path / "state" / "failed_queue.json").read_text())
+    assert stats.failed == 1
+    assert queue["items"][0]["article_id"] is None
+    assert queue["items"][0]["url"] == "mock://missing-id"
+    assert "invalid article row" in queue["items"][0]["reason"]
+
+
 def test_execute_without_list_url_does_not_initialize_db(tmp_path, monkeypatch):
     called = False
 

@@ -288,6 +288,13 @@ def save_article(row: dict[str, Any], *, dry_run: bool) -> None:
     )
 
 
+def parse_row_article_id(row: dict[str, Any]) -> int:
+    try:
+        return int(row["article_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("invalid article row: missing or invalid article_id") from exc
+
+
 def run_daily_archive(
     *,
     dry_run: bool,
@@ -350,16 +357,16 @@ def run_daily_archive(
         init_db()
 
     for row in rows[:limit]:
-        article_id = int(row["article_id"])
-        if is_duplicate(article_id, seen_ids, dry_run=dry_run):
-            stats.duplicates += 1
-            continue
-
-        seen_ids.add(article_id)
-        if max_article is None or article_id > int(max_article["article_id"]):
-            max_article = row
-
         try:
+            article_id = parse_row_article_id(row)
+            if is_duplicate(article_id, seen_ids, dry_run=dry_run):
+                stats.duplicates += 1
+                continue
+
+            seen_ids.add(article_id)
+            if max_article is None or article_id > int(max_article["article_id"]):
+                max_article = row
+
             if row.get("simulate_failure"):
                 raise RuntimeError(str(row["simulate_failure"]))
             save_article(row, dry_run=dry_run)
@@ -375,7 +382,7 @@ def run_daily_archive(
             failed_at = run_at.isoformat()
             add_failed_item(
                 failed_queue,
-                article_id=article_id,
+                article_id=row.get("article_id"),
                 url=row.get("url"),
                 reason=str(exc),
                 failed_at=failed_at,
