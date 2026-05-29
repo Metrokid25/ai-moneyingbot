@@ -52,3 +52,13 @@ Completion criteria:
 - duplicate article_id/content_hash are skipped
 - URL and metadata are preserved
 - tests pass
+
+## Completion note
+
+Completed by:
+- 203bc17 RAG autorunner: 20260529-101300
+
+Verified:
+- python scripts/ingest_archive_export.py --help
+- python scripts/ingest_archive_export.py --input tests/fixtures/sample_articles.jsonl --dry-run
+- pytest tests/test_ingest_archive_export.py --basetemp=.tmp\pytest
