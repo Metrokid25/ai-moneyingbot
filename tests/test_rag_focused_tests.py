@@ -31,6 +31,7 @@ def test_focused_runner_uses_only_explicit_rag_commands():
         "pytest tests/test_rag_no_context_answer_contract.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_agent_next_task.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_autorunner_docs.py --basetemp=.tmp/rag_focused_pytest",
+        "pytest tests/test_rag_review_pipeline.py --basetemp=.tmp/rag_focused_pytest",
     ]
     assert all(display != "pytest" for display in displays)
     assert all("pytest --basetemp" not in display for display in displays)
