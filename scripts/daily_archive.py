@@ -24,6 +24,7 @@ if str(SRC_DIR) not in sys.path:
 
 from db import article_exists, init_db, upsert_article  # noqa: E402
 from models import Article, Status  # noqa: E402
+from config import DEFAULT_BROWSER_PROFILE_DIR  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
 DEFAULT_STATE_DIR = PROJECT_ROOT / "state"
@@ -197,6 +198,7 @@ def collect_execute_articles(
     limit: int,
     page_limit: int | None,
     delay_seconds: float = DEFAULT_DELAY_SECONDS,
+    browser_profile_dir: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Collect article list rows in execute mode with strict bounds.
 
@@ -215,7 +217,7 @@ def collect_execute_articles(
 
     pages_to_scan = page_limit if page_limit is not None else DEFAULT_PAGE_LIMIT
     rows: list[dict[str, Any]] = []
-    session = BrowserSession()
+    session = BrowserSession(user_data_dir=browser_profile_dir)
     try:
         for page_num in range(1, pages_to_scan + 1):
             page_rows, err = fetch_list_rows(session, list_url, page_num)
@@ -310,6 +312,7 @@ def run_daily_archive(
     list_url: str | None = None,
     collect_body: bool = False,
     delay_seconds: float = DEFAULT_DELAY_SECONDS,
+    browser_profile_dir: Path | None = None,
     state_dir: Path = DEFAULT_STATE_DIR,
     reports_dir: Path = DEFAULT_REPORTS_DIR,
     today: datetime | None = None,
@@ -340,6 +343,7 @@ def run_daily_archive(
                 limit=limit,
                 page_limit=page_limit,
                 delay_seconds=delay_seconds,
+                browser_profile_dir=browser_profile_dir,
             )
             stats.notes.extend(notes)
         else:
@@ -414,6 +418,30 @@ def run_daily_archive(
     return stats, report_path
 
 
+def prepare_manual_login(
+    *,
+    browser_profile_dir: Path | None = None,
+    login_url: str = "https://nid.naver.com/nidlogin.login",
+) -> int:
+    from browser import BrowserSession, wait_for_login  # noqa: WPS433
+
+    profile_dir = browser_profile_dir or DEFAULT_BROWSER_PROFILE_DIR
+    print("[daily_archive] manual login mode")
+    print(f"  browser_profile_dir: {profile_dir}")
+    print("  no collection, DB write, state update, or report write will be performed")
+    print("  complete Naver login manually in the opened browser")
+    print("  do not attempt to bypass captcha or identity verification")
+
+    session = BrowserSession(user_data_dir=profile_dir)
+    try:
+        _final_url, _err = session.goto(login_url)
+        wait_for_login(session.page)
+        print("[daily_archive] login preparation complete")
+        return 0
+    finally:
+        session.close()
+
+
 def write_daily_report(reports_dir: Path, run_at: datetime, stats: DailyStats) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     suffix = "-dry-run" if stats.dry_run else ""
@@ -461,6 +489,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the daily archive pipeline")
     parser.add_argument("--dry-run", action="store_true", help="use mock data and avoid data/")
     parser.add_argument("--execute", action="store_true", help="run bounded archive collection")
+    parser.add_argument("--login", action="store_true", help="open persistent browser profile for manual Naver login")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--page-limit", type=int, default=DEFAULT_PAGE_LIMIT)
     parser.add_argument("--list-url", default=None, help="Naver Cafe article-list URL for execute mode")
@@ -470,11 +499,13 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         help="after indexing list rows, call collector.collect_body for saved articles",
     )
     parser.add_argument("--delay-seconds", type=float, default=DEFAULT_DELAY_SECONDS)
+    parser.add_argument("--browser-profile-dir", type=Path, default=DEFAULT_BROWSER_PROFILE_DIR)
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
     parser.add_argument("--reports-dir", type=Path, default=DEFAULT_REPORTS_DIR)
     args = parser.parse_args(argv)
-    if args.dry_run and args.execute:
-        parser.error("--dry-run and --execute are mutually exclusive")
+    selected_modes = sum(bool(flag) for flag in (args.dry_run, args.execute, args.login))
+    if selected_modes > 1:
+        parser.error("--dry-run, --execute, and --login are mutually exclusive")
     if args.execute and args.limit is None:
         parser.error("--execute requires --limit N")
     if args.execute and not args.list_url:
@@ -492,10 +523,14 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.login:
+        return prepare_manual_login(browser_profile_dir=args.browser_profile_dir)
+
     if not args.dry_run and not args.execute:
         print("[daily_archive] no collection mode selected")
         print("  no browser, network, DB, state, or report changes were made")
         print("  safe validation : python scripts/daily_archive.py --dry-run")
+        print("  manual login    : python scripts/daily_archive.py --login")
         print("  real collection : python scripts/daily_archive.py --execute --limit N --list-url <URL>")
         print("  execute mode requires both --limit and --list-url and remains bounded")
         return 0
@@ -509,6 +544,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             list_url=args.list_url,
             collect_body=args.collect_body,
             delay_seconds=args.delay_seconds,
+            browser_profile_dir=args.browser_profile_dir,
             state_dir=args.state_dir,
             reports_dir=args.reports_dir,
         )

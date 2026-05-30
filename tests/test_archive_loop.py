@@ -32,6 +32,7 @@ def make_config(tmp_path, **overrides):
         "status_file": tmp_path / "state" / "archive_loop_status.json",
         "lock_file": tmp_path / "state" / "archive_loop.lock",
         "lock_stale_minutes": 30,
+        "browser_profile_dir": tmp_path / "state" / "browser_profile",
         "argv_summary": "test argv",
     }
     values.update(overrides)
@@ -84,6 +85,7 @@ def make_preflight_config(tmp_path, **overrides):
         "lock_file": project_root / "state" / "archive_loop.lock",
         "status_file": project_root / "state" / "archive_loop_status.json",
         "lock_stale_minutes": 30,
+        "browser_profile_dir": project_root / "state" / "browser_profile",
     }
     values.update(overrides)
     return archive_loop.PreflightConfig(**values)
@@ -102,6 +104,8 @@ def test_builds_daily_archive_execute_command_with_url_and_limit(tmp_path):
         "7",
         "--list-url",
         "https://cafe.naver.com/example?boardType=L",
+        "--browser-profile-dir",
+        str(tmp_path / "state" / "browser_profile"),
     ]
 
 
@@ -469,6 +473,7 @@ def test_preflight_returns_zero_when_required_files_are_ready(tmp_path, monkeypa
     assert "[OK] working directory:" in captured.out
     assert "[OK] archive.db articles: count=1" in captured.out
     assert "[WARN] list-url: real collection still requires" in captured.out
+    assert "[WARN] browser profile:" in captured.out
     assert "[archive_loop] summary:" in captured.out
     assert config.state_dir.exists()
     assert config.log_dir.exists()
@@ -551,6 +556,28 @@ def test_preflight_prints_status_summary_when_status_file_exists(tmp_path, monke
     assert "[OK] archive_loop_status.json: running=yes" in captured.out
     assert "updated_at=2026-05-30T12:00:00" in captured.out
     assert "stop_reason=testing" in captured.out
+
+
+def test_preflight_reports_existing_browser_profile_as_ok(tmp_path, monkeypatch, capsys):
+    config = make_preflight_config(tmp_path)
+    config.browser_profile_dir.mkdir(parents=True)
+    monkeypatch.chdir(config.project_root)
+
+    rc = archive_loop.run_preflight(config)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "[OK] browser profile:" in captured.out
+
+
+def test_loop_command_passes_browser_profile_dir(tmp_path):
+    profile_dir = tmp_path / "profile"
+    config = make_config(tmp_path, browser_profile_dir=profile_dir)
+
+    command = archive_loop.build_daily_archive_command(config)
+
+    assert "--browser-profile-dir" in command
+    assert command[command.index("--browser-profile-dir") + 1] == str(profile_dir)
 
 
 def test_preflight_does_not_call_execute_or_create_lock(tmp_path, monkeypatch):

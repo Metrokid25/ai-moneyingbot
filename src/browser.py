@@ -1,11 +1,12 @@
 import sys
 import time
+from pathlib import Path
 from typing import Optional, Tuple
 from playwright.sync_api import (
     sync_playwright, Page, Browser, BrowserContext,
     Error as PlaywrightError,
 )
-from config import BROWSER_TIMEOUT_MS, HEADLESS
+from config import BROWSER_TIMEOUT_MS, DEFAULT_BROWSER_PROFILE_DIR, HEADLESS
 
 _BLOCK_URL: list[Tuple[str, str]] = [
     ("login_required", "nid.naver.com"),
@@ -96,10 +97,24 @@ def check_blocked(url: str, content: str) -> Optional[str]:
 class BrowserSession:
     """단일 브라우저 세션. indexer에서 페이지 간 재사용."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        user_data_dir: str | Path | None = None,
+        persistent: bool = True,
+    ) -> None:
         self._pw = sync_playwright().start()
-        self._browser: Browser = self._pw.chromium.launch(headless=HEADLESS)
-        self._context: BrowserContext = self._browser.new_context()
+        self._browser: Browser | None = None
+        self.user_data_dir = Path(user_data_dir or DEFAULT_BROWSER_PROFILE_DIR)
+        if persistent:
+            self.user_data_dir.mkdir(parents=True, exist_ok=True)
+            self._context: BrowserContext = self._pw.chromium.launch_persistent_context(
+                user_data_dir=str(self.user_data_dir),
+                headless=HEADLESS,
+            )
+        else:
+            self._browser = self._pw.chromium.launch(headless=HEADLESS)
+            self._context = self._browser.new_context()
         self._page: Page = self._context.new_page()
 
     @property
@@ -177,12 +192,11 @@ class BrowserSession:
 
     def close(self) -> None:
         # page → context → browser → pw 순으로 단계별 종료 (pending task hang 방지)
-        for fn in (
-            self._page.close,
-            self._context.close,
-            self._browser.close,
-            self._pw.stop,
-        ):
+        close_steps = [self._page.close, self._context.close]
+        if self._browser is not None:
+            close_steps.append(self._browser.close)
+        close_steps.append(self._pw.stop)
+        for fn in close_steps:
             try:
                 fn()
             except Exception:

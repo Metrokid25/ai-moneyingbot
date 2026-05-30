@@ -217,6 +217,7 @@ def test_main_without_mode_does_not_collect(monkeypatch, capsys):
     assert "no collection mode selected" in captured.out
     assert "no browser, network, DB, state, or report changes were made" in captured.out
     assert "execute mode requires both --limit and --list-url" in captured.out
+    assert "--login" in captured.out
     assert "--dry-run" in captured.out
     assert "--execute" in captured.out
 
@@ -599,8 +600,12 @@ def test_build_page_url_replaces_page_parameter():
 def test_collect_execute_articles_fetches_bounded_pages(monkeypatch):
     calls: list[int] = []
     closed = False
+    profile_dirs = []
 
     class FakeSession:
+        def __init__(self, **kwargs):
+            profile_dirs.append(kwargs.get("user_data_dir"))
+
         def close(self):
             nonlocal closed
             closed = True
@@ -622,9 +627,61 @@ def test_collect_execute_articles_fetches_bounded_pages(monkeypatch):
         limit=3,
         page_limit=5,
         delay_seconds=0,
+        browser_profile_dir="profile-test",
     )
 
     assert [row["article_id"] for row in rows] == [11, 12, 21]
     assert calls == [1, 2]
     assert notes == []
     assert closed is True
+    assert profile_dirs == ["profile-test"]
+
+
+def test_login_mode_opens_profile_without_collecting_or_writing(tmp_path, monkeypatch, capsys):
+    calls = []
+    closed = False
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            calls.append(("session", kwargs.get("user_data_dir")))
+            self.page = object()
+
+        def goto(self, url):
+            calls.append(("goto", url))
+            return url, "login_required"
+
+        def close(self):
+            nonlocal closed
+            closed = True
+
+    fake_browser = types.ModuleType("browser")
+    fake_browser.BrowserSession = FakeSession
+    fake_browser.wait_for_login = lambda page: calls.append(("wait_for_login", page))
+    monkeypatch.setitem(sys.modules, "browser", fake_browser)
+    monkeypatch.setattr(
+        daily_archive,
+        "run_daily_archive",
+        lambda **_kwargs: pytest.fail("run_daily_archive should not be called"),
+    )
+
+    rc = daily_archive.main(["--login", "--browser-profile-dir", str(tmp_path / "profile")])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "manual login mode" in captured.out
+    assert ("session", tmp_path / "profile") in calls
+    assert any(call[0] == "goto" for call in calls)
+    assert any(call[0] == "wait_for_login" for call in calls)
+    assert closed is True
+    assert not (tmp_path / "state").exists()
+    assert not (tmp_path / "reports").exists()
+
+
+def test_daily_archive_help_lists_login_and_profile_options(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        daily_archive.parse_args(["--help"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert "--login" in captured.out
+    assert "--browser-profile-dir" in captured.out

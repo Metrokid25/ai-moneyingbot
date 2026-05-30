@@ -23,6 +23,12 @@ from typing import Callable, Iterable
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from config import DEFAULT_BROWSER_PROFILE_DIR  # noqa: E402
+
 DEFAULT_INTERVAL_SECONDS = 600
 DEFAULT_DURATION_HOURS = 24.0
 DEFAULT_LIMIT = 10
@@ -69,6 +75,7 @@ class LoopConfig:
     status_file: Path = DEFAULT_STATUS_FILE
     lock_file: Path = DEFAULT_LOCK_FILE
     lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
+    browser_profile_dir: Path = DEFAULT_BROWSER_PROFILE_DIR
     argv_summary: str = ""
 
 
@@ -95,6 +102,7 @@ class PreflightConfig:
     lock_file: Path = DEFAULT_LOCK_FILE
     status_file: Path = DEFAULT_STATUS_FILE
     lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
+    browser_profile_dir: Path = DEFAULT_BROWSER_PROFILE_DIR
 
 
 def is_placeholder_url(url: str) -> bool:
@@ -126,6 +134,8 @@ def build_daily_archive_command(config: LoopConfig) -> list[str]:
         str(config.limit),
         "--list-url",
         config.list_url,
+        "--browser-profile-dir",
+        str(config.browser_profile_dir),
     ]
 
 
@@ -447,6 +457,17 @@ def status_summary_for_preflight(path: Path) -> tuple[str, str]:
     return "OK", f"running={running}, updated_at={updated_at}, stop_reason={stop_reason}"
 
 
+def browser_profile_summary_for_preflight(path: Path) -> tuple[str, str]:
+    if path.exists():
+        if path.is_dir():
+            return "OK", f"{path} exists"
+        return "FAIL", f"{path} exists but is not a directory"
+    return (
+        "WARN",
+        f"{path} not found; run `python scripts/daily_archive.py --login` before collection",
+    )
+
+
 def lock_summary_for_preflight(config: PreflightConfig) -> tuple[str, str]:
     if not config.lock_file.exists():
         return "OK", f"lock file not found: {config.lock_file}"
@@ -515,6 +536,9 @@ def run_preflight(config: PreflightConfig | None = None) -> int:
 
     level, detail = status_summary_for_preflight(config.status_file)
     levels.append(print_preflight_result(level, "archive_loop_status.json", detail))
+
+    level, detail = browser_profile_summary_for_preflight(config.browser_profile_dir)
+    levels.append(print_preflight_result(level, "browser profile", detail))
 
     print("[OK] list-url: not required for preflight")
     print("[WARN] list-url: real collection still requires the mentor teacher article-list URL")
@@ -639,6 +663,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_FILE)
+    parser.add_argument("--browser-profile-dir", type=Path, default=DEFAULT_BROWSER_PROFILE_DIR)
     parser.add_argument("--status", action="store_true", help="print loop status and exit")
     parser.add_argument("--preflight", action="store_true", help="run read-only operational safety checks and exit")
     parser.add_argument(
@@ -671,6 +696,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 log_dir=args.log_dir,
                 status_file=args.status_file,
                 lock_stale_minutes=args.lock_stale_minutes,
+                browser_profile_dir=args.browser_profile_dir,
             )
         )
     config = LoopConfig(
@@ -684,6 +710,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         log_dir=args.log_dir,
         status_file=args.status_file,
         lock_stale_minutes=args.lock_stale_minutes,
+        browser_profile_dir=args.browser_profile_dir,
         argv_summary=" ".join(argv if argv is not None else sys.argv[1:]),
     )
     return run_loop(config)
