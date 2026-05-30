@@ -235,12 +235,51 @@ def finalize_status(config: LoopConfig, status: dict[str, object], stop_reason: 
     write_status(config, status)
 
 
+def format_status_summary(data: dict[str, object]) -> str:
+    fields = [
+        ("running", "is_running"),
+        ("started_at", "started_at"),
+        ("updated_at", "updated_at"),
+        ("current_run / max_runs", None),
+        ("interval_seconds", "interval_seconds"),
+        ("duration_hours", "duration_hours"),
+        ("limit", "limit"),
+        ("list_url_preview", "list_url_preview"),
+        ("last_run_started_at", "last_run_started_at"),
+        ("last_run_finished_at", "last_run_finished_at"),
+        ("last_return_code", "last_return_code"),
+        ("last_saved", "last_saved"),
+        ("last_duplicates", "last_duplicates"),
+        ("last_failed", "last_failed"),
+        ("last_report_path", "last_report_path"),
+        ("stop_reason", "stop_reason"),
+    ]
+    lines = ["[archive_loop] status"]
+    for label, key in fields:
+        if key is None:
+            current_run = data.get("current_run")
+            max_runs = data.get("max_runs")
+            value = f"{display_status_value(current_run)} / {display_status_value(max_runs)}"
+        else:
+            value = display_status_value(data.get(key))
+        lines.append(f"  {label}: {value}")
+    return "\n".join(lines)
+
+
+def display_status_value(value: object) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return str(value)
+
+
 def print_status(path: Path) -> int:
     if not path.exists():
         print(f"[archive_loop] no status file: {path}")
         return 0
     data = json.loads(path.read_text(encoding="utf-8"))
-    print(json.dumps(data, ensure_ascii=False, indent=2))
+    print(format_status_summary(data))
     return 0
 
 

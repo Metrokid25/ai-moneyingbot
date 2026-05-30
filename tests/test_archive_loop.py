@@ -237,7 +237,31 @@ def test_main_placeholder_url_exits_before_subprocess(tmp_path, monkeypatch):
 
 def test_status_prints_existing_file_without_running_subprocess(tmp_path, monkeypatch, capsys):
     status_file = tmp_path / "status.json"
-    status_file.write_text('{"is_running": false, "current_run": 2}\n', encoding="utf-8")
+    status_file.write_text(
+        json.dumps(
+            {
+                "started_at": "2026-05-30T09:00:00",
+                "updated_at": "2026-05-30T09:10:00",
+                "current_run": 2,
+                "max_runs": 144,
+                "interval_seconds": 600,
+                "duration_hours": 24,
+                "limit": 10,
+                "list_url_preview": "https://cafe.naver.com/example...",
+                "last_run_started_at": "2026-05-30T09:00:00",
+                "last_run_finished_at": "2026-05-30T09:01:00",
+                "last_return_code": 0,
+                "last_saved": 1,
+                "last_duplicates": 2,
+                "last_failed": 0,
+                "last_report_path": "reports/2026-05-30.md",
+                "stop_reason": None,
+                "is_running": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         archive_loop.subprocess,
         "run",
@@ -248,8 +272,24 @@ def test_status_prints_existing_file_without_running_subprocess(tmp_path, monkey
 
     captured = capsys.readouterr()
     assert rc == 0
-    assert '"is_running": false' in captured.out
-    assert '"current_run": 2' in captured.out
+    assert "[archive_loop] status" in captured.out
+    assert "running: no" in captured.out
+    assert "started_at: 2026-05-30T09:00:00" in captured.out
+    assert "updated_at: 2026-05-30T09:10:00" in captured.out
+    assert "current_run / max_runs: 2 / 144" in captured.out
+    assert "interval_seconds: 600" in captured.out
+    assert "duration_hours: 24" in captured.out
+    assert "limit: 10" in captured.out
+    assert "list_url_preview: https://cafe.naver.com/example..." in captured.out
+    assert "last_run_started_at: 2026-05-30T09:00:00" in captured.out
+    assert "last_run_finished_at: 2026-05-30T09:01:00" in captured.out
+    assert "last_return_code: 0" in captured.out
+    assert "last_saved: 1" in captured.out
+    assert "last_duplicates: 2" in captured.out
+    assert "last_failed: 0" in captured.out
+    assert "last_report_path: reports/2026-05-30.md" in captured.out
+    assert "stop_reason: -" in captured.out
+    assert '"is_running"' not in captured.out
 
 
 def test_status_reports_missing_file_without_running_subprocess(tmp_path, monkeypatch, capsys):
