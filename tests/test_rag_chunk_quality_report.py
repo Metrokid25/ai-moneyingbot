@@ -27,6 +27,8 @@ def write_jsonl(path: Path, rows: list[dict]) -> None:
 def metadata(chunk_id: str, article_id: int, content_hash: str) -> dict:
     return {
         "article_id": article_id,
+        "source_id": str(article_id),
+        "source_path": f"https://example.test/{article_id}",
         "chunk_id": chunk_id,
         "chunk_index": int(chunk_id.split(":")[1]),
         "posted_at": "2026.05.20.",

@@ -5,6 +5,8 @@ from typing import Any
 SOURCE = "naver_cafe_119investment_goodmorning"
 REQUIRED_METADATA_FIELDS = {
     "article_id",
+    "source_id",
+    "source_path",
     "chunk_id",
     "chunk_index",
     "posted_at",
@@ -87,6 +89,8 @@ def build_chunk_records(
     source = article.get("source") or SOURCE
     url = article.get("url")
     source_url = article.get("source_url") or url
+    source_id = str(article.get("source_id") or article_id)
+    source_path = article.get("source_path") or source_url
     content_hash = article.get("content_hash")
     status = article.get("status") or ""
 
@@ -105,6 +109,8 @@ def build_chunk_records(
         chunk_id = f"{article_id}:{chunk_index}"
         metadata = {
             "article_id": article_id,
+            "source_id": source_id,
+            "source_path": source_path,
             "chunk_id": chunk_id,
             "chunk_index": chunk_index,
             "posted_at": posted_at,

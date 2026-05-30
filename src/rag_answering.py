@@ -83,6 +83,8 @@ def format_context_for_prompt(items: Sequence[dict[str, Any]]) -> str:
             [
                 "",
                 f"## Source {item.get('rank')}",
+                f"- source_id: {item.get('source_id')}",
+                f"- source_path: {item.get('source_path')}",
                 f"- chunk_id: {item.get('chunk_id')}",
                 f"- article_id: {item.get('article_id')}",
                 f"- content_hash: {item.get('content_hash')}",

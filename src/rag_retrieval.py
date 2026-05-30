@@ -21,6 +21,8 @@ MAX_TOP_K = 20
 SNIPPET_CHARS = 250
 SOURCE_METADATA_FIELDS = (
     "article_id",
+    "source_id",
+    "source_path",
     "content_hash",
     "url",
     "source_url",

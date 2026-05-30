@@ -74,6 +74,8 @@ def format_context_markdown(question: str, results: Sequence[dict[str, Any]], to
             [
                 "",
                 f"{result.get('rank')}. {result.get('title') or ''}",
+                f"- source_id: {result.get('source_id')}",
+                f"- source_path: {result.get('source_path')}",
                 f"- article_id: {result.get('article_id')}",
                 f"- chunk_id: {result.get('chunk_id')}",
                 f"- content_hash: {result.get('content_hash')}",
