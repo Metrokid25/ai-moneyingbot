@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -28,6 +29,10 @@ DEFAULT_LIMIT = 10
 DEFAULT_LOG_DIR = PROJECT_ROOT / "logs" / "archive_loop"
 DEFAULT_STATUS_FILE = PROJECT_ROOT / "state" / "archive_loop_status.json"
 DEFAULT_LOCK_FILE = PROJECT_ROOT / "state" / "archive_loop.lock"
+DEFAULT_DB_FILE = PROJECT_ROOT / "data" / "archive.db"
+DEFAULT_BACKUPS_DIR = PROJECT_ROOT / "backups"
+DEFAULT_STATE_DIR = PROJECT_ROOT / "state"
+DEFAULT_REPORTS_DIR = PROJECT_ROOT / "reports"
 DEFAULT_LOCK_STALE_MINUTES = 30.0
 LOCK_VERSION = 1
 BLOCK_PATTERNS = (
@@ -76,6 +81,20 @@ class RunResult:
     stdout: str
     stderr: str
     command: list[str]
+
+
+@dataclass
+class PreflightConfig:
+    project_root: Path = PROJECT_ROOT
+    daily_archive_path: Path = PROJECT_ROOT / "scripts" / "daily_archive.py"
+    db_file: Path = DEFAULT_DB_FILE
+    backups_dir: Path = DEFAULT_BACKUPS_DIR
+    state_dir: Path = DEFAULT_STATE_DIR
+    log_dir: Path = DEFAULT_LOG_DIR
+    reports_dir: Path = DEFAULT_REPORTS_DIR
+    lock_file: Path = DEFAULT_LOCK_FILE
+    status_file: Path = DEFAULT_STATUS_FILE
+    lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
 
 
 def is_placeholder_url(url: str) -> bool:
@@ -396,6 +415,118 @@ def print_status(path: Path) -> int:
     return 0
 
 
+def readonly_article_count(db_file: Path) -> int:
+    uri = f"file:{db_file.resolve().as_posix()}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as conn:
+        row = conn.execute("SELECT COUNT(*) FROM articles").fetchone()
+    return int(row[0])
+
+
+def check_creatable_dir(path: Path) -> tuple[str, str]:
+    if path.exists():
+        if path.is_dir():
+            return "OK", f"{path} exists"
+        return "FAIL", f"{path} exists but is not a directory"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return "FAIL", f"{path} cannot be created ({exc})"
+    return "OK", f"{path} created"
+
+
+def status_summary_for_preflight(path: Path) -> tuple[str, str]:
+    if not path.exists():
+        return "WARN", f"status file not found: {path}"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return "WARN", f"status file cannot be read ({exc.__class__.__name__}): {path}"
+    running = display_status_value(data.get("is_running"))
+    updated_at = display_status_value(data.get("updated_at"))
+    stop_reason = display_status_value(data.get("stop_reason"))
+    return "OK", f"running={running}, updated_at={updated_at}, stop_reason={stop_reason}"
+
+
+def lock_summary_for_preflight(config: PreflightConfig) -> tuple[str, str]:
+    if not config.lock_file.exists():
+        return "OK", f"lock file not found: {config.lock_file}"
+    lock_config = LoopConfig(
+        list_url="preflight",
+        lock_file=config.lock_file,
+        lock_stale_minutes=config.lock_stale_minutes,
+    )
+    can_takeover, reason = lock_is_stale_or_corrupt(lock_config)
+    if can_takeover:
+        return "WARN", f"{reason}: {config.lock_file}"
+    return "WARN", f"current lock present ({reason}): {config.lock_file}"
+
+
+def print_preflight_result(level: str, label: str, detail: str) -> str:
+    print(f"[{level}] {label}: {detail}")
+    return level
+
+
+def run_preflight(config: PreflightConfig | None = None) -> int:
+    config = config or PreflightConfig()
+    levels: list[str] = []
+    print("[archive_loop] preflight")
+    print("[archive_loop] no collection, browser, network, or execute mode is run")
+
+    cwd = Path.cwd().resolve()
+    project_root = config.project_root.resolve()
+    if cwd == project_root:
+        levels.append(print_preflight_result("OK", "working directory", str(cwd)))
+    else:
+        levels.append(print_preflight_result("WARN", "working directory", f"{cwd} (expected {project_root})"))
+
+    if config.daily_archive_path.exists():
+        levels.append(print_preflight_result("OK", "daily_archive.py", str(config.daily_archive_path)))
+    else:
+        levels.append(print_preflight_result("FAIL", "daily_archive.py", f"missing: {config.daily_archive_path}"))
+
+    if not config.db_file.exists():
+        levels.append(print_preflight_result("FAIL", "archive.db", f"missing: {config.db_file}"))
+    else:
+        try:
+            article_count = readonly_article_count(config.db_file)
+        except sqlite3.Error as exc:
+            levels.append(print_preflight_result("FAIL", "archive.db", f"read-only count failed ({exc})"))
+        else:
+            if article_count == 0:
+                levels.append(print_preflight_result("FAIL", "archive.db articles", "count=0"))
+            else:
+                levels.append(print_preflight_result("OK", "archive.db articles", f"count={article_count}"))
+
+    if config.backups_dir.is_dir():
+        levels.append(print_preflight_result("OK", "backups directory", str(config.backups_dir)))
+    else:
+        levels.append(print_preflight_result("FAIL", "backups directory", f"missing: {config.backups_dir}"))
+
+    for label, path in (
+        ("state directory", config.state_dir),
+        ("loop log directory", config.log_dir),
+        ("reports directory", config.reports_dir),
+    ):
+        level, detail = check_creatable_dir(path)
+        levels.append(print_preflight_result(level, label, detail))
+
+    level, detail = lock_summary_for_preflight(config)
+    levels.append(print_preflight_result(level, "archive_loop.lock", detail))
+
+    level, detail = status_summary_for_preflight(config.status_file)
+    levels.append(print_preflight_result(level, "archive_loop_status.json", detail))
+
+    print("[OK] list-url: not required for preflight")
+    print("[WARN] list-url: real collection still requires the mentor teacher article-list URL")
+    levels.extend(["OK", "WARN"])
+
+    fail_count = levels.count("FAIL")
+    warn_count = levels.count("WARN")
+    ok_count = levels.count("OK")
+    print(f"[archive_loop] summary: ok={ok_count}, warn={warn_count}, fail={fail_count}")
+    return 2 if fail_count else 0
+
+
 def run_once(
     config: LoopConfig,
     run_number: int,
@@ -509,6 +640,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_FILE)
     parser.add_argument("--status", action="store_true", help="print loop status and exit")
+    parser.add_argument("--preflight", action="store_true", help="run read-only operational safety checks and exit")
     parser.add_argument(
         "--lock-stale-minutes",
         type=float,
@@ -516,7 +648,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         help="minutes before archive_loop.lock can be treated as stale",
     )
     args = parser.parse_args(argv)
-    if args.status:
+    if args.status or args.preflight:
         return args
     if not args.list_url:
         parser.error("--list-url is required unless --status is used")
@@ -533,6 +665,14 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     if args.status:
         return print_status(args.status_file)
+    if args.preflight:
+        return run_preflight(
+            PreflightConfig(
+                log_dir=args.log_dir,
+                status_file=args.status_file,
+                lock_stale_minutes=args.lock_stale_minutes,
+            )
+        )
     config = LoopConfig(
         list_url=args.list_url,
         limit=args.limit,

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -53,6 +54,39 @@ def write_lock(path, *, updated_at=None, pid=99999):
         + "\n",
         encoding="utf-8",
     )
+
+
+def create_archive_db(path, *, article_count=1):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY)")
+        conn.executemany("INSERT INTO articles DEFAULT VALUES", [() for _ in range(article_count)])
+
+
+def make_preflight_config(tmp_path, **overrides):
+    project_root = tmp_path / "project"
+    scripts_dir = project_root / "scripts"
+    scripts_dir.mkdir(parents=True)
+    daily_archive_path = scripts_dir / "daily_archive.py"
+    daily_archive_path.write_text("# test daily archive\n", encoding="utf-8")
+    db_file = project_root / "data" / "archive.db"
+    create_archive_db(db_file, article_count=1)
+    backups_dir = project_root / "backups"
+    backups_dir.mkdir()
+    values = {
+        "project_root": project_root,
+        "daily_archive_path": daily_archive_path,
+        "db_file": db_file,
+        "backups_dir": backups_dir,
+        "state_dir": project_root / "state",
+        "log_dir": project_root / "logs" / "archive_loop",
+        "reports_dir": project_root / "reports",
+        "lock_file": project_root / "state" / "archive_loop.lock",
+        "status_file": project_root / "state" / "archive_loop_status.json",
+        "lock_stale_minutes": 30,
+    }
+    values.update(overrides)
+    return archive_loop.PreflightConfig(**values)
 
 
 def test_builds_daily_archive_execute_command_with_url_and_limit(tmp_path):
@@ -422,3 +456,126 @@ def test_help_does_not_require_lock(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "--lock-stale-minutes" in captured.out
+
+
+def test_preflight_returns_zero_when_required_files_are_ready(tmp_path, monkeypatch, capsys):
+    config = make_preflight_config(tmp_path)
+    monkeypatch.chdir(config.project_root)
+
+    rc = archive_loop.run_preflight(config)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "[OK] working directory:" in captured.out
+    assert "[OK] archive.db articles: count=1" in captured.out
+    assert "[WARN] list-url: real collection still requires" in captured.out
+    assert "[archive_loop] summary:" in captured.out
+    assert config.state_dir.exists()
+    assert config.log_dir.exists()
+    assert config.reports_dir.exists()
+
+
+def test_preflight_fails_when_archive_db_is_missing(tmp_path, monkeypatch, capsys):
+    config = make_preflight_config(tmp_path)
+    config.db_file = config.project_root / "data" / "missing.db"
+    monkeypatch.chdir(config.project_root)
+
+    rc = archive_loop.run_preflight(config)
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "[FAIL] archive.db: missing:" in captured.out
+
+
+def test_preflight_fails_when_archive_db_has_no_articles(tmp_path, monkeypatch, capsys):
+    config = make_preflight_config(tmp_path)
+    config.db_file = config.project_root / "data" / "empty.db"
+    create_archive_db(config.db_file, article_count=0)
+    monkeypatch.chdir(config.project_root)
+
+    rc = archive_loop.run_preflight(config)
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "[FAIL] archive.db articles: count=0" in captured.out
+
+
+def test_preflight_runs_with_current_lock_without_creating_or_removing_it(tmp_path, monkeypatch, capsys):
+    config = make_preflight_config(tmp_path)
+    write_lock(config.lock_file)
+    before = config.lock_file.read_text(encoding="utf-8")
+    monkeypatch.chdir(config.project_root)
+
+    rc = archive_loop.run_preflight(config)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "current lock present" in captured.out
+    assert config.lock_file.read_text(encoding="utf-8") == before
+
+
+def test_preflight_reports_corrupt_lock_as_warning(tmp_path, monkeypatch, capsys):
+    config = make_preflight_config(tmp_path)
+    config.lock_file.parent.mkdir(parents=True, exist_ok=True)
+    config.lock_file.write_text("{not-json", encoding="utf-8")
+    monkeypatch.chdir(config.project_root)
+
+    rc = archive_loop.run_preflight(config)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "[WARN] archive_loop.lock: corrupt lock file" in captured.out
+    assert config.lock_file.read_text(encoding="utf-8") == "{not-json"
+
+
+def test_preflight_prints_status_summary_when_status_file_exists(tmp_path, monkeypatch, capsys):
+    config = make_preflight_config(tmp_path)
+    config.status_file.parent.mkdir(parents=True, exist_ok=True)
+    config.status_file.write_text(
+        json.dumps(
+            {
+                "is_running": True,
+                "updated_at": "2026-05-30T12:00:00",
+                "stop_reason": "testing",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(config.project_root)
+
+    rc = archive_loop.run_preflight(config)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "[OK] archive_loop_status.json: running=yes" in captured.out
+    assert "updated_at=2026-05-30T12:00:00" in captured.out
+    assert "stop_reason=testing" in captured.out
+
+
+def test_preflight_does_not_call_execute_or_create_lock(tmp_path, monkeypatch):
+    config = make_preflight_config(tmp_path)
+    monkeypatch.chdir(config.project_root)
+    monkeypatch.setattr(
+        archive_loop.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not run subprocess")),
+    )
+    monkeypatch.setattr(
+        archive_loop,
+        "acquire_lock",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not acquire lock")),
+    )
+
+    rc = archive_loop.run_preflight(config)
+
+    assert rc == 0
+    assert not config.lock_file.exists()
+
+
+def test_main_preflight_does_not_require_list_url(monkeypatch):
+    monkeypatch.setattr(archive_loop, "run_preflight", lambda _config=None: 0)
+
+    rc = archive_loop.main(["--preflight"])
+
+    assert rc == 0
