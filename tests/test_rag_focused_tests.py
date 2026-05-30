@@ -20,9 +20,11 @@ def test_focused_runner_uses_only_explicit_rag_commands():
 
     assert displays == [
         "python scripts/answer_question_phase2.py --help",
+        "python scripts/report_rag_chunk_quality.py --help",
         "pytest tests/test_rag_answering.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_web.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_fixture_jsonl_smoke.py --basetemp=.tmp/rag_focused_pytest",
+        "pytest tests/test_rag_chunk_quality_report.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_fixture_retrieval_eval.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_golden_questions.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_answer_citation_contract.py --basetemp=.tmp/rag_focused_pytest",

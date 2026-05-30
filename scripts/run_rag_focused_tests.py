@@ -15,6 +15,10 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (sys.executable, "scripts/answer_question_phase2.py", "--help"),
     ),
     (
+        "python scripts/report_rag_chunk_quality.py --help",
+        (sys.executable, "scripts/report_rag_chunk_quality.py", "--help"),
+    ),
+    (
         f"pytest tests/test_rag_answering.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_answering.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
@@ -25,6 +29,10 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         f"pytest tests/test_rag_fixture_jsonl_smoke.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_fixture_jsonl_smoke.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_rag_chunk_quality_report.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_chunk_quality_report.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
     (
         f"pytest tests/test_rag_fixture_retrieval_eval.py --basetemp={PYTEST_BASETEMP}",
