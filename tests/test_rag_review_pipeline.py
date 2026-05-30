@@ -51,6 +51,18 @@ def test_pipeline_runs_no_push_then_review_without_automatic_publish():
     assert "git push" not in script
 
 
+def test_pipeline_parses_review_result_and_report_lines():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Get-ReviewMetadata" in script
+    assert "& $ReviewScript *>&1" in script
+    assert 'REVIEW_RESULT=(PASS|FAIL|NEEDS_HUMAN_REVIEW)' in script
+    assert 'REVIEW_REPORT=(.+)' in script
+    assert "$reviewMetadata = Get-ReviewMetadata -ReviewOutput $reviewOutput" in script
+    assert "Pipeline review result: $reviewResult" in script
+    assert "Pipeline review report: $reviewReport" in script
+
+
 def test_reviewer_prompt_documents_review_decision_contract():
     prompt = read_text("agent_prompts/rag_reviewer.md")
 
