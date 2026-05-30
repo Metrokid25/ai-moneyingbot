@@ -123,26 +123,28 @@ python scripts\run_daily_archive_loop.py --status
 - 중복 실행을 피해야 한다. 이미 루프가 실행 중이면 새 작업을 시작하지 않는다.
 - 네이버 로그인은 사용자가 직접 유지한다.
 
-## 중복 실행 방지 TODO
+## 중복 실행 방지
 
-현재 루프에는 강제 중복 실행 방지가 없다.
-이번 작업에서는 무리하게 구현하지 않고 다음 작업자가 바로 구현할 수 있도록 설계 후보를 남긴다.
+`run_daily_archive_loop.py`는 실제 루프를 시작하기 전에 `state/archive_loop.lock` 파일로 중복 실행을 막는다.
+이미 실행 중인 루프가 있으면 새 루프는 시작하지 않고 non-zero exit code로 종료된다.
+이 동작은 같은 PC에서 24시간 루프가 두 개 이상 동시에 실행되어 같은 목록을 중복 처리하는 상황을 막기 위한 것이다.
 
-권장 구현 방향:
+lock 파일에는 다음 정보가 JSON으로 기록된다.
 
-1. `state/archive_loop_status.json`의 `is_running`과 `updated_at`을 읽는다.
-2. `is_running=true`이고 `updated_at`이 최근이면 새 루프 시작을 거부한다.
-3. stale 기준은 `max(interval_seconds * 2, 1800초)`처럼 설정한다.
-4. stale이면 경고를 출력하고 새 루프 시작을 허용하되 `stop_reason` 또는 별도 필드에 stale takeover를 남긴다.
-5. status 파일에 `pid`를 추가 기록한다.
-6. Windows에서는 `Get-Process -Id <pid>`로 이전 프로세스 존재를 확인한다.
-7. 더 엄격한 방식이 필요하면 `state/archive_loop.lock` 파일을 만들고 원자적 생성 방식으로 lock 획득을 구현한다.
-8. 루프 정상 종료 시 lock 파일을 제거하고, 비정상 종료 시 stale 기준과 pid 확인으로 복구한다.
+- `pid`: lock을 가진 프로세스 ID
+- `started_at`: lock 획득 시각
+- `updated_at`: 최근 heartbeat 시각
+- `command`: 실행 인자 요약
+- `lock_version`: lock 파일 형식 버전
 
-테스트 후보:
+루프는 status 파일을 갱신할 때 lock의 `updated_at`도 함께 갱신한다.
+정상 종료, block signal 중단, non-zero return code, duration 도달, max-runs 도달, KeyboardInterrupt 종료에서는 가능한 lock 파일을 제거한다.
 
-- status 파일이 없으면 정상 시작
-- `is_running=true`, `updated_at`이 fresh이면 시작 거부
-- `is_running=true`, `updated_at`이 stale이고 pid가 없으면 takeover 허용
-- `is_running=true`, pid 프로세스가 살아 있으면 시작 거부
-- 정상 종료 시 lock 파일 제거
+stale lock은 `updated_at`이 stale 기준보다 오래된 lock이다.
+기본 stale 기준은 30분이며, 필요하면 `--lock-stale-minutes`로 조정할 수 있다.
+PC 강제 종료나 전원 차단처럼 이전 프로세스가 lock을 지우지 못한 경우에도 stale 기준이 지나면 새 실행이 자동으로 lock을 인수한다.
+JSON이 깨졌거나 필수 필드가 없는 lock도 corrupt/stale lock으로 보고 인수할 수 있다.
+
+수동으로 `state/archive_loop.lock`을 삭제하는 것은 최후 수단이다.
+먼저 `python scripts\run_daily_archive_loop.py --status`와 Windows 작업 관리자 또는 PowerShell의 `Get-Process`로 실제 루프가 살아 있는지 확인한다.
+실행 중인 루프가 확실히 없고 stale 기준을 기다릴 수 없는 경우에만 lock 파일 삭제를 고려한다.

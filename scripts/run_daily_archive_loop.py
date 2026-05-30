@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -26,6 +27,9 @@ DEFAULT_DURATION_HOURS = 24.0
 DEFAULT_LIMIT = 10
 DEFAULT_LOG_DIR = PROJECT_ROOT / "logs" / "archive_loop"
 DEFAULT_STATUS_FILE = PROJECT_ROOT / "state" / "archive_loop_status.json"
+DEFAULT_LOCK_FILE = PROJECT_ROOT / "state" / "archive_loop.lock"
+DEFAULT_LOCK_STALE_MINUTES = 30.0
+LOCK_VERSION = 1
 BLOCK_PATTERNS = (
     "captcha",
     "로그인",
@@ -58,6 +62,9 @@ class LoopConfig:
     python: str = sys.executable
     log_dir: Path = DEFAULT_LOG_DIR
     status_file: Path = DEFAULT_STATUS_FILE
+    lock_file: Path = DEFAULT_LOCK_FILE
+    lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
+    argv_summary: str = ""
 
 
 @dataclass
@@ -196,6 +203,112 @@ def write_status(config: LoopConfig, status: dict[str, object]) -> None:
         json.dumps(status, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    touch_lock(config)
+
+
+def lock_payload(config: LoopConfig, started_at: datetime) -> dict[str, object]:
+    now = datetime.now().isoformat()
+    return {
+        "pid": os.getpid(),
+        "started_at": started_at.isoformat(),
+        "updated_at": now,
+        "command": config.argv_summary or " ".join(sys.argv),
+        "lock_version": LOCK_VERSION,
+    }
+
+
+def write_lock(config: LoopConfig, payload: dict[str, object]) -> None:
+    config.lock_file.parent.mkdir(parents=True, exist_ok=True)
+    config.lock_file.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def create_lock_exclusive(config: LoopConfig, payload: dict[str, object]) -> bool:
+    config.lock_file.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    try:
+        fd = os.open(config.lock_file, flags)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    return True
+
+
+def touch_lock(config: LoopConfig) -> None:
+    if not config.lock_file.exists():
+        return
+    try:
+        data = json.loads(config.lock_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if data.get("pid") != os.getpid():
+        return
+    data["updated_at"] = datetime.now().isoformat()
+    write_lock(config, data)
+
+
+def lock_is_stale_or_corrupt(config: LoopConfig) -> tuple[bool, str]:
+    try:
+        data = json.loads(config.lock_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return True, f"corrupt lock file ({exc.__class__.__name__})"
+
+    required_fields = ("pid", "started_at", "updated_at", "command", "lock_version")
+    missing = [field for field in required_fields if field not in data]
+    if missing:
+        return True, "corrupt lock file (missing " + ", ".join(missing) + ")"
+
+    try:
+        updated_at = datetime.fromisoformat(str(data["updated_at"]))
+    except ValueError:
+        return True, "corrupt lock file (invalid updated_at)"
+
+    stale_after = timedelta(minutes=config.lock_stale_minutes)
+    now = datetime.now(updated_at.tzinfo) if updated_at.tzinfo else datetime.now()
+    if now - updated_at > stale_after:
+        return True, f"stale lock file (updated_at={data['updated_at']})"
+    return False, f"pid={data['pid']}, updated_at={data['updated_at']}"
+
+
+def acquire_lock(config: LoopConfig, started_at: datetime) -> bool:
+    payload = lock_payload(config, started_at)
+    if create_lock_exclusive(config, payload):
+        return True
+
+    if config.lock_file.exists():
+        can_takeover, reason = lock_is_stale_or_corrupt(config)
+        if not can_takeover:
+            print(f"[archive_loop] ERROR: another archive loop appears to be running ({reason}).")
+            print(f"[archive_loop] lock file: {config.lock_file}")
+            return False
+        print(f"[archive_loop] taking over {reason}: {config.lock_file}")
+        try:
+            config.lock_file.unlink()
+        except FileNotFoundError:
+            pass
+        if create_lock_exclusive(config, payload):
+            return True
+
+    print(f"[archive_loop] ERROR: could not acquire lock file: {config.lock_file}")
+    return False
+
+
+def release_lock(config: LoopConfig) -> None:
+    if not config.lock_file.exists():
+        return
+    try:
+        data = json.loads(config.lock_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if data.get("pid") != os.getpid():
+        return
+    try:
+        config.lock_file.unlink()
+    except FileNotFoundError:
+        return
 
 
 def update_status_for_run_start(
@@ -330,34 +443,44 @@ def run_loop(
         config.interval_seconds,
     )
     loop_started_at = datetime.now()
+    if not acquire_lock(config, loop_started_at):
+        return 3
+
     status = base_status(config, loop_started_at, max_runs)
-    write_status(config, status)
     stop_at = loop_started_at + timedelta(hours=config.duration_hours)
 
-    for run_number in range(1, max_runs + 1):
-        if datetime.now() >= stop_at:
-            print("[archive_loop] duration reached before next run.")
-            finalize_status(config, status, "duration reached before next run")
-            return 0
+    try:
+        write_status(config, status)
+        for run_number in range(1, max_runs + 1):
+            if datetime.now() >= stop_at:
+                print("[archive_loop] duration reached before next run.")
+                finalize_status(config, status, "duration reached before next run")
+                return 0
 
-        run_started_at = datetime.now()
-        update_status_for_run_start(config, status, run_number, run_started_at)
-        result = run_once(config, run_number, runner=runner)
-        stop_reason = stop_reason_for(config, result)
-        update_status_for_run_finish(config, status, result, stop_reason)
-        path = append_log(config, result, stop_reason=stop_reason)
-        print_run_summary(result, path)
+            run_started_at = datetime.now()
+            update_status_for_run_start(config, status, run_number, run_started_at)
+            result = run_once(config, run_number, runner=runner)
+            stop_reason = stop_reason_for(config, result)
+            update_status_for_run_finish(config, status, result, stop_reason)
+            path = append_log(config, result, stop_reason=stop_reason)
+            print_run_summary(result, path)
 
-        if stop_reason:
-            print(f"[archive_loop] stopping: {stop_reason}")
-            finalize_status(config, status, stop_reason)
-            return 1 if result.returncode != 0 else 0
+            if stop_reason:
+                print(f"[archive_loop] stopping: {stop_reason}")
+                finalize_status(config, status, stop_reason)
+                return 1 if result.returncode != 0 else 0
 
-        if run_number < max_runs:
-            sleeper(config.interval_seconds)
+            if run_number < max_runs:
+                sleeper(config.interval_seconds)
 
-    finalize_status(config, status, "max runs completed")
-    return 0
+        finalize_status(config, status, "max runs completed")
+        return 0
+    except KeyboardInterrupt:
+        finalize_status(config, status, "keyboard interrupt")
+        print("[archive_loop] stopping: keyboard interrupt")
+        return 130
+    finally:
+        release_lock(config)
 
 
 def stop_reason_for(config: LoopConfig, result: RunResult) -> str | None:
@@ -386,6 +509,12 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_FILE)
     parser.add_argument("--status", action="store_true", help="print loop status and exit")
+    parser.add_argument(
+        "--lock-stale-minutes",
+        type=float,
+        default=DEFAULT_LOCK_STALE_MINUTES,
+        help="minutes before archive_loop.lock can be treated as stale",
+    )
     args = parser.parse_args(argv)
     if args.status:
         return args
@@ -395,6 +524,8 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         parser.error("--max-runs must be positive")
     if args.stop_on_failed < 0:
         parser.error("--stop-on-failed must be non-negative")
+    if args.lock_stale_minutes < 0:
+        parser.error("--lock-stale-minutes must be non-negative")
     return args
 
 
@@ -412,6 +543,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         python=args.python,
         log_dir=args.log_dir,
         status_file=args.status_file,
+        lock_stale_minutes=args.lock_stale_minutes,
+        argv_summary=" ".join(argv if argv is not None else sys.argv[1:]),
     )
     return run_loop(config)
 

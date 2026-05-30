@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, "scripts")
@@ -28,9 +29,30 @@ def make_config(tmp_path, **overrides):
         "python": "python-test",
         "log_dir": tmp_path / "logs",
         "status_file": tmp_path / "state" / "archive_loop_status.json",
+        "lock_file": tmp_path / "state" / "archive_loop.lock",
+        "lock_stale_minutes": 30,
+        "argv_summary": "test argv",
     }
     values.update(overrides)
     return archive_loop.LoopConfig(**values)
+
+
+def write_lock(path, *, updated_at=None, pid=99999):
+    timestamp = updated_at or datetime.now().isoformat()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "pid": pid,
+                "started_at": timestamp,
+                "updated_at": timestamp,
+                "command": "existing loop",
+                "lock_version": archive_loop.LOCK_VERSION,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_builds_daily_archive_execute_command_with_url_and_limit(tmp_path):
@@ -80,6 +102,80 @@ def test_loop_runs_max_runs_and_writes_log(tmp_path):
     assert status["max_runs"] == 2
     assert status["is_running"] is False
     assert status["stop_reason"] == "max runs completed"
+    assert not config.lock_file.exists()
+
+
+def test_loop_starts_when_lock_file_is_missing(tmp_path):
+    calls = []
+
+    def fake_runner(command, **_kwargs):
+        calls.append(command)
+        return completed(stdout="failed     : 0\nsaved      : 1\n")
+
+    config = make_config(tmp_path, max_runs=1)
+
+    rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
+
+    assert rc == 0
+    assert len(calls) == 1
+    assert not config.lock_file.exists()
+
+
+def test_valid_lock_file_blocks_duplicate_loop(tmp_path, capsys):
+    calls = []
+    config = make_config(tmp_path, max_runs=1)
+    write_lock(config.lock_file)
+
+    rc = archive_loop.run_loop(
+        config,
+        runner=lambda command, **_kwargs: calls.append(command),
+        sleeper=lambda _seconds: None,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 3
+    assert calls == []
+    assert "another archive loop appears to be running" in captured.out
+    assert config.lock_file.exists()
+
+
+def test_stale_lock_file_can_be_taken_over(tmp_path, capsys):
+    calls = []
+
+    def fake_runner(command, **_kwargs):
+        calls.append(command)
+        return completed(stdout="failed     : 0\nsaved      : 1\n")
+
+    config = make_config(tmp_path, max_runs=1, lock_stale_minutes=30)
+    write_lock(config.lock_file, updated_at=(datetime.now() - timedelta(minutes=31)).isoformat())
+
+    rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert len(calls) == 1
+    assert "taking over stale lock file" in captured.out
+    assert not config.lock_file.exists()
+
+
+def test_corrupt_lock_file_can_be_taken_over(tmp_path, capsys):
+    calls = []
+
+    def fake_runner(command, **_kwargs):
+        calls.append(command)
+        return completed(stdout="failed     : 0\nsaved      : 1\n")
+
+    config = make_config(tmp_path, max_runs=1)
+    config.lock_file.parent.mkdir(parents=True, exist_ok=True)
+    config.lock_file.write_text("{not-json", encoding="utf-8")
+
+    rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert len(calls) == 1
+    assert "taking over corrupt lock file" in captured.out
+    assert not config.lock_file.exists()
 
 
 def test_nonzero_return_code_stops_loop(tmp_path):
@@ -237,6 +333,8 @@ def test_main_placeholder_url_exits_before_subprocess(tmp_path, monkeypatch):
 
 def test_status_prints_existing_file_without_running_subprocess(tmp_path, monkeypatch, capsys):
     status_file = tmp_path / "status.json"
+    lock_file = tmp_path / "state" / "archive_loop.lock"
+    write_lock(lock_file)
     status_file.write_text(
         json.dumps(
             {
@@ -290,6 +388,7 @@ def test_status_prints_existing_file_without_running_subprocess(tmp_path, monkey
     assert "last_report_path: reports/2026-05-30.md" in captured.out
     assert "stop_reason: -" in captured.out
     assert '"is_running"' not in captured.out
+    assert lock_file.exists()
 
 
 def test_status_reports_missing_file_without_running_subprocess(tmp_path, monkeypatch, capsys):
@@ -305,3 +404,21 @@ def test_status_reports_missing_file_without_running_subprocess(tmp_path, monkey
     captured = capsys.readouterr()
     assert rc == 0
     assert "no status file" in captured.out
+
+
+def test_help_does_not_require_lock(monkeypatch, capsys):
+    monkeypatch.setattr(
+        archive_loop,
+        "acquire_lock",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not acquire lock")),
+    )
+
+    try:
+        archive_loop.main(["--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    else:
+        raise AssertionError("--help should exit through argparse")
+
+    captured = capsys.readouterr()
+    assert "--lock-stale-minutes" in captured.out
