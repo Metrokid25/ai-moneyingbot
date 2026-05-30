@@ -210,6 +210,8 @@ Add-Report ""
 Add-Report "- DryRun: $DryRun"
 Add-Report "- NoCommit: $NoCommit"
 Add-Report "- NoPush: $NoPush"
+$noPushMode = if ($NoPush) { "true" } else { "false" }
+Add-Report "- NoPush mode: $noPushMode"
 Add-Report "- UseCodexSandbox: $UseCodexSandbox"
 
 $branch = Get-CurrentBranch
@@ -319,6 +321,11 @@ if ($diffCheckExit -ne 0) {
 if ($codexFailed) {
   $canCommit = $false
   Add-Report "- blocked: codex exec failed"
+}
+if ($NoPush) {
+  $canCommit = $false
+  Add-Report "- commit skipped due to -NoPush"
+  Add-Report "- push skipped due to -NoPush"
 }
 
 if ($canCommit) {

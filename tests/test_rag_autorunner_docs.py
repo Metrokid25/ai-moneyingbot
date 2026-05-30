@@ -56,6 +56,21 @@ def test_once_script_blocks_commit_when_codex_fails():
     assert "$canCommit = $false" in script
 
 
+def test_once_script_no_push_mode_skips_commit_and_push():
+    script = read_text("scripts/run_rag_agent_once.ps1")
+
+    assert "NoPush mode: $noPushMode" in script
+    assert "commit skipped due to -NoPush" in script
+    assert "push skipped due to -NoPush" in script
+
+    no_push_gate = script.index("if ($NoPush) {\n  $canCommit = $false")
+    commit_gate = script.index("if ($canCommit) {")
+    git_commit = script.index("git commit -m $commitMessage")
+    git_push = script.index("git push -u origin $branch")
+
+    assert no_push_gate < commit_gate < git_commit < git_push
+
+
 def test_autorunner_prompt_selects_actionable_rag_tasks_only():
     prompt = read_text("agent_prompts/rag_autorunner.md")
 
