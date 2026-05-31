@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -164,16 +165,36 @@ def test_pipeline_auto_plans_when_no_actionable_rag_task_exists():
     script = read_text("scripts/run_rag_agent_pipeline.ps1")
 
     assert '$PlannerScript = Join-Path $ScriptDir "plan_next_rag_task.py"' in script
+    assert '$TaskScript = Join-Path $ScriptDir "agent_next_task.py"' in script
+    assert "Set-Location $RepoRoot" in script
     assert "function Test-NoActionableRagTask" in script
-    assert "python scripts\\agent_next_task.py --status" in script
+    assert "python $TaskScript --status" in script
     assert "function Invoke-RagPlanner" in script
-    assert "python scripts\\plan_next_rag_task.py" in script
+    assert "python $PlannerScript" in script
     assert 'if (Test-NoActionableRagTask)' in script
     assert 'Write-Host "No actionable RAG task found. Running one-shot RAG planner."' in script
     assert '$reviewResult = "NO_ACTIONABLE_TASKS"' in script
     assert '$plannerResult = Invoke-RagPlanner' in script
     assert 'if ($plannerResult.Result -eq "CREATED_TASK")' in script
     assert 'Write-Host "Planner created a task for a later pipeline run: $($plannerResult.CreatedTaskPath)"' in script
+
+
+def test_pipeline_no_action_detection_matches_agent_next_task_status_contract():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+    result = subprocess.run(
+        ["python", "scripts/agent_next_task.py", "--status"],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    assert lines[0] == "NO_ACTIONABLE_TASKS"
+    assert "skipped=agent_tasks\\pending\\001-real-daily-archive-wiring.md" in lines
+    assert '$lines[0] -eq "NO_ACTIONABLE_TASKS"' in script
+    assert '$skipsArchiveOwnedTask = $lines -contains "skipped=agent_tasks\\pending\\001-real-daily-archive-wiring.md"' in script
+    assert "return ($hasNoActionResult -and $skipsArchiveOwnedTask)" in script
 
 
 def test_pipeline_leaves_planner_task_for_next_run_and_reports_created_path():

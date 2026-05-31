@@ -8,9 +8,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = Resolve-Path (Join-Path $ScriptDir "..")
+Set-Location $RepoRoot
 $OnceScript = Join-Path $ScriptDir "run_rag_agent_once.ps1"
 $ReviewScript = Join-Path $ScriptDir "review_rag_agent_run.ps1"
 $PlannerScript = Join-Path $ScriptDir "plan_next_rag_task.py"
+$TaskScript = Join-Path $ScriptDir "agent_next_task.py"
 
 if (-not (Test-Path $OnceScript)) {
   throw "Missing runner: $OnceScript"
@@ -20,6 +23,9 @@ if (-not (Test-Path $ReviewScript)) {
 }
 if (-not (Test-Path $PlannerScript)) {
   throw "Missing planner: $PlannerScript"
+}
+if (-not (Test-Path $TaskScript)) {
+  throw "Missing task helper: $TaskScript"
 }
 
 function Get-ReviewMetadata {
@@ -142,7 +148,7 @@ function Test-NoActionableRagTask {
   $previousErrorActionPreference = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
-    $output = & python scripts\agent_next_task.py --status *>&1
+    $output = & python $TaskScript --status *>&1
     $exitCode = $LASTEXITCODE
   } catch {
     $output = @($_.Exception.Message)
@@ -157,7 +163,10 @@ function Test-NoActionableRagTask {
     return $false
   }
 
-  return (($output | Out-String) -match "(?m)^NO_ACTIONABLE_TASKS$")
+  $lines = @($output | ForEach-Object { ([string]$_).Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  $hasNoActionResult = $lines.Count -gt 0 -and $lines[0] -eq "NO_ACTIONABLE_TASKS"
+  $skipsArchiveOwnedTask = $lines -contains "skipped=agent_tasks\pending\001-real-daily-archive-wiring.md"
+  return ($hasNoActionResult -and $skipsArchiveOwnedTask)
 }
 
 function Invoke-RagPlanner {
@@ -165,7 +174,7 @@ function Invoke-RagPlanner {
   $previousErrorActionPreference = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
-    $output = & python scripts\plan_next_rag_task.py *>&1
+    $output = & python $PlannerScript *>&1
     $exitCode = $LASTEXITCODE
   } catch {
     $output = @($_.Exception.Message)
