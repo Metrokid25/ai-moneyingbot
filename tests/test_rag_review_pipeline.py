@@ -153,6 +153,7 @@ def test_pipeline_prints_final_human_readable_summary_contract():
     assert "push succeeded: $(Format-BooleanResult $PublishResult.PushSucceeded)" in script
     assert "planner result: $($PlannerResult.Result)" in script
     assert "planner created task path: $($PlannerResult.CreatedTaskPath)" in script
+    assert "planner exhaustion report path: $($PlannerResult.ExhaustionReportPath)" in script
     assert "latest commit hash: $(Get-LatestCommitHash)" in script
     assert "git status -sb:" in script
     assert "remaining pending task summary:" in script
@@ -268,6 +269,15 @@ def test_pipeline_leaves_planner_task_for_next_run_and_reports_created_path():
     assert "planner created task path:" in script
     assert "for a later pipeline run" in script
     assert "Codex exec" not in script.split('if (Test-NoActionableRagTask)', 1)[1].split('Write-Host "Step 1: run_rag_agent_once.ps1 -NoPush"', 1)[0]
+
+
+def test_pipeline_carries_planner_exhaustion_report_path_into_summary():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "PLANNER_EXHAUSTION_REPORT=(.+)" in script
+    assert '$result.ExhaustionReportPath = $Matches[1].Trim()' in script
+    assert "planner exhaustion report path:" in script
+    assert '"Planner did not create a task. No commit or push will run."' in script
 
 
 def test_once_runner_runs_planner_when_no_actionable_rag_task_exists():

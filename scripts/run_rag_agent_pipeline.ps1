@@ -186,6 +186,7 @@ function New-PlannerResult {
     ExitCode = 0
     Result = "NOT_RUN"
     CreatedTaskPath = ""
+    ExhaustionReportPath = ""
   }
 }
 
@@ -240,6 +241,8 @@ function Invoke-RagPlanner {
       $result.CreatedTaskPath = $Matches[1].Trim()
     } elseif ($text -eq "PLANNER_NO_CANDIDATE") {
       $result.Result = "NO_CANDIDATE"
+    } elseif ($text -match "^PLANNER_EXHAUSTION_REPORT=(.+)$") {
+      $result.ExhaustionReportPath = $Matches[1].Trim()
     }
   }
 
@@ -386,6 +389,11 @@ function Write-PipelineSummary {
     Write-Host "planner created task path: (none)"
   } else {
     Write-Host "planner created task path: $($PlannerResult.CreatedTaskPath)"
+  }
+  if ([string]::IsNullOrWhiteSpace($PlannerResult.ExhaustionReportPath)) {
+    Write-Host "planner exhaustion report path: (none)"
+  } else {
+    Write-Host "planner exhaustion report path: $($PlannerResult.ExhaustionReportPath)"
   }
   Write-Host "latest commit hash: $(Get-LatestCommitHash)"
   Write-Host "git status -sb:"

@@ -186,4 +186,29 @@ def test_planner_reports_no_candidate_when_all_candidates_are_duplicates(tmp_pat
 
     assert result == 0
     assert "PLANNER_NO_CANDIDATE" in output
+    assert "PLANNER_EXHAUSTION_REPORT=agent_reports" in output
+    report = tmp_path / "agent_reports" / "rag_planner_candidate_exhaustion.md"
+    assert report.exists()
+    report_text = report.read_text(encoding="utf-8")
+    assert "RAG Planner Candidate Exhaustion" in report_text
+    assert "planner result: NO_CANDIDATE" in report_text
+    assert f"configured candidate count: {len(planner.TASK_CANDIDATES)}" in report_text
+    assert "add a new RAG-owned candidate" in report_text
     assert list((tmp_path / "agent_tasks" / "pending").glob("*-rag-*.md")) == []
+
+
+def test_planner_does_not_write_exhaustion_report_when_actionable_task_exists(tmp_path, capsys):
+    planner = load_planner()
+    write_task(
+        tmp_path,
+        "agent_tasks/pending/050-rag-existing-work.md",
+        "Existing RAG work",
+    )
+
+    result = planner.main(["--root", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert "PLANNER_SKIPPED_ACTIONABLE_TASK=agent_tasks" in output
+    assert "PLANNER_EXHAUSTION_REPORT" not in output
+    assert not (tmp_path / "agent_reports" / "rag_planner_candidate_exhaustion.md").exists()

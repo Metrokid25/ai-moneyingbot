@@ -789,6 +789,27 @@ def choose_candidate(project_root: Path) -> PlannedTask | None:
     return None
 
 
+def write_candidate_exhaustion_report(project_root: Path) -> Path:
+    report_dir = project_root / "agent_reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "rag_planner_candidate_exhaustion.md"
+    existing = existing_task_keys(project_root)
+    lines = [
+        "# RAG Planner Candidate Exhaustion",
+        "",
+        "The RAG planner found no actionable pending RAG task and no unused candidate.",
+        "",
+        f"- planner result: NO_CANDIDATE",
+        f"- configured candidate count: {len(TASK_CANDIDATES)}",
+        f"- existing candidate key count: {len(existing)}",
+        "",
+        "Next action: add a new RAG-owned candidate to scripts/plan_next_rag_task.py ",
+        "or create a RAG-owned pending task manually.",
+    ]
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report_path
+
+
 def render_task(number: int, task: PlannedTask) -> str:
     return f"Title: {task.title}\n\n{task.body.strip()}\n"
 
@@ -831,6 +852,8 @@ def main(argv: Iterable[str] | None = None) -> int:
             print(f"PLANNER_SKIPPED_ACTIONABLE_TASK={actionable.relative_to(project_root)}")
         else:
             print("PLANNER_NO_CANDIDATE")
+            report = write_candidate_exhaustion_report(project_root)
+            print(f"PLANNER_EXHAUSTION_REPORT={report.relative_to(project_root)}")
         return 0
 
     print(f"PLANNER_CREATED_TASK={planned.relative_to(project_root)}")
