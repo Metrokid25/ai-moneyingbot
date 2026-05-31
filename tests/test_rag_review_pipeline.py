@@ -40,15 +40,61 @@ def test_review_script_is_read_only_and_runs_required_checks():
     assert "agent_tasks/pending/001-real-daily-archive-wiring.md" in script
 
 
-def test_pipeline_runs_no_push_then_review_without_automatic_publish():
+def test_pipeline_runs_no_push_then_review_with_publish_options_defaulting_off():
     script = read_text("scripts/run_rag_agent_pipeline.ps1")
 
+    assert "[switch]$CommitOnPass" in script
+    assert "[switch]$PushOnPass" in script
+    assert '[string]$CommitMessage = "RAG pipeline pass-gated update"' in script
     assert "& $OnceScript -NoPush" in script
     assert "& $ReviewScript" in script
     assert "Waiting for user approval before any commit or push." in script
-    assert "git add" not in script
-    assert "git commit" not in script
-    assert "git push" not in script
+    assert 'if (-not $Commit)' in script
+    assert "Pipeline passed review. Waiting for user approval before any commit or push." in script
+
+
+def test_pipeline_commits_and_pushes_only_through_pass_gated_options():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Invoke-PassGatedPublish" in script
+    assert 'if ($reviewResult -eq "PASS")' in script
+    assert "Invoke-PassGatedPublish -Message $CommitMessage -Commit:$CommitOnPass -Push:$PushOnPass" in script
+    assert "& git commit -m $Message" in script
+    assert 'if (-not $Push)' in script
+    assert "& git push" in script
+    assert "PushOnPass not requested; push skipped." in script
+    assert "Pipeline needs human review. Waiting for user approval before any commit or push." in script
+    assert "Pipeline stopped after review failure. Inspect the review report before continuing." in script
+
+
+def test_pipeline_stages_only_git_status_changed_paths_without_add_dot():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Get-ChangedPaths" in script
+    assert "git status --porcelain --untracked-files=all" in script
+    assert "foreach ($path in $changedPaths)" in script
+    assert "& git add -- $path" in script
+    assert "git add ." not in script
+    assert "& git add ." not in script
+
+
+def test_pipeline_blocks_forbidden_and_archive_owned_paths_before_publish():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Test-ForbiddenPublishPath" in script
+    assert '".env"' in script
+    assert '"archive.db"' in script
+    assert 'if ($p.StartsWith("data/")) { return $true }' in script
+    assert '"scripts/_step3_verify_v2.py"' in script
+    assert '"scripts/daily_archive.py"' in script
+    assert '"scripts/index_tail.py"' in script
+    assert '"scripts/batch_recollect.py"' in script
+    assert '"src/browser.py"' in script
+    assert '"src/parser.py"' in script
+    assert '"src/collector.py"' in script
+    assert '"src/indexer.py"' in script
+    assert '"agent_tasks/pending/001-real-daily-archive-wiring.md"' in script
+    assert "Publish gate failed: forbidden files changed." in script
 
 
 def test_pipeline_parses_review_result_and_report_lines():
