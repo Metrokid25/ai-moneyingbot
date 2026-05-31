@@ -155,12 +155,13 @@ def test_pipeline_summary_is_written_for_all_review_outcomes_and_run_failure():
     assert "Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult" in script
 
 
-def test_once_runner_short_circuits_when_no_actionable_rag_task_exists():
+def test_once_runner_runs_planner_when_no_actionable_rag_task_exists():
     script = read_text("scripts/run_rag_agent_once.ps1")
 
     assert "python scripts/agent_next_task.py --status" in script
     assert "NO_ACTIONABLE_TASKS: no actionable RAG pending task. Codex exec, commit, and push skipped." in script
-    assert "RUN_RESULT=NO_ACTIONABLE_TASKS" in script
+    assert '"python" @("scripts\\plan_next_rag_task.py")' in script
+    assert "RUN_RESULT=PLANNER_RUN" in script
 
 
 def test_review_script_keeps_no_actionable_tasks_distinct_from_human_review():

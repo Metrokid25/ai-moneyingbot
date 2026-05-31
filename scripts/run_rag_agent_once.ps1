@@ -91,6 +91,7 @@ function Test-AllowlistedPath {
     "scripts/run_rag_agent_once.ps1",
     "scripts/run_rag_agent_loop.ps1",
     "scripts/agent_next_task.py",
+    "scripts/plan_next_rag_task.py",
     "scripts/ingest_archive_export.py",
     "scripts/build_chunks_phase2.py",
     "scripts/load_qdrant_phase2.py",
@@ -251,9 +252,17 @@ $taskStatusText = ($taskStatusOutput | Out-String).Trim()
 if ($taskStatusText -match "(?m)^NO_ACTIONABLE_TASKS$") {
   Add-Report ""
   Add-Report "NO_ACTIONABLE_TASKS: no actionable RAG pending task. Codex exec, commit, and push skipped."
+  Add-Report "NO_ACTIONABLE_TASKS: no actionable RAG pending task. Running one-shot RAG planner."
+  $plannerExit = Invoke-LoggedProcess "plan next RAG task" "python" @("scripts\plan_next_rag_task.py")
+  if ($plannerExit -ne 0) {
+    Add-Report ""
+    Add-Report "BLOCKED: RAG planner failed."
+    exit $plannerExit
+  }
+  Add-Report "Codex exec skipped after planner run; generated tasks are handled on a later run."
   Add-Report ""
   Add-Report "Report written to $ReportPath"
-  Write-Host "RUN_RESULT=NO_ACTIONABLE_TASKS"
+  Write-Host "RUN_RESULT=PLANNER_RUN"
   Write-Host "RUN_REPORT=$ReportPath"
   exit 0
 }
