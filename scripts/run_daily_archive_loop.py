@@ -27,7 +27,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from config import DEFAULT_BROWSER_PROFILE_DIR  # noqa: E402
+from config import DEFAULT_BROWSER_PROFILE_DIR, HEADLESS  # noqa: E402
 
 DEFAULT_INTERVAL_SECONDS = 600
 DEFAULT_DURATION_HOURS = 24.0
@@ -76,6 +76,7 @@ class LoopConfig:
     lock_file: Path = DEFAULT_LOCK_FILE
     lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
     browser_profile_dir: Path = DEFAULT_BROWSER_PROFILE_DIR
+    headed: bool = False
     argv_summary: str = ""
 
 
@@ -103,6 +104,7 @@ class PreflightConfig:
     status_file: Path = DEFAULT_STATUS_FILE
     lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
     browser_profile_dir: Path = DEFAULT_BROWSER_PROFILE_DIR
+    headed: bool = False
 
 
 def is_placeholder_url(url: str) -> bool:
@@ -126,7 +128,7 @@ def calculate_max_runs(duration_hours: float, interval_seconds: int) -> int:
 
 
 def build_daily_archive_command(config: LoopConfig) -> list[str]:
-    return [
+    command = [
         config.python,
         str(PROJECT_ROOT / "scripts" / "daily_archive.py"),
         "--execute",
@@ -137,6 +139,15 @@ def build_daily_archive_command(config: LoopConfig) -> list[str]:
         "--browser-profile-dir",
         str(config.browser_profile_dir),
     ]
+    if config.headed:
+        command.append("--headed")
+    return command
+
+
+def collection_browser_mode(headed: bool) -> str:
+    if headed:
+        return "headed (--headed)"
+    return "headless (HEADLESS=true)" if HEADLESS else "headed (HEADLESS=false)"
 
 
 def summarize(text: str, *, max_chars: int = 1200) -> str:
@@ -552,6 +563,10 @@ def run_preflight(config: PreflightConfig | None = None) -> int:
     level, detail = browser_profile_summary_for_preflight(config.browser_profile_dir)
     levels.append(print_preflight_result(level, "browser profile", detail))
 
+    levels.append(print_preflight_result("OK", "collection browser mode", collection_browser_mode(config.headed)))
+    print("[WARN] browser mode: if login_required repeats in headless mode, retry once with --headed")
+    levels.extend(["OK", "WARN"])
+
     print("[OK] list-url: not required for preflight")
     print("[WARN] list-url: real collection still requires the mentor teacher article-list URL")
     levels.extend(["OK", "WARN"])
@@ -676,6 +691,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_FILE)
     parser.add_argument("--browser-profile-dir", type=Path, default=DEFAULT_BROWSER_PROFILE_DIR)
+    parser.add_argument("--headed", action="store_true", help="pass --headed to daily_archive.py execute runs")
     parser.add_argument("--status", action="store_true", help="print loop status and exit")
     parser.add_argument("--preflight", action="store_true", help="run read-only operational safety checks and exit")
     parser.add_argument(
@@ -709,6 +725,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 status_file=args.status_file,
                 lock_stale_minutes=args.lock_stale_minutes,
                 browser_profile_dir=args.browser_profile_dir,
+                headed=args.headed,
             )
         )
     config = LoopConfig(
@@ -723,6 +740,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         status_file=args.status_file,
         lock_stale_minutes=args.lock_stale_minutes,
         browser_profile_dir=args.browser_profile_dir,
+        headed=args.headed,
         argv_summary=" ".join(argv if argv is not None else sys.argv[1:]),
     )
     return run_loop(config)

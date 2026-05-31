@@ -33,6 +33,7 @@ def make_config(tmp_path, **overrides):
         "lock_file": tmp_path / "state" / "archive_loop.lock",
         "lock_stale_minutes": 30,
         "browser_profile_dir": tmp_path / "state" / "browser_profile",
+        "headed": False,
         "argv_summary": "test argv",
     }
     values.update(overrides)
@@ -86,6 +87,7 @@ def make_preflight_config(tmp_path, **overrides):
         "status_file": project_root / "state" / "archive_loop_status.json",
         "lock_stale_minutes": 30,
         "browser_profile_dir": project_root / "state" / "browser_profile",
+        "headed": False,
     }
     values.update(overrides)
     return archive_loop.PreflightConfig(**values)
@@ -107,6 +109,15 @@ def test_builds_daily_archive_execute_command_with_url_and_limit(tmp_path):
         "--browser-profile-dir",
         str(tmp_path / "state" / "browser_profile"),
     ]
+
+
+def test_builds_daily_archive_execute_command_with_headed(tmp_path):
+    config = make_config(tmp_path, headed=True)
+
+    command = archive_loop.build_daily_archive_command(config)
+
+    assert command[-1] == "--headed"
+    assert "--browser-profile-dir" in command
 
 
 def test_default_max_runs_is_calculated_from_duration_and_interval():
@@ -460,6 +471,7 @@ def test_help_does_not_require_lock(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "--lock-stale-minutes" in captured.out
+    assert "--headed" in captured.out
 
 
 def test_preflight_returns_zero_when_required_files_are_ready(tmp_path, monkeypatch, capsys):
@@ -476,6 +488,8 @@ def test_preflight_returns_zero_when_required_files_are_ready(tmp_path, monkeypa
     assert "[WARN] browser profile:" in captured.out
     assert "--login-url" in captured.out
     assert "mentor teacher article-list URL" in captured.out
+    assert "[OK] collection browser mode:" in captured.out
+    assert "if login_required repeats in headless mode" in captured.out
     assert "[archive_loop] summary:" in captured.out
     assert config.state_dir.exists()
     assert config.log_dir.exists()

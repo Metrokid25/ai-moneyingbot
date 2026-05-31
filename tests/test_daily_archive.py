@@ -299,6 +299,30 @@ def test_main_dry_run_prints_safety_notes(tmp_path, capsys):
     assert "notes" in captured.out
 
 
+def test_main_execute_passes_headed_to_runner(monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_daily_archive(**kwargs):
+        captured_kwargs.update(kwargs)
+        return daily_archive.DailyStats(), "report.md"
+
+    monkeypatch.setattr(daily_archive, "run_daily_archive", fake_run_daily_archive)
+
+    rc = daily_archive.main(
+        [
+            "--execute",
+            "--headed",
+            "--limit",
+            "1",
+            "--list-url",
+            "https://example.test/list",
+        ]
+    )
+
+    assert rc == 0
+    assert captured_kwargs["headed"] is True
+
+
 def test_execute_uses_mockable_collector_and_applies_limit(tmp_path, monkeypatch):
     rows = [
         {"article_id": 1, "url": "mock://1", "title": "one"},
@@ -601,10 +625,12 @@ def test_collect_execute_articles_fetches_bounded_pages(monkeypatch):
     calls: list[int] = []
     closed = False
     profile_dirs = []
+    headless_values = []
 
     class FakeSession:
         def __init__(self, **kwargs):
             profile_dirs.append(kwargs.get("user_data_dir"))
+            headless_values.append(kwargs.get("headless"))
 
         def close(self):
             nonlocal closed
@@ -635,6 +661,34 @@ def test_collect_execute_articles_fetches_bounded_pages(monkeypatch):
     assert notes == []
     assert closed is True
     assert profile_dirs == ["profile-test"]
+    assert headless_values == [None]
+
+
+def test_collect_execute_articles_headed_passes_headless_false(monkeypatch):
+    session_kwargs = []
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            session_kwargs.append(kwargs)
+
+        def close(self):
+            pass
+
+    fake_browser = types.ModuleType("browser")
+    fake_browser.BrowserSession = FakeSession
+    monkeypatch.setitem(sys.modules, "browser", fake_browser)
+    monkeypatch.setattr(daily_archive, "fetch_list_rows", lambda *_args: ([], None))
+
+    rows, notes = daily_archive.collect_execute_articles(
+        list_url="https://example.test/list",
+        limit=1,
+        page_limit=1,
+        headed=True,
+    )
+
+    assert rows == []
+    assert notes == []
+    assert session_kwargs[0]["headless"] is False
 
 
 def test_login_mode_opens_profile_without_collecting_or_writing(tmp_path, monkeypatch, capsys):
@@ -782,4 +836,5 @@ def test_daily_archive_help_lists_login_and_profile_options(capsys):
     assert "--login" in captured.out
     assert "--login-url" in captured.out
     assert "--login-check-retries" in captured.out
+    assert "--headed" in captured.out
     assert "--browser-profile-dir" in captured.out

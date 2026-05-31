@@ -138,6 +138,10 @@ def _is_login_page(page: Page) -> Optional[str]:
     """Detect login pages without treating embedded error strings as decisive."""
     url = page.url
     try:
+        title = page.title()
+    except PlaywrightError:
+        title = "-"
+    try:
         html = page.content()
     except PlaywrightError:
         html = ""
@@ -151,7 +155,7 @@ def _is_login_page(page: Page) -> Optional[str]:
 
     reason, detail = detect_login_required(url, html, login_form_visible=login_form_visible)
     if reason:
-        print(f"[DEBUG] login_required detected: {detail}")
+        print(f"[DEBUG] login_required detected: {detail}; url={url}; title={title}")
         return reason
     if detail == "article-list markers found":
         print("[DEBUG] login_required skipped: article-list markers found")

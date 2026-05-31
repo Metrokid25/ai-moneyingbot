@@ -201,6 +201,7 @@ def collect_execute_articles(
     page_limit: int | None,
     delay_seconds: float = DEFAULT_DELAY_SECONDS,
     browser_profile_dir: Path | None = None,
+    headed: bool = False,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Collect article list rows in execute mode with strict bounds.
 
@@ -219,7 +220,10 @@ def collect_execute_articles(
 
     pages_to_scan = page_limit if page_limit is not None else DEFAULT_PAGE_LIMIT
     rows: list[dict[str, Any]] = []
-    session = BrowserSession(user_data_dir=browser_profile_dir)
+    session = BrowserSession(
+        user_data_dir=browser_profile_dir,
+        headless=False if headed else None,
+    )
     try:
         for page_num in range(1, pages_to_scan + 1):
             page_rows, err = fetch_list_rows(session, list_url, page_num)
@@ -327,6 +331,7 @@ def run_daily_archive(
     collect_body: bool = False,
     delay_seconds: float = DEFAULT_DELAY_SECONDS,
     browser_profile_dir: Path | None = None,
+    headed: bool = False,
     state_dir: Path = DEFAULT_STATE_DIR,
     reports_dir: Path = DEFAULT_REPORTS_DIR,
     today: datetime | None = None,
@@ -358,6 +363,7 @@ def run_daily_archive(
                 page_limit=page_limit,
                 delay_seconds=delay_seconds,
                 browser_profile_dir=browser_profile_dir,
+                headed=headed,
             )
             stats.notes.extend(notes)
         else:
@@ -554,6 +560,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--page-limit", type=int, default=DEFAULT_PAGE_LIMIT)
     parser.add_argument("--list-url", default=None, help="Naver Cafe article-list URL for execute mode")
     parser.add_argument(
+        "--headed",
+        action="store_true",
+        help="run execute collection with a visible browser instead of the default HEADLESS setting",
+    )
+    parser.add_argument(
         "--collect-body",
         action="store_true",
         help="after indexing list rows, call collector.collect_body for saved articles",
@@ -611,6 +622,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             collect_body=args.collect_body,
             delay_seconds=args.delay_seconds,
             browser_profile_dir=args.browser_profile_dir,
+            headed=args.headed,
             state_dir=args.state_dir,
             reports_dir=args.reports_dir,
         )
