@@ -1,5 +1,54 @@
 # Archive Bot 24h Operation
 
+## Confirmed Proven Operation Routine
+
+The current operating path is fixed to the routine that successfully populated
+`data/archive.db`:
+
+1. `scripts/index_tail.py "<멘토선생님 작성글 목록 URL>" --collect-after-snapshot --interactive-login`
+2. `scripts/batch_recollect.py`
+
+Confirmed successful state:
+
+- `BODY_COLLECTED 42948`
+- `INDEXED 0`
+- `FAILED 0`
+- `latest article_id 170633`
+- `batch_recollect` success rate: `115/115`
+
+For a one-shot manual run, edit `scripts/run_archive_once.ps1`, replace the URL
+placeholder, then run:
+
+```powershell
+.\scripts\run_archive_once.ps1
+```
+
+For market-time operation, edit `scripts/start_archive_loop.ps1`, replace the URL
+placeholder, then run:
+
+```powershell
+.\scripts\start_archive_loop.ps1
+```
+
+Market schedule:
+
+- `23:00` ~ `06:00`: stop collection.
+- `06:00` ~ `07:00`: run every 30 minutes.
+- `07:00` ~ `08:00`: run every 10 minutes.
+- `08:00` ~ `16:00`: run every 5 minutes.
+- `16:00` ~ `18:00`: run every 10 minutes.
+- `18:00` ~ `23:00`: run every 30 minutes.
+
+If the browser login window appears, the user logs in manually and presses Enter
+in PowerShell after the article list is visible. There is no automatic login,
+CAPTCHA bypass, or identity-verification bypass.
+
+Read-only DB status check:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect('file:data/archive.db?mode=ro', uri=True); print(c.execute('select status, count(*) from articles group by status').fetchall()); print(c.execute('select count(*), max(article_id) from articles').fetchone()); c.close()"
+```
+
 ## Manual Login With Cafe URL
 
 Manual login must be done by the user in the Archive Bot browser profile before real collection.
