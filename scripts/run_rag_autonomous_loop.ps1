@@ -84,6 +84,36 @@ function Get-TaskListLines {
   return @($taskOutput)
 }
 
+function Get-QueueTaskPaths {
+  param([string]$QueueName)
+
+  $queueDir = Join-Path (Join-Path $RepoRoot "agent_tasks") $QueueName
+  if (-not (Test-Path $queueDir)) {
+    return @()
+  }
+
+  $repoRootText = ([string]$RepoRoot).TrimEnd([char[]]@('\', '/'))
+  return @(Get-ChildItem -Path $queueDir -Filter "*.md" -File |
+    Sort-Object -Property Name |
+    ForEach-Object {
+      $_.FullName.Substring($repoRootText.Length + 1).Replace("\", "/")
+    })
+}
+
+function Add-NewCompletedTasks {
+  param(
+    [string[]]$BeforeDoneTasks,
+    [string[]]$AfterDoneTasks,
+    [System.Collections.Generic.List[string]]$CompletedTasks
+  )
+
+  foreach ($task in @($AfterDoneTasks | Sort-Object)) {
+    if ($BeforeDoneTasks -notcontains $task -and $CompletedTasks -notcontains $task) {
+      $CompletedTasks.Add($task)
+    }
+  }
+}
+
 function Get-QueueSummaryLines {
   param([string]$QueueName)
 
@@ -177,6 +207,7 @@ $commitAttemptedCount = 0
 $commitSucceededCount = 0
 $pushAttemptedCount = 0
 $pushSucceededCount = 0
+$doneTasksBeforeRun = @(Get-QueueTaskPaths -QueueName "done")
 
 for ($cycle = 1; $cycle -le $Cycles; $cycle += 1) {
   Write-Host ""
@@ -227,6 +258,9 @@ for ($cycle = 1; $cycle -le $Cycles; $cycle += 1) {
   if (-not [string]::IsNullOrWhiteSpace($completedTaskPath) -and $completedTaskPath -ne "(none)") {
     $completedTasks.Add($completedTaskPath)
   }
+  $doneTasksAfterCycle = @(Get-QueueTaskPaths -QueueName "done")
+  Add-NewCompletedTasks -BeforeDoneTasks $doneTasksBeforeRun -AfterDoneTasks $doneTasksAfterCycle -CompletedTasks $completedTasks
+  $doneTasksBeforeRun = $doneTasksAfterCycle
   Write-Host "RAG autonomous cycle $cycle result: $pipelineResult (exit code $pipelineExitCode)"
   $completedCycles += 1
 

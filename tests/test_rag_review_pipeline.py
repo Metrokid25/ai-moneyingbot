@@ -191,6 +191,31 @@ def test_pipeline_generates_task_specific_commit_messages_without_archive_owned_
     assert "Pass-gated commit message: $resolvedMessage" in script
 
 
+def test_autonomous_loop_tracks_completed_tasks_by_done_queue_delta():
+    script = read_text("scripts/run_rag_autonomous_loop.ps1")
+
+    assert "function Get-QueueTaskPaths" in script
+    assert "function Add-NewCompletedTasks" in script
+    assert '$doneTasksBeforeRun = @(Get-QueueTaskPaths -QueueName "done")' in script
+    assert '$doneTasksAfterCycle = @(Get-QueueTaskPaths -QueueName "done")' in script
+    assert "Add-NewCompletedTasks -BeforeDoneTasks $doneTasksBeforeRun -AfterDoneTasks $doneTasksAfterCycle -CompletedTasks $completedTasks" in script
+    assert '$doneTasksBeforeRun = $doneTasksAfterCycle' in script
+    assert "$BeforeDoneTasks -notcontains $task" in script
+    assert "$CompletedTasks -notcontains $task" in script
+    assert "Sort-Object -Property Name" in script
+    assert "TrimEnd([char[]]@('\\', '/'))" in script
+    assert 'Replace("\\", "/")' in script
+
+
+def test_autonomous_loop_completed_task_summary_uses_none_only_when_empty():
+    script = read_text("scripts/run_rag_autonomous_loop.ps1")
+
+    assert "completed task list:" in script
+    assert "if ($CompletedTasks.Count -eq 0)" in script
+    assert 'Write-Host "  - (none)"' in script
+    assert 'foreach ($task in $CompletedTasks) { Write-Host "  - $task" }' in script
+
+
 def test_pipeline_auto_plans_when_no_actionable_rag_task_exists():
     script = read_text("scripts/run_rag_agent_pipeline.ps1")
 
