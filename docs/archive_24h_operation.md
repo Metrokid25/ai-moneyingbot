@@ -10,6 +10,11 @@ Use the mentor teacher article-list URL, not only the Naver home/login page:
 ```
 
 - Naver home login alone may not be enough to confirm Cafe article-list access.
+- `browser profile exists` only means the folder exists; it does not prove that Naver Cafe login is valid.
+- The manual login browser is opened in headed mode so the user can complete login and verification directly.
+- After Enter, `--login --login-url` reopens the same URL in the same persistent profile and checks whether it is still `login_required`.
+- If verification fails, keep the browser open, make sure the article list is actually visible, and press Enter again.
+- Proceed to a real `run_daily_archive_loop.py` collection test only after login verification succeeds.
 - In the bot-only browser, open the mentor teacher article-list URL and confirm that the article list is visible.
 - The command does not collect articles and does not write to the DB, state, or reports.
 - If captcha or identity verification appears, the user must handle it manually.

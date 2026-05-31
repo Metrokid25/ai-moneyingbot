@@ -67,3 +67,22 @@ def test_browser_session_uses_persistent_profile_by_default(tmp_path, monkeypatc
             },
         )
     ]
+
+
+def test_browser_session_accepts_headless_override(tmp_path, monkeypatch):
+    calls = []
+    profile_dir = tmp_path / "browser_profile"
+    monkeypatch.setattr(browser, "sync_playwright", lambda: FakePlaywrightStarter(calls))
+
+    session = browser.BrowserSession(user_data_dir=profile_dir, headless=False)
+    session.close()
+
+    assert calls == [
+        (
+            "launch_persistent_context",
+            {
+                "user_data_dir": str(profile_dir),
+                "headless": False,
+            },
+        )
+    ]

@@ -460,7 +460,15 @@ def status_summary_for_preflight(path: Path) -> tuple[str, str]:
 def browser_profile_summary_for_preflight(path: Path) -> tuple[str, str]:
     if path.exists():
         if path.is_dir():
-            return "OK", f"{path} exists"
+            return (
+                "OK",
+                (
+                    f"{path} exists; profile exists != login verified. "
+                    "If login_required repeats, rerun "
+                    "`python scripts/daily_archive.py --login --login-url \"<mentor teacher article-list URL>\"` "
+                    "and confirm the article-list page is accessible."
+                ),
+            )
         return "FAIL", f"{path} exists but is not a directory"
     return (
         "WARN",

@@ -570,6 +570,8 @@ def test_preflight_reports_existing_browser_profile_as_ok(tmp_path, monkeypatch,
     captured = capsys.readouterr()
     assert rc == 0
     assert "[OK] browser profile:" in captured.out
+    assert "profile exists != login verified" in captured.out
+    assert "If login_required repeats" in captured.out
 
 
 def test_loop_command_passes_browser_profile_dir(tmp_path):

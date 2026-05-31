@@ -34,6 +34,8 @@ DEFAULT_PAGE_LIMIT = 1
 MAX_LIMIT = 100
 MAX_PAGE_LIMIT = 10
 DEFAULT_DELAY_SECONDS = 3.0
+DEFAULT_LOGIN_CHECK_RETRIES = 3
+DEFAULT_LOGIN_URL = "https://nid.naver.com/nidlogin.login"
 
 
 @dataclass
@@ -270,6 +272,18 @@ def collect_article_body(article_id: int) -> tuple[str, str | None]:
     return collect_body(article_id)
 
 
+def wait_for_manual_confirmation() -> None:
+    if sys.platform == "win32":
+        import msvcrt  # noqa: WPS433
+
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                return
+    else:
+        sys.stdin.readline()
+
+
 def is_duplicate(article_id: int, seen_ids: set[int], *, dry_run: bool) -> bool:
     if article_id in seen_ids:
         return True
@@ -421,31 +435,58 @@ def run_daily_archive(
 def prepare_manual_login(
     *,
     browser_profile_dir: Path | None = None,
-    login_url: str = "https://nid.naver.com/nidlogin.login",
+    login_url: str = DEFAULT_LOGIN_URL,
+    login_check_retries: int = DEFAULT_LOGIN_CHECK_RETRIES,
 ) -> int:
-    from browser import BrowserSession, wait_for_login  # noqa: WPS433
+    from browser import BrowserSession  # noqa: WPS433
 
     profile_dir = browser_profile_dir or DEFAULT_BROWSER_PROFILE_DIR
+    max_attempts = max(1, login_check_retries)
     print("[daily_archive] manual login mode")
     print(f"  browser_profile_dir: {profile_dir}")
     print(f"  login_url: {login_url}")
+    print("  browser mode: headed (visible) for manual login")
+    print(f"  login verification retries: {max_attempts}")
     print("  this command does not collect articles")
     print("  no DB write, state update, or report write will be performed")
     print("  sign in to Naver manually in the opened browser")
     print("  if captcha or identity verification appears, handle it manually")
     print("  after login, confirm the mentor teacher article-list page is visible")
-    print("  press Enter in PowerShell after confirmation to exit")
+    print("  after Enter, this command reopens login_url to verify access")
     print("  do not put this command in Windows Task Scheduler")
-    if login_url == "https://nid.naver.com/nidlogin.login":
+    if login_url == DEFAULT_LOGIN_URL:
         print("  카페 접근 확인을 위해 --login-url 사용 권장")
         print("  recommended: use --login-url to confirm Cafe access")
 
-    session = BrowserSession(user_data_dir=profile_dir)
+    session = BrowserSession(user_data_dir=profile_dir, headless=False)
     try:
-        _final_url, _err = session.goto(login_url)
-        wait_for_login(session.page)
-        print("[daily_archive] login preparation complete")
-        return 0
+        _final_url, initial_err = session.goto(login_url)
+        if initial_err:
+            print(f"[daily_archive] initial login_url status: {initial_err}")
+
+        for attempt in range(1, max_attempts + 1):
+            print(
+                "[daily_archive] complete login and confirm the article-list page, "
+                "then press Enter in PowerShell"
+            )
+            wait_for_manual_confirmation()
+            print(f"[daily_archive] verifying login_url access ({attempt}/{max_attempts})")
+            _final_url, verify_err = session.goto(login_url)
+            if not verify_err:
+                print("[daily_archive] article-list page appears accessible")
+                print("[daily_archive] login preparation complete")
+                return 0
+
+            print(f"[daily_archive] still {verify_err}")
+            if attempt < max_attempts:
+                print(
+                    "[daily_archive] in the browser, confirm the mentor teacher article-list "
+                    "is visible, then press Enter again"
+                )
+
+        print("[daily_archive] ERROR: manual login verification failed")
+        print("[daily_archive] next step: rerun --login --login-url and confirm the article-list page is visible")
+        return 2
     finally:
         session.close()
 
@@ -500,8 +541,14 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--login", action="store_true", help="open persistent browser profile for manual Naver login")
     parser.add_argument(
         "--login-url",
-        default="https://nid.naver.com/nidlogin.login",
+        default=DEFAULT_LOGIN_URL,
         help="URL to open in manual login mode; use the mentor teacher article-list URL to confirm Cafe access",
+    )
+    parser.add_argument(
+        "--login-check-retries",
+        type=int,
+        default=DEFAULT_LOGIN_CHECK_RETRIES,
+        help="manual login verification attempts after Enter",
     )
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--page-limit", type=int, default=DEFAULT_PAGE_LIMIT)
@@ -531,6 +578,8 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         parser.error(f"--page-limit must be between 1 and {MAX_PAGE_LIMIT}")
     if args.delay_seconds < 0:
         parser.error("--delay-seconds must be non-negative")
+    if args.login_check_retries < 1:
+        parser.error("--login-check-retries must be positive")
     return args
 
 
@@ -540,6 +589,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         return prepare_manual_login(
             browser_profile_dir=args.browser_profile_dir,
             login_url=args.login_url,
+            login_check_retries=args.login_check_retries,
         )
 
     if not args.dry_run and not args.execute:

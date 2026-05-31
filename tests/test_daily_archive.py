@@ -641,15 +641,16 @@ def test_login_mode_opens_profile_without_collecting_or_writing(tmp_path, monkey
     calls = []
     closed = False
     login_url = "https://cafe.naver.com/f-e/cafes/29082876/members/example"
+    goto_results = [("https://nid.naver.com/login", "login_required"), (login_url, None)]
 
     class FakeSession:
         def __init__(self, **kwargs):
-            calls.append(("session", kwargs.get("user_data_dir")))
+            calls.append(("session", kwargs.get("user_data_dir"), kwargs.get("headless")))
             self.page = object()
 
         def goto(self, url):
             calls.append(("goto", url))
-            return url, "login_required"
+            return goto_results.pop(0)
 
         def close(self):
             nonlocal closed
@@ -657,8 +658,8 @@ def test_login_mode_opens_profile_without_collecting_or_writing(tmp_path, monkey
 
     fake_browser = types.ModuleType("browser")
     fake_browser.BrowserSession = FakeSession
-    fake_browser.wait_for_login = lambda page: calls.append(("wait_for_login", page))
     monkeypatch.setitem(sys.modules, "browser", fake_browser)
+    monkeypatch.setattr(daily_archive, "wait_for_manual_confirmation", lambda: calls.append(("wait_for_enter", None)))
     monkeypatch.setattr(
         daily_archive,
         "run_daily_archive",
@@ -681,11 +682,13 @@ def test_login_mode_opens_profile_without_collecting_or_writing(tmp_path, monkey
     captured = capsys.readouterr()
     assert rc == 0
     assert "manual login mode" in captured.out
+    assert "browser mode: headed" in captured.out
+    assert "article-list page appears accessible" in captured.out
     assert "this command does not collect articles" in captured.out
     assert "do not put this command in Windows Task Scheduler" in captured.out
-    assert ("session", tmp_path / "profile") in calls
-    assert ("goto", login_url) in calls
-    assert any(call[0] == "wait_for_login" for call in calls)
+    assert ("session", tmp_path / "profile", False) in calls
+    assert calls.count(("goto", login_url)) == 2
+    assert any(call[0] == "wait_for_enter" for call in calls)
     assert closed is True
     assert not (tmp_path / "state").exists()
     assert not (tmp_path / "reports").exists()
@@ -708,8 +711,8 @@ def test_login_mode_without_login_url_keeps_safe_default(tmp_path, monkeypatch, 
 
     fake_browser = types.ModuleType("browser")
     fake_browser.BrowserSession = FakeSession
-    fake_browser.wait_for_login = lambda page: calls.append(("wait_for_login", page))
     monkeypatch.setitem(sys.modules, "browser", fake_browser)
+    monkeypatch.setattr(daily_archive, "wait_for_manual_confirmation", lambda: calls.append(("wait_for_enter", None)))
 
     rc = daily_archive.main(["--login", "--browser-profile-dir", str(tmp_path / "profile")])
 
@@ -720,6 +723,56 @@ def test_login_mode_without_login_url_keeps_safe_default(tmp_path, monkeypatch, 
     assert "recommended: use --login-url to confirm Cafe access" in captured.out
 
 
+def test_login_mode_retries_and_fails_when_login_url_stays_blocked(tmp_path, monkeypatch, capsys):
+    calls = []
+    login_url = "https://cafe.naver.com/f-e/cafes/29082876/members/example"
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            calls.append(("session", kwargs.get("user_data_dir"), kwargs.get("headless")))
+            self.page = object()
+
+        def goto(self, url):
+            calls.append(("goto", url))
+            return url, "login_required"
+
+        def close(self):
+            calls.append(("close", None))
+
+    fake_browser = types.ModuleType("browser")
+    fake_browser.BrowserSession = FakeSession
+    monkeypatch.setitem(sys.modules, "browser", fake_browser)
+    monkeypatch.setattr(daily_archive, "wait_for_manual_confirmation", lambda: calls.append(("wait_for_enter", None)))
+    monkeypatch.setattr(
+        daily_archive,
+        "run_daily_archive",
+        lambda **_kwargs: pytest.fail("run_daily_archive should not be called"),
+    )
+    monkeypatch.setattr(daily_archive, "save_article", lambda *_args, **_kwargs: pytest.fail("save_article should not be called"))
+    monkeypatch.setattr(daily_archive, "write_daily_report", lambda *_args, **_kwargs: pytest.fail("write_daily_report should not be called"))
+    monkeypatch.setattr(daily_archive, "save_crawl_state", lambda *_args, **_kwargs: pytest.fail("save_crawl_state should not be called"))
+
+    rc = daily_archive.main(
+        [
+            "--login",
+            "--login-url",
+            login_url,
+            "--login-check-retries",
+            "2",
+            "--browser-profile-dir",
+            str(tmp_path / "profile"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "still login_required" in captured.out
+    assert "manual login verification failed" in captured.out
+    assert ("session", tmp_path / "profile", False) in calls
+    assert calls.count(("goto", login_url)) == 3
+    assert len([call for call in calls if call[0] == "wait_for_enter"]) == 2
+
+
 def test_daily_archive_help_lists_login_and_profile_options(capsys):
     with pytest.raises(SystemExit) as exc_info:
         daily_archive.parse_args(["--help"])
@@ -728,4 +781,5 @@ def test_daily_archive_help_lists_login_and_profile_options(capsys):
     assert exc_info.value.code == 0
     assert "--login" in captured.out
     assert "--login-url" in captured.out
+    assert "--login-check-retries" in captured.out
     assert "--browser-profile-dir" in captured.out

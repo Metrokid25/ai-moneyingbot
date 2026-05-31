@@ -102,18 +102,20 @@ class BrowserSession:
         *,
         user_data_dir: str | Path | None = None,
         persistent: bool = True,
+        headless: bool | None = None,
     ) -> None:
         self._pw = sync_playwright().start()
         self._browser: Browser | None = None
         self.user_data_dir = Path(user_data_dir or DEFAULT_BROWSER_PROFILE_DIR)
+        browser_headless = HEADLESS if headless is None else headless
         if persistent:
             self.user_data_dir.mkdir(parents=True, exist_ok=True)
             self._context: BrowserContext = self._pw.chromium.launch_persistent_context(
                 user_data_dir=str(self.user_data_dir),
-                headless=HEADLESS,
+                headless=browser_headless,
             )
         else:
-            self._browser = self._pw.chromium.launch(headless=HEADLESS)
+            self._browser = self._pw.chromium.launch(headless=browser_headless)
             self._context = self._browser.new_context()
         self._page: Page = self._context.new_page()
 
