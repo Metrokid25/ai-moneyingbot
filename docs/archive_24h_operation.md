@@ -83,7 +83,8 @@ Time windows use the local PC time:
 - `06:00` ~ `07:00`: run every 30 minutes.
 - `07:00` ~ `08:00`: run every 10 minutes.
 - `08:00` ~ `16:00`: run every 5 minutes.
-- `16:00` ~ `23:00`: run every 10 minutes.
+- `16:00` ~ `18:00`: run every 10 minutes.
+- `18:00` ~ `23:00`: run every 30 minutes.
 
 Example:
 

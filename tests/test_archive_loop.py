@@ -168,6 +168,15 @@ def test_market_schedule_uses_10_minutes_at_1700():
 
     assert decision.active is True
     assert decision.interval_seconds == 600
+    assert decision.label == "market-16-18-10m"
+
+
+def test_market_schedule_uses_30_minutes_at_1900():
+    decision = archive_loop.market_schedule_decision(datetime(2026, 5, 31, 19, 0))
+
+    assert decision.active is True
+    assert decision.interval_seconds == 1800
+    assert decision.label == "market-18-23-30m"
 
 
 def test_fixed_schedule_keeps_interval_seconds(tmp_path):
@@ -658,6 +667,8 @@ def test_preflight_prints_market_schedule_when_enabled(tmp_path, monkeypatch, ca
     assert "[OK] schedule mode: market" in captured.out
     assert "23:00-06:00 stop" in captured.out
     assert "08:00-16:00 5m" in captured.out
+    assert "16:00-18:00 10m" in captured.out
+    assert "18:00-23:00 30m" in captured.out
 
 
 def test_preflight_fails_when_archive_db_is_missing(tmp_path, monkeypatch, capsys):

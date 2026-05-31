@@ -168,7 +168,9 @@ def market_schedule_decision(now: datetime) -> ScheduleDecision:
         return ScheduleDecision(active=True, interval_seconds=600, label="market-07-08-10m")
     if current < datetime_time(16, 0):
         return ScheduleDecision(active=True, interval_seconds=300, label="market-08-16-5m")
-    return ScheduleDecision(active=True, interval_seconds=600, label="market-16-23-10m")
+    if current < datetime_time(18, 0):
+        return ScheduleDecision(active=True, interval_seconds=600, label="market-16-18-10m")
+    return ScheduleDecision(active=True, interval_seconds=1800, label="market-18-23-30m")
 
 
 def schedule_decision_for(config: LoopConfig, now: datetime) -> ScheduleDecision:
@@ -715,7 +717,7 @@ def run_preflight(config: PreflightConfig | None = None) -> int:
     schedule_mode = "market" if config.market_schedule else "fixed"
     print(f"[OK] schedule mode: {schedule_mode}")
     if config.market_schedule:
-        print("[OK] market schedule: 23:00-06:00 stop, 06:00-07:00 30m, 07:00-08:00 10m, 08:00-16:00 5m, 16:00-23:00 10m")
+        print("[OK] market schedule: 23:00-06:00 stop, 06:00-07:00 30m, 07:00-08:00 10m, 08:00-16:00 5m, 16:00-18:00 10m, 18:00-23:00 30m")
         levels.append("OK")
     levels.append("OK")
 
@@ -879,7 +881,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--market-schedule",
         action="store_true",
-        help="use local time windows: 23:00-06:00 stop, 06:00-07:00 30m, 07:00-08:00 10m, 08:00-16:00 5m, 16:00-23:00 10m",
+        help="use local time windows: 23:00-06:00 stop, 06:00-07:00 30m, 07:00-08:00 10m, 08:00-16:00 5m, 16:00-18:00 10m, 18:00-23:00 30m",
     )
     parser.add_argument("--status", action="store_true", help="print loop status and exit")
     parser.add_argument("--preflight", action="store_true", help="run read-only operational safety checks and exit")
