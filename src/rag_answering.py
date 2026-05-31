@@ -13,7 +13,10 @@ DEFAULT_ANSWER_MODEL = "gpt-4o-mini"
 PRICING_NOTE_ESTIMATE = "estimated from configured per-token model pricing; cached input is not included"
 UNKNOWN_PRICING_NOTE = "pricing not configured for this model"
 MISSING_USAGE_NOTE = "usage not returned by provider"
-NO_CONTEXT_ANSWER = "No related evidence was found, so this question cannot be answered from the provided RAG context."
+NO_CONTEXT_ANSWER = (
+    "The RAG corpus does not contain enough related evidence to answer this question. "
+    "I cannot answer from the provided RAG context without inventing unsupported facts."
+)
 
 OPENAI_PRICING_USD_PER_1M_TOKENS = {
     "gpt-4o-mini": {

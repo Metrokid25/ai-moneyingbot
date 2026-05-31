@@ -29,12 +29,18 @@ def test_no_context_answer_record_has_empty_sources_and_status():
     assert payload["citations"] == []
     assert payload["no_context"] is True
     assert payload["insufficient_context"] is True
-    assert "No related evidence" in payload["answer"]
+    answer_lower = payload["answer"].lower()
+    assert "rag corpus" in answer_lower
+    assert "does not contain enough related evidence" in answer_lower
+    assert "cannot answer from the provided rag context" in answer_lower
+    assert "without inventing unsupported facts" in answer_lower
     assert "no_context: True" in markdown
     assert "insufficient_context: True" in markdown
     assert "- No related evidence." in markdown
-    assert "will rise" not in payload["answer"].lower()
-    assert "will fall" not in payload["answer"].lower()
+    assert "will rise" not in answer_lower
+    assert "will fall" not in answer_lower
+    assert "buy" not in answer_lower
+    assert "sell" not in answer_lower
 
 
 def test_run_rag_answer_short_circuits_empty_retrieval_without_llm(monkeypatch, tmp_path):
