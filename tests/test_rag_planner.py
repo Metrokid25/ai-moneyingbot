@@ -102,6 +102,71 @@ def test_planner_skips_duplicate_candidates_across_all_queues(tmp_path):
     assert candidate == planner.TASK_CANDIDATES[-1]
 
 
+def test_planner_has_replenished_candidate_after_current_done_backlog(tmp_path):
+    planner = load_planner()
+    write_task(
+        tmp_path,
+        "agent_tasks/pending/001-real-daily-archive-wiring.md",
+        "Archive task",
+    )
+    completed_slugs = [
+        "rag-answer-context-token-budget-regression",
+        "rag-retrieval-source-order-regression",
+        "rag-retrieval-ranking-regression",
+        "rag-source-deduplication-regression",
+        "rag-answer-citation-formatting-regression",
+        "rag-no-context-refusal-quality",
+        "rag-chunk-metadata-validation",
+        "rag-web-ui-smoke-regression",
+        "rag-pipeline-report-readability",
+        "rag-focused-test-runner-coverage",
+    ]
+    for index, slug in enumerate(completed_slugs, start=27):
+        write_task(
+            tmp_path,
+            f"agent_tasks/done/{index:03d}-{slug}.md",
+            slug.replace("-", " ").title(),
+        )
+    write_task(
+        tmp_path,
+        "agent_tasks/done/041-rag-autonomous-commit-message-readability.md",
+        "Improve RAG autonomous commit message readability",
+    )
+
+    planned = planner.plan_next_task(tmp_path)
+
+    assert planned is not None
+    assert planned.name == "042-rag-retrieval-score-threshold-regression.md"
+    text = planned.read_text(encoding="utf-8")
+    assert "Retrieval score threshold behavior" in text
+    assert "Archive crawling" in text
+
+
+def test_planner_skips_equivalent_candidate_titles_across_all_queues(tmp_path):
+    planner = load_planner()
+    write_task(
+        tmp_path,
+        "agent_tasks/pending/001-real-daily-archive-wiring.md",
+        "Archive task",
+    )
+    for index, candidate in enumerate(planner.TASK_CANDIDATES[:10], start=27):
+        write_task(
+            tmp_path,
+            f"agent_tasks/done/{index:03d}-{candidate.slug}.md",
+            candidate.title,
+        )
+    write_task(
+        tmp_path,
+        "agent_tasks/failed/099-manual-threshold-followup.md",
+        "RAG retrieval score threshold regression",
+    )
+
+    candidate = planner.choose_candidate(tmp_path)
+
+    assert candidate is not None
+    assert candidate.slug == "rag-answer-source-count-limit-regression"
+
+
 def test_planner_reports_no_candidate_when_all_candidates_are_duplicates(tmp_path, capsys):
     planner = load_planner()
     write_task(

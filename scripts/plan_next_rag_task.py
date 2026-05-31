@@ -7,6 +7,7 @@ under agent_tasks/pending when the queue contains no actionable RAG task.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 from typing import Iterable, NamedTuple
@@ -367,6 +368,359 @@ Completion criteria:
 - Move this task to `agent_tasks/done/` when complete.
 """,
     ),
+    PlannedTask(
+        slug="rag-retrieval-score-threshold-regression",
+        title="Add RAG retrieval score threshold regression",
+        body="""Context:
+- Retrieval score thresholds should keep weak matches from being presented as
+  grounded evidence.
+- A fixture-level regression can document the expected boundary without
+  external vector services.
+
+Goals:
+- Add or tighten a deterministic regression for retrieval score thresholding.
+- Use synthetic or in-repo fixture records only.
+- Keep the expected threshold behavior clear in assertions.
+
+Allowed scope:
+- `src/rag_retrieval.py`
+- `tests/test_rag_retrieval*.py`
+- `tests/fixtures/`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_retrieval.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Retrieval score threshold behavior is covered by a focused regression.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-answer-source-count-limit-regression",
+        title="Add RAG answer source count limit regression",
+        body="""Context:
+- RAG answers should expose enough citations to audit grounding while avoiding
+  noisy source lists.
+- Source count limits are part of the answer display contract.
+
+Goals:
+- Add or tighten a focused regression for answer source count limiting.
+- Cover ordering and truncation with deterministic synthetic context.
+- Keep the test independent of external services.
+
+Allowed scope:
+- `src/rag_answer_context.py`
+- `src/rag_answering.py`
+- `tests/test_rag_answer_context.py`
+- `tests/test_rag_answering.py`
+- `tests/test_rag_*.py`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_answer_context.py tests/test_rag_answering.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Answer source count limiting is covered by a focused regression.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-web-empty-query-handling",
+        title="Add RAG web empty query handling regression",
+        body="""Context:
+- The local RAG web UI should handle empty or whitespace-only questions without
+  invoking retrieval or answer generation.
+- This behavior is user-facing and should stay deterministic.
+
+Goals:
+- Add or tighten a smoke regression for empty query handling.
+- Verify the UI response is clear and local.
+- Avoid external browser, crawler, or Cafe dependencies.
+
+Allowed scope:
+- `scripts/serve_rag_web.py`
+- `tests/test_rag_web.py`
+- `tests/test_rag_*.py`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_web.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Empty query handling is covered by a focused web UI regression.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-fixture-schema-validation",
+        title="Add RAG fixture schema validation",
+        body="""Context:
+- RAG JSONL fixtures are shared by ingest, retrieval, and evaluation tests.
+- A compact schema validation test can catch fixture drift before it causes
+  unclear downstream failures.
+
+Goals:
+- Add validation for required RAG fixture fields and simple type expectations.
+- Keep validation local to tests and existing fixtures.
+- Prefer clear assertion messages over broad framework changes.
+
+Allowed scope:
+- `tests/fixtures/`
+- `tests/test_rag_fixture_jsonl_smoke.py`
+- `tests/test_rag_*.py`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_fixture_jsonl_smoke.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Fixture schema expectations are covered by focused tests.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-report-latest-commit-summary",
+        title="Add RAG report latest commit summary",
+        body="""Context:
+- RAG run reports are easier to audit when they identify the latest commit that
+  was verified or intentionally left uncommitted.
+- The summary should stay read-only and avoid automatic git publishing changes.
+
+Goals:
+- Add or tighten report coverage for latest commit summary content.
+- Keep behavior deterministic in tests by stubbing command output or using
+  fixture text.
+- Avoid changing automatic commit or push behavior.
+
+Allowed scope:
+- `scripts/run_rag_agent_pipeline.ps1`
+- `scripts/review_rag_agent_run.ps1`
+- `tests/test_rag_review_pipeline.py`
+- `tests/test_rag_*.py`
+- `docs/`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_review_pipeline.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Latest commit summary behavior is covered or documented for RAG reports.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-planner-candidate-exhaustion-report",
+        title="Add RAG planner candidate exhaustion report",
+        body="""Context:
+- When the planner has no candidates left, autonomous runs should leave a clear
+  audit trail instead of only printing PLANNER_NO_CANDIDATE.
+- The report should stay inside RAG-owned reporting paths.
+
+Goals:
+- Add or tighten coverage for planner exhaustion reporting.
+- Produce a small report or clearer output when no RAG candidate can be planned.
+- Keep the behavior deterministic and local.
+
+Allowed scope:
+- `scripts/plan_next_rag_task.py`
+- `scripts/run_rag_agent_pipeline.ps1`
+- `tests/test_rag_planner.py`
+- `tests/test_rag_review_pipeline.py`
+- `agent_reports/`
+- `docs/`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_planner.py tests/test_rag_review_pipeline.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Candidate exhaustion behavior is covered by focused tests.
+- Exhaustion reporting is clear for autonomous RAG runs.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-review-report-forbidden-path-table",
+        title="Add RAG review report forbidden path table",
+        body="""Context:
+- RAG review reports should make forbidden path checks easy to audit.
+- A compact table can clarify which protected files and directories were not
+  touched during a run.
+
+Goals:
+- Add or tighten report coverage for forbidden path summaries.
+- Keep the report focused on RAG autorunner safety checks.
+- Avoid any archive collection, write, or data-original changes.
+
+Allowed scope:
+- `scripts/review_rag_agent_run.ps1`
+- `tests/test_rag_review_pipeline.py`
+- `tests/test_rag_*.py`
+- `docs/`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_review_pipeline.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Forbidden path reporting is covered by a focused regression or documentation.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-answer-markdown-formatting-regression",
+        title="Add RAG answer markdown formatting regression",
+        body="""Context:
+- RAG answers should remain readable when rendered as Markdown.
+- Formatting drift can obscure citations or unsupported-answer messaging.
+
+Goals:
+- Add or tighten a regression for Markdown answer formatting.
+- Cover headings, bullets, citations, or fallback text where practical.
+- Keep the test deterministic and independent of external services.
+
+Allowed scope:
+- `src/rag_answering.py`
+- `tests/test_rag_answering.py`
+- `tests/test_rag_answer_citation_contract.py`
+- `tests/test_rag_*.py`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_answering.py tests/test_rag_answer_citation_contract.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Markdown formatting behavior is covered by a focused regression.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-context-builder-source-ordering-regression",
+        title="Add RAG context builder source ordering regression",
+        body="""Context:
+- Answer context source ordering affects which evidence is shown first.
+- The context builder should preserve deterministic ordering when retrieval
+  scores and source metadata interact.
+
+Goals:
+- Add or tighten a focused regression for context source ordering.
+- Use synthetic chunks or in-repo fixtures only.
+- Keep expected ordering clear in assertions.
+
+Allowed scope:
+- `src/rag_answer_context.py`
+- `tests/test_rag_answer_context.py`
+- `tests/test_rag_*.py`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_answer_context.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Context source ordering is covered by a focused regression.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-chunk-quality-report-cli-docs",
+        title="Document RAG chunk quality report CLI",
+        body="""Context:
+- The chunk quality report is a RAG diagnostic tool used during fixture and
+  ingestion checks.
+- Its CLI behavior should be easy to discover without reading implementation
+  details.
+
+Goals:
+- Add or tighten documentation for the chunk quality report CLI.
+- Include expected inputs, outputs, and safe local verification commands.
+- Keep documentation RAG-only and avoid archive write instructions.
+
+Allowed scope:
+- `docs/`
+- `scripts/report_rag_chunk_quality.py`
+- `tests/test_rag_chunk_quality_report.py`
+- `tests/test_rag_*.py`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_chunk_quality_report.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Chunk quality report CLI usage is documented or covered by focused tests.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
 )
 
 
@@ -374,8 +728,16 @@ def task_queues_root(project_root: Path) -> Path:
     return project_root / "agent_tasks"
 
 
-def existing_task_slugs(project_root: Path) -> set[str]:
-    slugs: set[str] = set()
+def normalized_key(text: str) -> str:
+    key = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    for prefix in ("add-", "improve-", "document-"):
+        if key.startswith(prefix):
+            return key[len(prefix) :]
+    return key
+
+
+def existing_task_keys(project_root: Path) -> set[str]:
+    keys: set[str] = set()
     for queue_name in QUEUE_NAMES:
         queue_dir = task_queues_root(project_root) / queue_name
         if not queue_dir.exists():
@@ -384,9 +746,26 @@ def existing_task_slugs(project_root: Path) -> set[str]:
             name = path.name
             stem = path.stem
             parts = stem.split("-", 1)
-            slugs.add(parts[1] if len(parts) == 2 and parts[0].isdigit() else stem)
-            slugs.add(name)
-    return slugs
+            slug = parts[1] if len(parts) == 2 and parts[0].isdigit() else stem
+            keys.add(slug)
+            keys.add(name)
+            keys.add(normalized_key(slug))
+            try:
+                first_line = path.read_text(encoding="utf-8").splitlines()[0]
+            except (OSError, UnicodeDecodeError, IndexError):
+                continue
+            if first_line.lower().startswith("title:"):
+                keys.add(normalized_key(first_line.split(":", 1)[1]))
+    return keys
+
+
+def candidate_keys(candidate: PlannedTask) -> set[str]:
+    return {
+        candidate.slug,
+        f"{candidate.slug}.md",
+        normalized_key(candidate.slug),
+        normalized_key(candidate.title),
+    }
 
 
 def next_task_number(project_root: Path) -> int:
@@ -403,9 +782,9 @@ def next_task_number(project_root: Path) -> int:
 
 
 def choose_candidate(project_root: Path) -> PlannedTask | None:
-    existing = existing_task_slugs(project_root)
+    existing = existing_task_keys(project_root)
     for candidate in TASK_CANDIDATES:
-        if candidate.slug not in existing and f"{candidate.slug}.md" not in existing:
+        if candidate_keys(candidate).isdisjoint(existing):
             return candidate
     return None
 
