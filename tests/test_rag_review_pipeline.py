@@ -49,6 +49,7 @@ def test_pipeline_runs_no_push_then_review_with_publish_options_defaulting_off()
     assert '[string]$CommitMessage = "RAG pipeline pass-gated update"' in script
     assert "& $OnceScript -NoPush" in script
     assert "& $ReviewScript" in script
+    assert "Test-NoActionableRagTask" in script
     assert "Waiting for user approval before any commit or push." in script
     assert 'if (-not $Commit)' in script
     assert "Pipeline passed review. Waiting for user approval before any commit or push." in script
@@ -67,6 +68,7 @@ def test_pipeline_commits_and_pushes_only_through_pass_gated_options():
     assert "Pipeline needs human review. Waiting for user approval before any commit or push." in script
     assert "Pipeline stopped after review failure. Inspect the review report before continuing." in script
     assert "Pipeline found no actionable RAG task. No commit or push will run." in script
+    assert '$publishResult = Invoke-PassGatedPublish -Message $CommitMessage -Commit:$CommitOnPass -Push:$PushOnPass' in script
 
 
 def test_pipeline_stages_only_git_status_changed_paths_without_add_dot():
@@ -136,6 +138,8 @@ def test_pipeline_prints_final_human_readable_summary_contract():
     assert "commit succeeded: $(Format-BooleanResult $PublishResult.CommitSucceeded)" in script
     assert "push attempted: $(Format-BooleanResult $PublishResult.PushAttempted)" in script
     assert "push succeeded: $(Format-BooleanResult $PublishResult.PushSucceeded)" in script
+    assert "planner result: $($PlannerResult.Result)" in script
+    assert "planner created task path: $($PlannerResult.CreatedTaskPath)" in script
     assert "latest commit hash: $(Get-LatestCommitHash)" in script
     assert "git status -sb:" in script
     assert "remaining pending task summary:" in script
@@ -150,9 +154,37 @@ def test_pipeline_summary_is_written_for_all_review_outcomes_and_run_failure():
     assert 'if ($reviewResult -eq "PASS")' in script
     assert '$pipelineResult = "PASS"' in script
     assert '$pipelineResult = "NO_ACTIONABLE_TASKS"' in script
+    assert '$pipelineResult = "PLANNER_CREATED_TASK"' in script
     assert '$pipelineResult = "NEEDS_HUMAN_REVIEW"' in script
     assert '$pipelineResult = "FAIL"' in script
-    assert "Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult" in script
+    assert "Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult -PlannerResult $plannerResult" in script
+
+
+def test_pipeline_auto_plans_when_no_actionable_rag_task_exists():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert '$PlannerScript = Join-Path $ScriptDir "plan_next_rag_task.py"' in script
+    assert "function Test-NoActionableRagTask" in script
+    assert "python scripts\\agent_next_task.py --status" in script
+    assert "function Invoke-RagPlanner" in script
+    assert "python scripts\\plan_next_rag_task.py" in script
+    assert 'if (Test-NoActionableRagTask)' in script
+    assert 'Write-Host "No actionable RAG task found. Running one-shot RAG planner."' in script
+    assert '$reviewResult = "NO_ACTIONABLE_TASKS"' in script
+    assert '$plannerResult = Invoke-RagPlanner' in script
+    assert 'if ($plannerResult.Result -eq "CREATED_TASK")' in script
+    assert 'Write-Host "Planner created a task for a later pipeline run: $($plannerResult.CreatedTaskPath)"' in script
+
+
+def test_pipeline_leaves_planner_task_for_next_run_and_reports_created_path():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "PLANNER_CREATED_TASK=(.+)" in script
+    assert '$result.Result = "CREATED_TASK"' in script
+    assert "$result.CreatedTaskPath = $Matches[1].Trim()" in script
+    assert "planner created task path:" in script
+    assert "for a later pipeline run" in script
+    assert "Codex exec" not in script.split('if (Test-NoActionableRagTask)', 1)[1].split('Write-Host "Step 1: run_rag_agent_once.ps1 -NoPush"', 1)[0]
 
 
 def test_once_runner_runs_planner_when_no_actionable_rag_task_exists():

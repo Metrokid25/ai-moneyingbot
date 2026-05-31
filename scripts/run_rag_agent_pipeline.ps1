@@ -10,12 +10,16 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $OnceScript = Join-Path $ScriptDir "run_rag_agent_once.ps1"
 $ReviewScript = Join-Path $ScriptDir "review_rag_agent_run.ps1"
+$PlannerScript = Join-Path $ScriptDir "plan_next_rag_task.py"
 
 if (-not (Test-Path $OnceScript)) {
   throw "Missing runner: $OnceScript"
 }
 if (-not (Test-Path $ReviewScript)) {
   throw "Missing reviewer: $ReviewScript"
+}
+if (-not (Test-Path $PlannerScript)) {
+  throw "Missing planner: $PlannerScript"
 }
 
 function Get-ReviewMetadata {
@@ -126,6 +130,71 @@ function New-PublishResult {
   }
 }
 
+function New-PlannerResult {
+  return @{
+    ExitCode = 0
+    Result = "NOT_RUN"
+    CreatedTaskPath = ""
+  }
+}
+
+function Test-NoActionableRagTask {
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $output = & python scripts\agent_next_task.py --status *>&1
+    $exitCode = $LASTEXITCODE
+  } catch {
+    $output = @($_.Exception.Message)
+    $exitCode = 1
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  if ($exitCode -ne 0) {
+    Write-Host "Unable to determine pending RAG task status."
+    $output | ForEach-Object { Write-Host $_ }
+    return $false
+  }
+
+  return (($output | Out-String) -match "(?m)^NO_ACTIONABLE_TASKS$")
+}
+
+function Invoke-RagPlanner {
+  $result = New-PlannerResult
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $output = & python scripts\plan_next_rag_task.py *>&1
+    $exitCode = $LASTEXITCODE
+  } catch {
+    $output = @($_.Exception.Message)
+    $exitCode = 1
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  $result.ExitCode = $exitCode
+  $output | ForEach-Object { Write-Host $_ }
+  foreach ($line in $output) {
+    $text = ([string]$line).Trim()
+    if ($text -match "^PLANNER_CREATED_TASK=(.+)$") {
+      $result.Result = "CREATED_TASK"
+      $result.CreatedTaskPath = $Matches[1].Trim()
+    } elseif ($text -match "^PLANNER_SKIPPED_ACTIONABLE_TASK=(.+)$") {
+      $result.Result = "SKIPPED_ACTIONABLE_TASK"
+      $result.CreatedTaskPath = $Matches[1].Trim()
+    } elseif ($text -eq "PLANNER_NO_CANDIDATE") {
+      $result.Result = "NO_CANDIDATE"
+    }
+  }
+
+  if ($exitCode -ne 0) {
+    $result.Result = "FAILED"
+  }
+  return $result
+}
+
 function Invoke-PassGatedPublish {
   param(
     [string]$Message,
@@ -229,7 +298,8 @@ function Write-PipelineSummary {
     [string]$PipelineResult,
     [string]$ReviewResult,
     [string]$ReviewReport,
-    [hashtable]$PublishResult
+    [hashtable]$PublishResult,
+    [hashtable]$PlannerResult
   )
 
   Write-Host ""
@@ -245,6 +315,12 @@ function Write-PipelineSummary {
   Write-Host "commit succeeded: $(Format-BooleanResult $PublishResult.CommitSucceeded)"
   Write-Host "push attempted: $(Format-BooleanResult $PublishResult.PushAttempted)"
   Write-Host "push succeeded: $(Format-BooleanResult $PublishResult.PushSucceeded)"
+  Write-Host "planner result: $($PlannerResult.Result)"
+  if ([string]::IsNullOrWhiteSpace($PlannerResult.CreatedTaskPath)) {
+    Write-Host "planner created task path: (none)"
+  } else {
+    Write-Host "planner created task path: $($PlannerResult.CreatedTaskPath)"
+  }
   Write-Host "latest commit hash: $(Get-LatestCommitHash)"
   Write-Host "git status -sb:"
   foreach ($line in @(Get-GitStatusSummary)) {
@@ -261,7 +337,31 @@ $pipelineResult = "UNKNOWN"
 $reviewResult = "UNKNOWN"
 $reviewReport = ""
 $publishResult = New-PublishResult
+$plannerResult = New-PlannerResult
 $pipelineExit = 0
+
+if (Test-NoActionableRagTask) {
+  Write-Host "No actionable RAG task found. Running one-shot RAG planner."
+  $reviewResult = "NO_ACTIONABLE_TASKS"
+  $plannerResult = Invoke-RagPlanner
+  if ($plannerResult.ExitCode -ne 0) {
+    $pipelineResult = "FAIL"
+    $pipelineExit = $plannerResult.ExitCode
+  } elseif ($plannerResult.Result -eq "CREATED_TASK") {
+    Write-Host "Planner created a task for a later pipeline run: $($plannerResult.CreatedTaskPath)"
+    $pipelineResult = "PLANNER_CREATED_TASK"
+    $publishResult = Invoke-PassGatedPublish -Message $CommitMessage -Commit:$CommitOnPass -Push:$PushOnPass
+    $pipelineExit = $publishResult.ExitCode
+    if ($pipelineExit -ne 0) {
+      $pipelineResult = "FAIL"
+    }
+  } else {
+    Write-Host "Planner did not create a task. No commit or push will run."
+    $pipelineResult = "NO_ACTIONABLE_TASKS"
+  }
+  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult -PlannerResult $plannerResult
+  exit $pipelineExit
+}
 
 Write-Host "Step 1: run_rag_agent_once.ps1 -NoPush"
 & $OnceScript -NoPush
@@ -270,7 +370,7 @@ if ($runExit -ne 0) {
   Write-Host "RAG implementation step failed with exit code $runExit."
   $pipelineResult = "FAIL"
   $pipelineExit = $runExit
-  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult
+  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult -PlannerResult $plannerResult
   exit $pipelineExit
 }
 
@@ -292,7 +392,7 @@ if ($reviewExit -ne 0 -or $reviewResult -eq "FAIL") {
   Write-Host "Pipeline stopped after review failure. Inspect the review report before continuing."
   $pipelineResult = "FAIL"
   $pipelineExit = 1
-  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult
+  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult -PlannerResult $plannerResult
   exit $pipelineExit
 }
 
@@ -312,5 +412,5 @@ if ($reviewResult -eq "PASS") {
   $pipelineResult = "NEEDS_HUMAN_REVIEW"
 }
 
-Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult
+Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult -PlannerResult $plannerResult
 exit $pipelineExit
