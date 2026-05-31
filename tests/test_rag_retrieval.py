@@ -11,6 +11,7 @@ from rag_retrieval import (
     VECTOR_SIZE,
     extract_source_metadata,
     format_search_result,
+    format_search_results,
     make_snippet,
     validate_query_vector,
     validate_run_mode,
@@ -53,6 +54,8 @@ def test_format_search_result_handles_payload_fields():
         "score": 0.87,
         "chunk_id": "1:0",
         "article_id": 1,
+        "source_id": None,
+        "source_path": None,
         "content_hash": "hash-1",
         "url": "https://example.test/articles/1",
         "source_url": "https://example.test/articles/1",
@@ -79,6 +82,64 @@ def test_format_search_result_handles_missing_payload_fields():
     assert row["title"] is None
     assert row["snippet"] == ""
     assert row["source"] is None
+
+
+def test_format_search_results_preserves_backend_source_order_and_ranks():
+    points = [
+        SimpleNamespace(
+            score=0.91,
+            payload={
+                "chunk_id": "300:0",
+                "article_id": 300,
+                "source_id": "300",
+                "source_path": "https://example.test/articles/300",
+                "url": "https://example.test/articles/300",
+                "source_url": "https://example.test/articles/300",
+                "title": "third article",
+                "text": "highest ranked retrieval evidence",
+                "source": "fixture",
+            },
+        ),
+        SimpleNamespace(
+            score=0.91,
+            payload={
+                "chunk_id": "100:0",
+                "article_id": 100,
+                "source_id": "100",
+                "source_path": "https://example.test/articles/100",
+                "url": "https://example.test/articles/100",
+                "source_url": "https://example.test/articles/100",
+                "title": "first article",
+                "text": "same score but backend ranked second",
+                "source": "fixture",
+            },
+        ),
+        SimpleNamespace(
+            score=0.72,
+            payload={
+                "chunk_id": "200:0",
+                "article_id": 200,
+                "source_id": "200",
+                "source_path": "https://example.test/articles/200",
+                "url": "https://example.test/articles/200",
+                "source_url": "https://example.test/articles/200",
+                "title": "second article",
+                "text": "lower ranked retrieval evidence",
+                "source": "fixture",
+            },
+        ),
+    ]
+
+    rows = format_search_results(points)
+
+    assert [row["rank"] for row in rows] == [1, 2, 3]
+    assert [row["chunk_id"] for row in rows] == ["300:0", "100:0", "200:0"]
+    assert [row["source_id"] for row in rows] == ["300", "100", "200"]
+    assert [row["source_url"] for row in rows] == [
+        "https://example.test/articles/300",
+        "https://example.test/articles/100",
+        "https://example.test/articles/200",
+    ]
 
 
 def test_extract_source_metadata_accepts_nested_metadata_fallback():
