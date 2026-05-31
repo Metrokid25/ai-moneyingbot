@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import answer_question_phase2
 from rag_answering import (
+    DEFAULT_ANSWER_SOURCE_LIMIT,
     LlmUsage,
     build_answer_messages,
     build_answer_record,
@@ -132,6 +133,41 @@ def test_sources_deduplicate_multiple_chunks_for_same_source_article():
 
     assert [source["chunk_id"] for source in sources] == ["1001:0", "1002:0"]
     assert [source["article_id"] for source in sources] == [1001, 1002]
+
+
+def test_answer_record_limits_sources_preserving_order_in_json_and_markdown():
+    sources = [
+        {
+            "chunk_id": f"{article_id}:0",
+            "article_id": article_id,
+            "content_hash": f"hash-{article_id}",
+            "url": f"https://example.test/articles/{article_id}",
+            "source_url": f"https://example.test/articles/{article_id}",
+            "title": f"source {article_id}",
+            "score": 1.0 - article_id / 100,
+        }
+        for article_id in range(1, DEFAULT_ANSWER_SOURCE_LIMIT + 3)
+    ]
+
+    record = build_answer_record(
+        query="question",
+        answer="answer",
+        sources=sources,
+        model="gpt-4o-mini",
+        top_k=len(sources),
+    )
+    markdown = format_answer_markdown(record)
+    payload = json.loads(format_answer_json(record))
+
+    expected_chunk_ids = [f"{article_id}:0" for article_id in range(1, DEFAULT_ANSWER_SOURCE_LIMIT + 1)]
+    omitted_chunk_id = f"{DEFAULT_ANSWER_SOURCE_LIMIT + 1}:0"
+
+    assert [source["chunk_id"] for source in record["sources"]] == expected_chunk_ids
+    assert [source["chunk_id"] for source in record["citations"]] == expected_chunk_ids
+    assert [source["chunk_id"] for source in payload["sources"]] == expected_chunk_ids
+    assert f"chunk_id: {expected_chunk_ids[-1]}" in markdown
+    assert omitted_chunk_id not in [source["chunk_id"] for source in record["sources"]]
+    assert f"chunk_id: {omitted_chunk_id}" not in markdown
 
 
 def test_answer_formats_include_sources():

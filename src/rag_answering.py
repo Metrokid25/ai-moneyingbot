@@ -10,6 +10,7 @@ from rag_retrieval import embed_query, open_qdrant_client, search_qdrant
 
 
 DEFAULT_ANSWER_MODEL = "gpt-4o-mini"
+DEFAULT_ANSWER_SOURCE_LIMIT = 5
 PRICING_NOTE_ESTIMATE = "estimated from configured per-token model pricing; cached input is not included"
 UNKNOWN_PRICING_NOTE = "pricing not configured for this model"
 MISSING_USAGE_NOTE = "usage not returned by provider"
@@ -75,10 +76,27 @@ def build_source(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_sources(items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+def limit_sources(
+    sources: Sequence[dict[str, Any]],
+    max_sources: int = DEFAULT_ANSWER_SOURCE_LIMIT,
+) -> list[dict[str, Any]]:
+    if max_sources < 0:
+        raise ValueError("max_sources must be non-negative")
+    return list(sources)[:max_sources]
+
+
+def build_sources(
+    items: Sequence[dict[str, Any]],
+    max_sources: int = DEFAULT_ANSWER_SOURCE_LIMIT,
+) -> list[dict[str, Any]]:
+    if max_sources < 0:
+        raise ValueError("max_sources must be non-negative")
+
     sources: list[dict[str, Any]] = []
     seen_sources: set[tuple[str, str]] = set()
     for item in items:
+        if len(sources) >= max_sources:
+            break
         source = build_source(item)
         identity = source_identity_key(source)
         if identity is not None and identity in seen_sources:
@@ -375,10 +393,11 @@ def build_answer_record(
     top_k: int,
     usage: LlmUsage | None = None,
     estimated_cost: EstimatedCost | None = None,
+    max_sources: int = DEFAULT_ANSWER_SOURCE_LIMIT,
 ) -> dict[str, Any]:
     if estimated_cost is None:
         estimated_cost = estimate_openai_cost(model, usage)
-    source_list = list(sources)
+    source_list = limit_sources(sources, max_sources=max_sources)
     return {
         "query": query,
         "answer": answer,
