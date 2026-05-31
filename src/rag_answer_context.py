@@ -8,6 +8,7 @@ from rag_retrieval import extract_source_metadata, payload_value
 DEFAULT_CONTEXT_TOP_K = 5
 MAX_CONTEXT_TOP_K = 10
 DEFAULT_SNIPPET_CHARS = 900
+DEFAULT_CONTEXT_TEXT_TOKENS = 1800
 
 
 def truncate_text(text: str | None, max_chars: int = DEFAULT_SNIPPET_CHARS) -> str:
@@ -19,6 +20,14 @@ def truncate_text(text: str | None, max_chars: int = DEFAULT_SNIPPET_CHARS) -> s
     if len(normalized) <= max_chars:
         return normalized
     return normalized[:max_chars]
+
+
+def truncate_text_tokens(text: str | None, max_tokens: int) -> str:
+    if max_tokens < 0:
+        raise ValueError("max_tokens must be non-negative")
+    if text is None or max_tokens == 0:
+        return ""
+    return " ".join(str(text).split()[:max_tokens])
 
 
 def validate_context_top_k(top_k: int) -> None:
@@ -44,8 +53,25 @@ def build_context_item(point: Any, rank: int, max_chars: int = DEFAULT_SNIPPET_C
 def build_context_items(
     points: Sequence[Any],
     max_chars: int = DEFAULT_SNIPPET_CHARS,
+    max_text_tokens: int | None = None,
 ) -> list[dict[str, Any]]:
-    return [build_context_item(point, rank=index + 1, max_chars=max_chars) for index, point in enumerate(points)]
+    if max_text_tokens is not None and max_text_tokens < 0:
+        raise ValueError("max_text_tokens must be non-negative")
+
+    items: list[dict[str, Any]] = []
+    remaining_tokens = max_text_tokens
+    for point in points:
+        if remaining_tokens == 0:
+            break
+        item = build_context_item(point, rank=len(items) + 1, max_chars=max_chars)
+        if remaining_tokens is not None:
+            item["text"] = truncate_text_tokens(item["text"], max_tokens=remaining_tokens)
+            item["empty_text"] = not bool(item["text"].strip())
+            remaining_tokens -= len(item["text"].split())
+        items.append(item)
+        if remaining_tokens == 0:
+            break
+    return items
 
 
 def build_context_record(question: str, results: Sequence[dict[str, Any]], top_k: int) -> dict[str, Any]:
