@@ -42,6 +42,17 @@ def test_review_script_is_read_only_and_runs_required_checks():
     assert "agent_tasks/pending/001-real-daily-archive-wiring.md" in script
 
 
+def test_review_report_records_latest_commit_summary_read_only():
+    script = read_text("scripts/review_rag_agent_run.ps1")
+
+    assert "function Get-LatestCommitSummary" in script
+    assert 'git log -1 --format="%h %s"' in script
+    assert 'Add-Report "## Latest commit summary"' in script
+    assert 'Add-Report "$(Get-LatestCommitSummary)"' in script
+    assert "git commit" not in script
+    assert "git push" not in script
+
+
 def test_pipeline_runs_no_push_then_review_with_publish_options_defaulting_off():
     script = read_text("scripts/run_rag_agent_pipeline.ps1")
 

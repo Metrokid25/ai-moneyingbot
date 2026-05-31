@@ -50,6 +50,14 @@ function Invoke-ReviewCommand {
   return $exitCode
 }
 
+function Get-LatestCommitSummary {
+  $summary = & git log -1 --format="%h %s" 2>&1
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($summary)) {
+    return "(unavailable)"
+  }
+  return ([string]$summary).Trim()
+}
+
 function Get-ChangedPaths {
   $paths = New-Object System.Collections.Generic.List[string]
   $statusLines = & git status --porcelain --untracked-files=all
@@ -120,6 +128,9 @@ Set-Content -Path $ReportPath -Value "# RAG Review Report $Timestamp" -Encoding 
 Add-Report ""
 Add-Report "Review script mode: read-only"
 Add-Report "Repository: $RepoRoot"
+Add-Report ""
+Add-Report "## Latest commit summary"
+Add-Report "$(Get-LatestCommitSummary)"
 
 $statusExit = Invoke-ReviewCommand "git status -sb" "git" @("status", "-sb")
 $diffNameExit = Invoke-ReviewCommand "git diff --name-only" "git" @("diff", "--name-only")
