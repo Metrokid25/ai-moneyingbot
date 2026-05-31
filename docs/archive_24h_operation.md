@@ -357,7 +357,7 @@ lock 파일에는 다음 정보가 JSON으로 기록된다.
 - `lock_version`: lock 파일 형식 버전
 
 루프는 status 파일을 갱신할 때 lock의 `updated_at`도 함께 갱신한다.
-정상 종료, block signal 중단, non-zero return code, duration 도달, max-runs 도달, KeyboardInterrupt 종료에서는 가능한 lock 파일을 제거한다.
+정상 종료, block signal 중단, non-zero return code, `--stop-on-failed` 기준 도달, duration 도달, max-runs 도달, KeyboardInterrupt 종료에서는 가능한 lock 파일을 제거한다.
 
 stale lock은 `updated_at`이 stale 기준보다 오래된 lock이다.
 기본 stale 기준은 30분이며, 필요하면 `--lock-stale-minutes`로 조정할 수 있다.

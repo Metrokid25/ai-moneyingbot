@@ -342,7 +342,7 @@ def test_corrupt_lock_file_can_be_taken_over(tmp_path, capsys):
     assert not config.lock_file.exists()
 
 
-def test_nonzero_return_code_logs_warning_and_retries_next_cycle(tmp_path):
+def test_nonzero_return_code_stops_loop(tmp_path):
     calls = []
 
     def fake_runner(command, **_kwargs):
@@ -353,18 +353,18 @@ def test_nonzero_return_code_logs_warning_and_retries_next_cycle(tmp_path):
 
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
 
-    assert rc == 0
-    assert len(calls) == 3
+    assert rc == 1
+    assert len(calls) == 1
     log_text = next((tmp_path / "logs").glob("*.log")).read_text(encoding="utf-8")
     assert "non-zero exit code 3" in log_text
     status = json.loads(config.status_file.read_text(encoding="utf-8"))
     assert status["is_running"] is False
-    assert status["stop_reason"] == "max runs completed"
+    assert status["stop_reason"] == "archive cycle returned non-zero exit code 3"
     assert status["last_run_warning"] == "archive cycle returned non-zero exit code 3"
     assert status["last_return_code"] == 3
 
 
-def test_block_signal_in_stdout_logs_warning_and_retries_next_cycle(tmp_path):
+def test_block_signal_in_stdout_stops_loop(tmp_path):
     calls = []
 
     def fake_runner(command, **_kwargs):
@@ -376,16 +376,16 @@ def test_block_signal_in_stdout_logs_warning_and_retries_next_cycle(tmp_path):
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
 
     assert rc == 0
-    assert len(calls) == 6
+    assert len(calls) == 2
     log_text = next((tmp_path / "logs").glob("*.log")).read_text(encoding="utf-8")
     assert "block signal detected: login" in log_text
     status = json.loads(config.status_file.read_text(encoding="utf-8"))
     assert status["is_running"] is False
-    assert status["stop_reason"] == "max runs completed"
+    assert status["stop_reason"] == "block signal detected: login"
     assert status["last_run_warning"] == "block signal detected: login"
 
 
-def test_block_signal_in_stderr_logs_warning_and_retries_next_cycle(tmp_path):
+def test_block_signal_in_stderr_stops_loop(tmp_path):
     calls = []
 
     def fake_runner(command, **_kwargs):
@@ -397,30 +397,30 @@ def test_block_signal_in_stderr_logs_warning_and_retries_next_cycle(tmp_path):
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
 
     assert rc == 0
-    assert len(calls) == 6
+    assert len(calls) == 2
     log_text = next((tmp_path / "logs").glob("*.log")).read_text(encoding="utf-8")
     assert "block signal detected: captcha" in log_text
 
 
-def test_failed_count_above_threshold_logs_warning_and_retries_next_cycle(tmp_path):
+def test_failed_count_at_threshold_stops_loop(tmp_path):
     calls = []
 
     def fake_runner(command, **_kwargs):
         calls.append(command)
         return completed(stdout="failed     : 1\n")
 
-    config = make_config(tmp_path, max_runs=3, stop_on_failed=0)
+    config = make_config(tmp_path, max_runs=3, stop_on_failed=1)
 
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
 
     assert rc == 0
-    assert len(calls) == 6
+    assert len(calls) == 2
     log_text = next((tmp_path / "logs").glob("*.log")).read_text(encoding="utf-8")
-    assert "failed count 1 exceeded threshold 0" in log_text
+    assert "failed count 1 exceeded threshold 1" in log_text
     status = json.loads(config.status_file.read_text(encoding="utf-8"))
     assert status["last_failed"] == 1
-    assert status["stop_reason"] == "max runs completed"
-    assert status["last_run_warning"] == "failed count 1 exceeded threshold 0"
+    assert status["stop_reason"] == "failed count 1 exceeded threshold 1"
+    assert status["last_run_warning"] == "failed count 1 exceeded threshold 1"
 
 
 def test_status_file_tracks_summary_fields_and_redacts_url(tmp_path):

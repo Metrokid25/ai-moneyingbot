@@ -836,7 +836,9 @@ def run_loop(
             print_run_summary(result, path)
 
             if stop_reason:
-                print(f"[archive_loop] warning: {stop_reason}; retrying on the next scheduled run")
+                print(f"[archive_loop] stopping: {stop_reason}")
+                finalize_status(config, status, stop_reason)
+                return 1 if result.returncode != 0 else 0
 
             if run_number < max_runs:
                 sleeper(decision.interval_seconds)
@@ -858,7 +860,7 @@ def stop_reason_for(config: LoopConfig, result: RunResult) -> str | None:
     if block_signal:
         return f"block signal detected: {block_signal}"
     failed_count = parse_failed_count(result.stdout)
-    if failed_count is not None and failed_count > config.stop_on_failed:
+    if failed_count is not None and failed_count > 0 and failed_count >= config.stop_on_failed:
         return f"failed count {failed_count} exceeded threshold {config.stop_on_failed}"
     return None
 
