@@ -35,6 +35,7 @@ def make_config(tmp_path, **overrides):
         "lock_stale_minutes": 30,
         "browser_profile_dir": tmp_path / "state" / "browser_profile",
         "headed": False,
+        "market_schedule": False,
         "argv_summary": "test argv",
     }
     values.update(overrides)
@@ -95,6 +96,7 @@ def make_preflight_config(tmp_path, **overrides):
         "lock_stale_minutes": 30,
         "browser_profile_dir": project_root / "state" / "browser_profile",
         "headed": False,
+        "market_schedule": False,
     }
     values.update(overrides)
     return archive_loop.PreflightConfig(**values)
@@ -132,6 +134,101 @@ def test_default_max_runs_is_calculated_from_duration_and_interval():
     assert archive_loop.calculate_max_runs(1, 700) == 6
 
 
+def test_market_schedule_is_inactive_at_2330_until_0600():
+    decision = archive_loop.market_schedule_decision(datetime(2026, 5, 31, 23, 30))
+
+    assert decision.active is False
+    assert decision.interval_seconds == 23400
+    assert decision.label == "market-closed-23-06"
+
+
+def test_market_schedule_uses_30_minutes_at_0630():
+    decision = archive_loop.market_schedule_decision(datetime(2026, 5, 31, 6, 30))
+
+    assert decision.active is True
+    assert decision.interval_seconds == 1800
+
+
+def test_market_schedule_uses_10_minutes_at_0730():
+    decision = archive_loop.market_schedule_decision(datetime(2026, 5, 31, 7, 30))
+
+    assert decision.active is True
+    assert decision.interval_seconds == 600
+
+
+def test_market_schedule_uses_5_minutes_at_0900():
+    decision = archive_loop.market_schedule_decision(datetime(2026, 5, 31, 9, 0))
+
+    assert decision.active is True
+    assert decision.interval_seconds == 300
+
+
+def test_market_schedule_uses_10_minutes_at_1700():
+    decision = archive_loop.market_schedule_decision(datetime(2026, 5, 31, 17, 0))
+
+    assert decision.active is True
+    assert decision.interval_seconds == 600
+
+
+def test_fixed_schedule_keeps_interval_seconds(tmp_path):
+    config = make_config(tmp_path, interval_seconds=42, market_schedule=False)
+
+    decision = archive_loop.schedule_decision_for(config, datetime(2026, 5, 31, 23, 30))
+
+    assert decision.active is True
+    assert decision.interval_seconds == 42
+    assert decision.label == "fixed-interval"
+
+
+def test_market_schedule_inactive_skips_collection_and_sleeps_until_active(tmp_path):
+    calls = []
+    slept = []
+    config = make_config(tmp_path, market_schedule=True, max_runs=2)
+
+    rc = archive_loop.run_loop(
+        config,
+        runner=lambda command, **_kwargs: calls.append(command),
+        sleeper=slept.append,
+        clock=lambda: datetime(2026, 5, 31, 23, 30),
+    )
+
+    assert rc == 0
+    assert calls == []
+    assert slept == [23400]
+    status = json.loads(config.status_file.read_text(encoding="utf-8"))
+    assert status["schedule_mode"] == "market"
+    assert status["next_interval_seconds"] == 23400
+    assert status["last_schedule_active"] is False
+    assert status["last_schedule_label"] == "market-closed-23-06"
+
+
+def test_market_schedule_active_uses_time_window_interval_with_max_runs(tmp_path):
+    calls = []
+    slept = []
+
+    def fake_runner(command, **_kwargs):
+        calls.append(command)
+        return completed(stdout="failed     : 0\n")
+
+    config = make_config(tmp_path, market_schedule=True, max_runs=2)
+
+    rc = archive_loop.run_loop(
+        config,
+        runner=fake_runner,
+        sleeper=slept.append,
+        clock=lambda: datetime(2026, 5, 31, 9, 0),
+    )
+
+    assert rc == 0
+    assert len(calls) == 4
+    assert slept == [300]
+    status = json.loads(config.status_file.read_text(encoding="utf-8"))
+    assert status["schedule_mode"] == "market"
+    assert status["next_interval_seconds"] == 300
+    assert status["last_schedule_active"] is True
+    assert status["last_schedule_label"] == "market-08-16-5m"
+
+
 def test_loop_runs_max_runs_and_writes_log(tmp_path):
     calls = []
 
@@ -156,6 +253,8 @@ def test_loop_runs_max_runs_and_writes_log(tmp_path):
     status = json.loads(config.status_file.read_text(encoding="utf-8"))
     assert status["current_run"] == 2
     assert status["max_runs"] == 2
+    assert status["schedule_mode"] == "fixed"
+    assert status["next_interval_seconds"] == 5
     assert status["is_running"] is False
     assert status["stop_reason"] == "max runs completed"
     assert not config.lock_file.exists()
@@ -340,6 +439,8 @@ def test_status_file_tracks_summary_fields_and_redacts_url(tmp_path):
     assert status["updated_at"]
     assert status["current_run"] == 1
     assert status["interval_seconds"] == 600
+    assert status["schedule_mode"] == "fixed"
+    assert status["next_interval_seconds"] == 600
     assert status["duration_hours"] == 24
     assert status["limit"] == 10
     assert status["last_run_started_at"]
@@ -421,6 +522,11 @@ def test_status_prints_existing_file_without_running_subprocess(tmp_path, monkey
                 "current_run": 2,
                 "max_runs": 144,
                 "interval_seconds": 600,
+                "schedule_mode": "market",
+                "next_interval_seconds": 300,
+                "last_schedule_label": "market-08-16-5m",
+                "last_schedule_active": True,
+                "last_schedule_skipped_at": None,
                 "duration_hours": 24,
                 "limit": 10,
                 "list_url_preview": "https://cafe.naver.com/example...",
@@ -456,6 +562,11 @@ def test_status_prints_existing_file_without_running_subprocess(tmp_path, monkey
     assert "updated_at: 2026-05-30T09:10:00" in captured.out
     assert "current_run / max_runs: 2 / 144" in captured.out
     assert "interval_seconds: 600" in captured.out
+    assert "schedule_mode: market" in captured.out
+    assert "next_interval_seconds: 300" in captured.out
+    assert "last_schedule_label: market-08-16-5m" in captured.out
+    assert "last_schedule_active: yes" in captured.out
+    assert "last_schedule_skipped_at: -" in captured.out
     assert "duration_hours: 24" in captured.out
     assert "limit: 10" in captured.out
     assert "list_url_preview: https://cafe.naver.com/example..." in captured.out
@@ -505,6 +616,7 @@ def test_help_does_not_require_lock(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "--lock-stale-minutes" in captured.out
     assert "--headed" in captured.out
+    assert "--market-schedule" in captured.out
     assert "index_tail.py" in captured.out
     assert "batch_recollect.py" in captured.out
 
@@ -526,12 +638,26 @@ def test_preflight_returns_zero_when_required_files_are_ready(tmp_path, monkeypa
     assert "--login-url" in captured.out
     assert "mentor teacher article-list URL" in captured.out
     assert "[OK] proven collection path:" in captured.out
+    assert "[OK] schedule mode: fixed" in captured.out
     assert "index_tail.py --collect-after-snapshot" in captured.out
     assert "does not add login or marker logic" in captured.out
     assert "[archive_loop] summary:" in captured.out
     assert config.state_dir.exists()
     assert config.log_dir.exists()
     assert config.reports_dir.exists()
+
+
+def test_preflight_prints_market_schedule_when_enabled(tmp_path, monkeypatch, capsys):
+    config = make_preflight_config(tmp_path, market_schedule=True)
+    monkeypatch.chdir(config.project_root)
+
+    rc = archive_loop.run_preflight(config)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "[OK] schedule mode: market" in captured.out
+    assert "23:00-06:00 stop" in captured.out
+    assert "08:00-16:00 5m" in captured.out
 
 
 def test_preflight_fails_when_archive_db_is_missing(tmp_path, monkeypatch, capsys):

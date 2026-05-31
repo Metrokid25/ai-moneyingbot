@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time as datetime_time, timedelta
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -79,6 +79,7 @@ class LoopConfig:
     lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
     browser_profile_dir: Path = DEFAULT_BROWSER_PROFILE_DIR
     headed: bool = False
+    market_schedule: bool = False
     argv_summary: str = ""
 
 
@@ -111,6 +112,14 @@ class PreflightConfig:
     lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
     browser_profile_dir: Path = DEFAULT_BROWSER_PROFILE_DIR
     headed: bool = False
+    market_schedule: bool = False
+
+
+@dataclass(frozen=True)
+class ScheduleDecision:
+    active: bool
+    interval_seconds: int
+    label: str
 
 
 def is_placeholder_url(url: str) -> bool:
@@ -131,6 +140,41 @@ def calculate_max_runs(duration_hours: float, interval_seconds: int) -> int:
     if interval_seconds <= 0:
         raise ValueError("--interval-seconds must be positive")
     return max(1, math.ceil(duration_hours * 3600 / interval_seconds))
+
+
+def seconds_until_next_local_time(now: datetime, target: datetime_time) -> int:
+    target_dt = now.replace(
+        hour=target.hour,
+        minute=target.minute,
+        second=target.second,
+        microsecond=0,
+    )
+    if target_dt <= now:
+        target_dt += timedelta(days=1)
+    return max(1, int((target_dt - now).total_seconds()))
+
+
+def market_schedule_decision(now: datetime) -> ScheduleDecision:
+    current = now.time()
+    if current >= datetime_time(23, 0) or current < datetime_time(6, 0):
+        return ScheduleDecision(
+            active=False,
+            interval_seconds=seconds_until_next_local_time(now, datetime_time(6, 0)),
+            label="market-closed-23-06",
+        )
+    if current < datetime_time(7, 0):
+        return ScheduleDecision(active=True, interval_seconds=1800, label="market-06-07-30m")
+    if current < datetime_time(8, 0):
+        return ScheduleDecision(active=True, interval_seconds=600, label="market-07-08-10m")
+    if current < datetime_time(16, 0):
+        return ScheduleDecision(active=True, interval_seconds=300, label="market-08-16-5m")
+    return ScheduleDecision(active=True, interval_seconds=600, label="market-16-23-10m")
+
+
+def schedule_decision_for(config: LoopConfig, now: datetime) -> ScheduleDecision:
+    if config.market_schedule:
+        return market_schedule_decision(now)
+    return ScheduleDecision(active=True, interval_seconds=config.interval_seconds, label="fixed-interval")
 
 
 def build_archive_cycle_commands(config: LoopConfig) -> list[list[str]]:
@@ -228,6 +272,29 @@ def append_log(config: LoopConfig, result: RunResult, stop_reason: str | None = 
     return path
 
 
+def append_schedule_skip_log(
+    config: LoopConfig,
+    loop_number: int,
+    checked_at: datetime,
+    decision: ScheduleDecision,
+) -> Path:
+    config.log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_path_for(config.log_dir, checked_at)
+    lines = [
+        "===",
+        f"run_number: {loop_number}",
+        f"checked_at: {checked_at.isoformat()}",
+        "skipped: market schedule inactive",
+        f"schedule_label: {decision.label}",
+        f"next_interval_seconds: {decision.interval_seconds}",
+        "",
+    ]
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+        fh.write("\n")
+    return path
+
+
 def base_status(config: LoopConfig, started_at: datetime, max_runs: int) -> dict[str, object]:
     return {
         "started_at": started_at.isoformat(),
@@ -235,6 +302,11 @@ def base_status(config: LoopConfig, started_at: datetime, max_runs: int) -> dict
         "current_run": 0,
         "max_runs": max_runs,
         "interval_seconds": config.interval_seconds,
+        "schedule_mode": "market" if config.market_schedule else "fixed",
+        "next_interval_seconds": config.interval_seconds,
+        "last_schedule_label": None,
+        "last_schedule_active": None,
+        "last_schedule_skipped_at": None,
         "duration_hours": config.duration_hours,
         "limit": config.limit,
         "list_url_hash": list_url_hash(config.list_url),
@@ -382,6 +454,24 @@ def update_status_for_run_start(
     write_status(config, status)
 
 
+def update_status_for_schedule_decision(
+    config: LoopConfig,
+    status: dict[str, object],
+    loop_number: int,
+    decision: ScheduleDecision,
+    checked_at: datetime,
+) -> None:
+    status["current_run"] = loop_number
+    status["schedule_mode"] = "market" if config.market_schedule else "fixed"
+    status["next_interval_seconds"] = decision.interval_seconds
+    status["last_schedule_label"] = decision.label
+    status["last_schedule_active"] = decision.active
+    if not decision.active:
+        status["last_schedule_skipped_at"] = checked_at.isoformat()
+    status["is_running"] = True
+    write_status(config, status)
+
+
 def update_status_for_run_finish(
     config: LoopConfig,
     status: dict[str, object],
@@ -418,6 +508,11 @@ def format_status_summary(data: dict[str, object]) -> str:
         ("updated_at", "updated_at"),
         ("current_run / max_runs", None),
         ("interval_seconds", "interval_seconds"),
+        ("schedule_mode", "schedule_mode"),
+        ("next_interval_seconds", "next_interval_seconds"),
+        ("last_schedule_label", "last_schedule_label"),
+        ("last_schedule_active", "last_schedule_active"),
+        ("last_schedule_skipped_at", "last_schedule_skipped_at"),
         ("duration_hours", "duration_hours"),
         ("limit", "limit"),
         ("list_url_preview", "list_url_preview"),
@@ -617,6 +712,13 @@ def run_preflight(config: PreflightConfig | None = None) -> int:
     print("[WARN] browser/session mode: this loop preserves the existing script behavior; it does not add login or marker logic")
     levels.extend(["OK", "WARN"])
 
+    schedule_mode = "market" if config.market_schedule else "fixed"
+    print(f"[OK] schedule mode: {schedule_mode}")
+    if config.market_schedule:
+        print("[OK] market schedule: 23:00-06:00 stop, 06:00-07:00 30m, 07:00-08:00 10m, 08:00-16:00 5m, 16:00-23:00 10m")
+        levels.append("OK")
+    levels.append("OK")
+
     print("[OK] list-url: not required for preflight")
     print("[WARN] list-url: real collection still requires the mentor teacher article-list URL")
     levels.extend(["OK", "WARN"])
@@ -683,6 +785,7 @@ def run_loop(
     config: LoopConfig,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     sleeper: Callable[[float], None] = time.sleep,
+    clock: Callable[[], datetime] = datetime.now,
 ) -> int:
     if is_placeholder_url(config.list_url):
         print("[archive_loop] ERROR: --list-url looks like a placeholder; refusing to run.")
@@ -695,7 +798,7 @@ def run_loop(
         config.duration_hours,
         config.interval_seconds,
     )
-    loop_started_at = datetime.now()
+    loop_started_at = clock()
     if not acquire_lock(config, loop_started_at):
         return 3
 
@@ -705,12 +808,24 @@ def run_loop(
     try:
         write_status(config, status)
         for run_number in range(1, max_runs + 1):
-            if datetime.now() >= stop_at:
+            now = clock()
+            if now >= stop_at:
                 print("[archive_loop] duration reached before next run.")
                 finalize_status(config, status, "duration reached before next run")
                 return 0
 
-            run_started_at = datetime.now()
+            decision = schedule_decision_for(config, now)
+            update_status_for_schedule_decision(config, status, run_number, decision, now)
+            if not decision.active:
+                path = append_schedule_skip_log(config, run_number, now, decision)
+                print(f"[archive_loop] market schedule inactive: {decision.label}")
+                print(f"[archive_loop] next_interval_seconds: {decision.interval_seconds}")
+                print(f"[archive_loop] log       : {path}")
+                if run_number < max_runs:
+                    sleeper(decision.interval_seconds)
+                continue
+
+            run_started_at = clock()
             update_status_for_run_start(config, status, run_number, run_started_at)
             result = run_once(config, run_number, runner=runner)
             stop_reason = stop_reason_for(config, result)
@@ -722,7 +837,7 @@ def run_loop(
                 print(f"[archive_loop] warning: {stop_reason}; retrying on the next scheduled run")
 
             if run_number < max_runs:
-                sleeper(config.interval_seconds)
+                sleeper(decision.interval_seconds)
 
         finalize_status(config, status, "max runs completed")
         return 0
@@ -761,6 +876,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_FILE)
     parser.add_argument("--browser-profile-dir", type=Path, default=DEFAULT_BROWSER_PROFILE_DIR)
     parser.add_argument("--headed", action="store_true", help="retained for compatibility; proven scripts keep their existing browser behavior")
+    parser.add_argument(
+        "--market-schedule",
+        action="store_true",
+        help="use local time windows: 23:00-06:00 stop, 06:00-07:00 30m, 07:00-08:00 10m, 08:00-16:00 5m, 16:00-23:00 10m",
+    )
     parser.add_argument("--status", action="store_true", help="print loop status and exit")
     parser.add_argument("--preflight", action="store_true", help="run read-only operational safety checks and exit")
     parser.add_argument(
@@ -795,6 +915,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 lock_stale_minutes=args.lock_stale_minutes,
                 browser_profile_dir=args.browser_profile_dir,
                 headed=args.headed,
+                market_schedule=args.market_schedule,
             )
         )
     config = LoopConfig(
@@ -810,6 +931,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         lock_stale_minutes=args.lock_stale_minutes,
         browser_profile_dir=args.browser_profile_dir,
         headed=args.headed,
+        market_schedule=args.market_schedule,
         argv_summary=" ".join(argv if argv is not None else sys.argv[1:]),
     )
     return run_loop(config)
