@@ -203,6 +203,8 @@ def test_get_root_renders_core_rag_controls_and_answer_surfaces(monkeypatch, arc
     assert input_by_id["embedding-model"]["name"] == "embedding_model"
     assert button_by_id["run-button"]["type"] == "submit"
     assert {"status", "error", "answer", "sources", "usage"}.issubset(parser.ids)
+    assert "Please enter a question before running RAG." in html
+    assert html.index("payload.query.trim()") < html.index('fetch("/api/answer"')
     assert 'fetch("/api/answer"' in html
 
 
@@ -326,12 +328,12 @@ def test_post_answer_rejects_missing_query(monkeypatch, archive_db_path, query):
         raise AssertionError("run_rag_answer should not be called for invalid query")
 
     with RunningServer(monkeypatch, fake_run, archive_db_path) as server:
-        status, _headers, body = server.request("POST", "/api/answer", {"query": query})
+        status, _headers, body = server.request("POST", "/api/answer", {"query": query, "top_k": "not-an-int"})
 
     payload = json.loads(body.decode("utf-8"))
     assert status == 400
     assert payload["ok"] is False
-    assert "query" in payload["error"]
+    assert payload["error"] == "query is required; enter a question before running RAG"
 
 
 @pytest.mark.parametrize("top_k", [0, 21, "not-an-int"])

@@ -306,6 +306,12 @@ HTML_PAGE = """<!doctype html>
         model: document.getElementById("model").value,
         embedding_model: document.getElementById("embedding-model").value
       };
+      if (!payload.query.trim()) {
+        errorBox.textContent = "Please enter a question before running RAG.";
+        statusBox.textContent = "";
+        button.disabled = false;
+        return;
+      }
 
       try {
         const response = await fetch("/api/answer", {
@@ -611,7 +617,7 @@ class RagWebHandler(BaseHTTPRequestHandler):
     def handle_answer(self, payload: dict[str, Any]) -> dict[str, Any]:
         query = str(payload.get("query") or "").strip()
         if not query:
-            raise ValueError("query is required")
+            raise ValueError("query is required; enter a question before running RAG")
         top_k = parse_top_k(payload.get("top_k"))
         model = str(payload.get("model") or DEFAULT_ANSWER_MODEL).strip() or DEFAULT_ANSWER_MODEL
         embedding_model = str(payload.get("embedding_model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
