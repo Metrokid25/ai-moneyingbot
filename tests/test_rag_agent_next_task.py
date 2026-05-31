@@ -41,6 +41,39 @@ def test_archive_owned_task_is_not_selected_when_it_is_only_pending(tmp_path, ca
     assert "001-real-daily-archive-wiring.md" in output
 
 
+def test_status_reports_no_actionable_tasks_for_archive_only_pending(tmp_path, capsys):
+    agent_next_task = load_agent_next_task()
+    write_task(
+        tmp_path,
+        "agent_tasks/pending/001-real-daily-archive-wiring.md",
+        "Archive task",
+    )
+
+    result = agent_next_task.main(["--root", str(tmp_path), "--status"])
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert "NO_ACTIONABLE_TASKS" in output
+    assert "skipped=agent_tasks" in output
+    assert "001-real-daily-archive-wiring.md" in output
+
+
+def test_status_reports_next_rag_task_when_actionable_pending_exists(tmp_path, capsys):
+    agent_next_task = load_agent_next_task()
+    rag_task = write_task(
+        tmp_path,
+        "agent_tasks/pending/024-rag-pipeline-no-actionable-task-exit.md",
+        "RAG task",
+    )
+
+    result = agent_next_task.main(["--root", str(tmp_path), "--status"])
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert "RAG_TASK" in output
+    assert f"task={rag_task.relative_to(tmp_path)}" in output
+
+
 def test_rag_task_is_selected_when_archive_task_is_also_pending(tmp_path, capsys):
     agent_next_task = load_agent_next_task()
     archive_task = write_task(

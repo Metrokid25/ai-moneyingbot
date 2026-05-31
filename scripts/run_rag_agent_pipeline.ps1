@@ -30,7 +30,7 @@ function Get-ReviewMetadata {
     $lines = ([string]$item) -split "\r?\n"
     foreach ($line in $lines) {
       $text = $line.Trim()
-      if ($text -match "^REVIEW_RESULT=(PASS|FAIL|NEEDS_HUMAN_REVIEW)$") {
+      if ($text -match "^REVIEW_RESULT=(PASS|FAIL|NEEDS_HUMAN_REVIEW|NO_ACTIONABLE_TASKS)$") {
         $metadata.Result = $Matches[1]
       } elseif ($text -match "^REVIEW_REPORT=(.+)$") {
         $metadata.Report = $Matches[1].Trim()
@@ -204,6 +204,8 @@ if ($reviewExit -ne 0 -or $reviewResult -eq "FAIL") {
 if ($reviewResult -eq "PASS") {
   $publishExit = Invoke-PassGatedPublish -Message $CommitMessage -Commit:$CommitOnPass -Push:$PushOnPass
   exit $publishExit
+} elseif ($reviewResult -eq "NO_ACTIONABLE_TASKS") {
+  Write-Host "Pipeline found no actionable RAG task. No commit or push will run."
 } else {
   Write-Host "Pipeline needs human review. Waiting for user approval before any commit or push."
 }

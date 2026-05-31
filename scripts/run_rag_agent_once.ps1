@@ -229,6 +229,35 @@ if (-not $UseCodexSandbox) {
 Add-ReportCommand "Pre-run git status" { git status -sb }
 Add-ReportCommand "Pending tasks before run" { python scripts/agent_next_task.py --list }
 
+$taskStatusOutput = & python scripts/agent_next_task.py --status 2>&1
+$taskStatusExit = $LASTEXITCODE
+Add-Report ""
+Add-Report "## Pending RAG task status"
+Add-Report ""
+Add-Report '```text'
+if ($taskStatusOutput) {
+  $taskStatusOutput | ForEach-Object { Add-Report ([string]$_) }
+} else {
+  Add-Report "(no output)"
+}
+Add-Report "exit_code=$taskStatusExit"
+Add-Report '```'
+if ($taskStatusExit -ne 0) {
+  Add-Report ""
+  Add-Report "BLOCKED: unable to determine pending RAG task status."
+  exit $taskStatusExit
+}
+$taskStatusText = ($taskStatusOutput | Out-String).Trim()
+if ($taskStatusText -match "(?m)^NO_ACTIONABLE_TASKS$") {
+  Add-Report ""
+  Add-Report "NO_ACTIONABLE_TASKS: no actionable RAG pending task. Codex exec, commit, and push skipped."
+  Add-Report ""
+  Add-Report "Report written to $ReportPath"
+  Write-Host "RUN_RESULT=NO_ACTIONABLE_TASKS"
+  Write-Host "RUN_REPORT=$ReportPath"
+  exit 0
+}
+
 if (-not (Test-Path "agent_prompts/rag_autorunner.md")) {
   Add-Report ""
   Add-Report "BLOCKED: missing agent_prompts/rag_autorunner.md."

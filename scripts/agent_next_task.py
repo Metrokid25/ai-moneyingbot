@@ -89,9 +89,28 @@ def print_task_lists(project_root: Path) -> int:
     return 0
 
 
+def print_pending_status(project_root: Path) -> int:
+    tasks, skipped = split_pending_tasks(project_root)
+    if tasks:
+        print("RAG_TASK")
+        print(f"task={tasks[0].relative_to(project_root)}")
+        return 0
+
+    print("NO_ACTIONABLE_TASKS")
+    print(f"skipped_count={len(skipped)}")
+    for skipped_task in skipped:
+        print(f"skipped={skipped_task.relative_to(project_root)}")
+    return 0
+
+
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Show agent task queue status")
     parser.add_argument("--list", action="store_true", help="list all task queues")
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="print machine-readable pending RAG task status",
+    )
     parser.add_argument(
         "--root",
         type=Path,
@@ -104,6 +123,8 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     project_root = args.root.resolve()
+    if args.status:
+        return print_pending_status(project_root)
     if args.list:
         return print_task_lists(project_root)
     return print_next_task(project_root)

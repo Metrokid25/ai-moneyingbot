@@ -127,6 +127,7 @@ $diffStatExit = Invoke-ReviewCommand "git diff --stat" "git" @("diff", "--stat")
 $diffCheckExit = Invoke-ReviewCommand "git diff --check" "git" @("diff", "--check")
 $focusedExit = Invoke-ReviewCommand "RAG focused tests" "python" @("scripts\run_rag_focused_tests.py")
 $tasksExit = Invoke-ReviewCommand "agent task list" "python" @("scripts\agent_next_task.py", "--list")
+$taskStatusExit = Invoke-ReviewCommand "pending RAG task status" "python" @("scripts\agent_next_task.py", "--status")
 
 $changedPaths = @(Get-ChangedPaths)
 $forbiddenPaths = @($changedPaths | Where-Object { Test-ForbiddenPath $_ })
@@ -170,6 +171,11 @@ foreach ($note in $taskMovementNotes) {
 
 $decision = "PASS"
 $reasons = New-Object System.Collections.Generic.List[string]
+$noActionableTasks = $false
+$taskStatusOutput = & python scripts\agent_next_task.py --status 2>&1
+if ($LASTEXITCODE -eq 0 -and (($taskStatusOutput | Out-String) -match "(?m)^NO_ACTIONABLE_TASKS$")) {
+  $noActionableTasks = $true
+}
 
 if ($diffCheckExit -ne 0) {
   $decision = "FAIL"
@@ -187,11 +193,17 @@ if ($archiveTaskChanged) {
   $decision = "FAIL"
   $reasons.Add("Archive-owned 001 task changed")
 }
-if ($decision -ne "FAIL" -and $changedPaths.Count -eq 0) {
-  $decision = "NEEDS_HUMAN_REVIEW"
-  $reasons.Add("no changed files to review")
+if ($decision -ne "FAIL" -and $noActionableTasks -and $changedPaths.Count -eq 0) {
+  $decision = "NO_ACTIONABLE_TASKS"
+  $reasons.Add("no actionable RAG pending tasks")
 }
-if ($decision -ne "FAIL" -and ($statusExit -ne 0 -or $diffNameExit -ne 0 -or $diffStatExit -ne 0 -or $tasksExit -ne 0)) {
+if ($decision -ne "FAIL" -and $changedPaths.Count -eq 0) {
+  if ($decision -ne "NO_ACTIONABLE_TASKS") {
+    $decision = "NEEDS_HUMAN_REVIEW"
+    $reasons.Add("no changed files to review")
+  }
+}
+if ($decision -ne "FAIL" -and ($statusExit -ne 0 -or $diffNameExit -ne 0 -or $diffStatExit -ne 0 -or $tasksExit -ne 0 -or $taskStatusExit -ne 0)) {
   $decision = "NEEDS_HUMAN_REVIEW"
   $reasons.Add("one or more informational review commands failed")
 }

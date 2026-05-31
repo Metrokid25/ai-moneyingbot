@@ -37,6 +37,7 @@ def test_review_script_is_read_only_and_runs_required_checks():
     assert "PASS" in script
     assert "FAIL" in script
     assert "NEEDS_HUMAN_REVIEW" in script
+    assert "NO_ACTIONABLE_TASKS" in script
     assert "agent_tasks/pending/001-real-daily-archive-wiring.md" in script
 
 
@@ -65,6 +66,7 @@ def test_pipeline_commits_and_pushes_only_through_pass_gated_options():
     assert "PushOnPass not requested; push skipped." in script
     assert "Pipeline needs human review. Waiting for user approval before any commit or push." in script
     assert "Pipeline stopped after review failure. Inspect the review report before continuing." in script
+    assert "Pipeline found no actionable RAG task. No commit or push will run." in script
 
 
 def test_pipeline_stages_only_git_status_changed_paths_without_add_dot():
@@ -115,11 +117,27 @@ def test_pipeline_parses_review_result_and_report_lines():
 
     assert "function Get-ReviewMetadata" in script
     assert "& $ReviewScript *>&1" in script
-    assert 'REVIEW_RESULT=(PASS|FAIL|NEEDS_HUMAN_REVIEW)' in script
+    assert 'REVIEW_RESULT=(PASS|FAIL|NEEDS_HUMAN_REVIEW|NO_ACTIONABLE_TASKS)' in script
     assert 'REVIEW_REPORT=(.+)' in script
     assert "$reviewMetadata = Get-ReviewMetadata -ReviewOutput $reviewOutput" in script
     assert "Pipeline review result: $reviewResult" in script
     assert "Pipeline review report: $reviewReport" in script
+
+
+def test_once_runner_short_circuits_when_no_actionable_rag_task_exists():
+    script = read_text("scripts/run_rag_agent_once.ps1")
+
+    assert "python scripts/agent_next_task.py --status" in script
+    assert "NO_ACTIONABLE_TASKS: no actionable RAG pending task. Codex exec, commit, and push skipped." in script
+    assert "RUN_RESULT=NO_ACTIONABLE_TASKS" in script
+
+
+def test_review_script_keeps_no_actionable_tasks_distinct_from_human_review():
+    script = read_text("scripts/review_rag_agent_run.ps1")
+
+    assert '"python" @("scripts\\agent_next_task.py", "--status")' in script
+    assert '$decision = "NO_ACTIONABLE_TASKS"' in script
+    assert '$decision -ne "NO_ACTIONABLE_TASKS"' in script
 
 
 def test_reviewer_prompt_documents_review_decision_contract():
