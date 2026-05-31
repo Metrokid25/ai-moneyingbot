@@ -42,17 +42,12 @@ DEFAULT_STATE_DIR = PROJECT_ROOT / "state"
 DEFAULT_REPORTS_DIR = PROJECT_ROOT / "reports"
 DEFAULT_LOCK_STALE_MINUTES = 30.0
 LOCK_VERSION = 1
-BLOCK_PATTERNS = (
-    "captcha",
-    "로그인",
-    "login",
-    "권한",
-    "permission",
-    "연령",
-    "차단",
-    "block",
-    "blocked",
-    "인증",
+BLOCK_SIGNAL_PATTERNS = (
+    ("captcha", re.compile(r"\[DEBUG\].*captcha.*detected|captcha detected", re.IGNORECASE)),
+    ("login", re.compile(r"\blogin_required\b|redirected to login url|password_input_found=true", re.IGNORECASE)),
+    ("permission", re.compile(r"permission denied|permission block|권한이 없습니다|접근 권한이 없습니다")),
+    ("block", re.compile(r"\[STOP\].*차단|block detected|blocked by", re.IGNORECASE)),
+    ("verification", re.compile(r"본인인증.*detected|identity verification detected", re.IGNORECASE)),
 )
 PLACEHOLDER_PATTERNS = (
     "<",
@@ -206,6 +201,10 @@ def build_batch_recollect_command(config: LoopConfig) -> list[str]:
     ]
 
 
+def is_index_tail_command(command: list[str]) -> bool:
+    return len(command) >= 2 and Path(command[1]).name == "index_tail.py"
+
+
 def build_daily_archive_command(config: LoopConfig) -> list[str]:
     """Compatibility wrapper; the loop now uses the proven index_tail path."""
     return build_index_tail_command(config)
@@ -220,11 +219,15 @@ def summarize(text: str, *, max_chars: int = 1200) -> str:
 
 def contains_block_signal(stdout: str, stderr: str) -> str | None:
     combined = f"{stdout}\n{stderr}"
-    combined_lower = combined.lower()
-    for pattern in BLOCK_PATTERNS:
-        if pattern.lower() in combined_lower:
-            return pattern
+    for line in combined.splitlines():
+        for label, pattern in BLOCK_SIGNAL_PATTERNS:
+            if pattern.search(line):
+                return label
     return None
+
+
+def index_tail_completed(stdout: str) -> bool:
+    return "[index_tail]" in stdout and ("complete" in stdout.lower() or "완료" in stdout)
 
 
 def parse_failed_count(stdout: str) -> int | None:
@@ -246,6 +249,10 @@ def parse_report_path(stdout: str) -> str | None:
     if not match:
         return None
     return match.group(1)
+
+
+def archive_cycle_reached_recollect(result: RunResult) -> bool:
+    return "batch_recollect.py" in result.stdout
 
 
 def log_path_for(log_dir: Path, started_at: datetime) -> Path:
@@ -749,14 +756,22 @@ def run_once(
     returncode = 0
     for command in commands:
         completed = runner(command, text=True, capture_output=True, check=False)
+        command_stdout = completed.stdout or ""
+        command_stderr = completed.stderr or ""
         stdout_parts.append("$ " + " ".join(command))
-        if completed.stdout:
-            stdout_parts.append(completed.stdout)
-        if completed.stderr:
+        if command_stdout:
+            stdout_parts.append(command_stdout)
+        if command_stderr:
             stderr_parts.append("$ " + " ".join(command))
-            stderr_parts.append(completed.stderr)
+            stderr_parts.append(command_stderr)
         if completed.returncode != 0:
             returncode = completed.returncode
+            break
+        if (
+            is_index_tail_command(command)
+            and contains_block_signal(command_stdout, command_stderr)
+            and not index_tail_completed(command_stdout)
+        ):
             break
     after_summary = readonly_archive_summary(config.db_file)
     finished_at = datetime.now()
@@ -860,9 +875,10 @@ def run_loop(
 def stop_reason_for(config: LoopConfig, result: RunResult) -> str | None:
     if result.returncode != 0:
         return f"archive cycle returned non-zero exit code {result.returncode}"
-    block_signal = contains_block_signal(result.stdout, result.stderr)
-    if block_signal:
-        return f"block signal detected: {block_signal}"
+    if not archive_cycle_reached_recollect(result):
+        block_signal = contains_block_signal(result.stdout, result.stderr)
+        if block_signal:
+            return f"block signal detected: {block_signal}"
     failed_count = parse_failed_count(result.stdout)
     if failed_count is not None and failed_count > 0 and failed_count >= config.stop_on_failed:
         return f"failed count {failed_count} exceeded threshold {config.stop_on_failed}"

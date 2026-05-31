@@ -379,14 +379,14 @@ def test_block_signal_in_stdout_stops_loop(tmp_path):
 
     def fake_runner(command, **_kwargs):
         calls.append(command)
-        return completed(stdout="login required\nfailed     : 0\n")
+        return completed(stdout="[DEBUG] login_required detected\nfailed     : 0\n")
 
     config = make_config(tmp_path, max_runs=3)
 
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
 
     assert rc == 0
-    assert len(calls) == 2
+    assert len(calls) == 1
     log_text = next((tmp_path / "logs").glob("*.log")).read_text(encoding="utf-8")
     assert "block signal detected: login" in log_text
     status = json.loads(config.status_file.read_text(encoding="utf-8"))
@@ -421,16 +421,44 @@ def test_block_signal_in_stderr_stops_loop(tmp_path):
 
     def fake_runner(command, **_kwargs):
         calls.append(command)
-        return completed(stderr="CAPTCHA page", stdout="failed     : 0\n")
+        return completed(stderr="[DEBUG] captcha detected", stdout="failed     : 0\n")
 
     config = make_config(tmp_path, max_runs=3)
 
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
 
     assert rc == 0
-    assert len(calls) == 2
+    assert len(calls) == 1
     log_text = next((tmp_path / "logs").glob("*.log")).read_text(encoding="utf-8")
     assert "block signal detected: captcha" in log_text
+
+
+def test_completed_recollect_cycle_ignores_earlier_login_debug(tmp_path):
+    calls = []
+    slept = []
+
+    def fake_runner(command, **_kwargs):
+        calls.append(command)
+        if command[1].endswith(str(Path("scripts") / "index_tail.py")):
+            return completed(
+                stdout=(
+                    "[DEBUG] login_required detected: no article-list markers found\n"
+                    "[LOGIN] manual login completed\n"
+                    "[index_tail] complete. total 0\n"
+                )
+            )
+        return completed(stdout="[batch] no INDEXED articles\nfailed     : 0\n")
+
+    config = make_config(tmp_path, max_runs=2, interval_seconds=5, interactive_login=True)
+
+    rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=slept.append)
+
+    assert rc == 0
+    assert len(calls) == 4
+    assert slept == [5]
+    status = json.loads(config.status_file.read_text(encoding="utf-8"))
+    assert status["stop_reason"] == "max runs completed"
+    assert status["last_run_warning"] is None
 
 
 def test_failed_count_at_threshold_stops_loop(tmp_path):

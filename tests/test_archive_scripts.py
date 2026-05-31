@@ -8,7 +8,7 @@ def read_repo_text(relative_path: str) -> str:
     return (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
 
 
-def test_archive_powershell_scripts_exist_and_guard_url_placeholder():
+def test_archive_powershell_scripts_exist_and_guard_url_value():
     start_loop = PROJECT_ROOT / "scripts" / "start_archive_loop.ps1"
     run_once = PROJECT_ROOT / "scripts" / "run_archive_once.ps1"
 
@@ -19,8 +19,11 @@ def test_archive_powershell_scripts_exist_and_guard_url_placeholder():
     once_text = run_once.read_text(encoding="utf-8")
 
     for text in (start_text, once_text):
-        assert "$ListUrl = \"<멘토선생님 작성글 목록 URL>\"" in text
+        assert "$ListUrl =" in text
+        assert "cafe.naver.com" in text or "<멘토선생님 작성글 목록 URL>" in text
         assert "Refusing to start" in text
+        assert "When the mentor teacher article list is visible" in text
+        assert "No automatic login or CAPTCHA bypass is performed" in text
         assert "run_daily_archive_loop.py" in text
         assert "--interactive-login" in text
 
