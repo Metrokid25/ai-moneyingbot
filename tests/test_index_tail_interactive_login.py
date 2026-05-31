@@ -6,7 +6,16 @@ import index_tail
 
 
 class FakeSession:
-    pass
+    def __init__(self):
+        self.page = object()
+        self.goto_calls = []
+
+    def goto(self, url):
+        self.goto_calls.append(url)
+        return url, None
+
+    def close(self):
+        pass
 
 
 def test_fetch_rows_interactive_login_waits_and_retries_same_session(monkeypatch):
@@ -108,3 +117,45 @@ def test_collect_after_snapshot_continues_after_interactive_retry(monkeypatch):
     assert total == 0
     assert calls == [(session, 1, True)]
     assert prompts == []
+
+
+def test_main_noninteractive_does_not_call_wait_for_login(monkeypatch):
+    session = FakeSession()
+    wait_calls = []
+
+    monkeypatch.setattr(index_tail, "init_db", lambda: None)
+    monkeypatch.setattr(index_tail, "BrowserSession", lambda: session)
+    monkeypatch.setattr(index_tail, "_load_latest_snapshot", lambda: {"snapshot_max_id": 9})
+    monkeypatch.setattr(index_tail, "wait_for_login", lambda _page: wait_calls.append(_page))
+    monkeypatch.setattr(index_tail, "_collect_after_snapshot", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(index_tail, "build_page_url", lambda url, page: f"{url}?page={page}")
+    monkeypatch.setattr(index_tail.sys, "argv", ["index_tail.py", "https://cafe.example/list", "--collect-after-snapshot"])
+
+    rc = index_tail.main()
+
+    assert rc == 0
+    assert wait_calls == []
+    assert session.goto_calls == ["https://cafe.example/list?page=1"]
+
+
+def test_main_interactive_calls_wait_for_login(monkeypatch):
+    session = FakeSession()
+    wait_calls = []
+
+    monkeypatch.setattr(index_tail, "init_db", lambda: None)
+    monkeypatch.setattr(index_tail, "BrowserSession", lambda: session)
+    monkeypatch.setattr(index_tail, "_load_latest_snapshot", lambda: {"snapshot_max_id": 9})
+    monkeypatch.setattr(index_tail, "wait_for_login", lambda page: wait_calls.append(page))
+    monkeypatch.setattr(index_tail, "_collect_after_snapshot", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(index_tail, "build_page_url", lambda url, page: f"{url}?page={page}")
+    monkeypatch.setattr(
+        index_tail.sys,
+        "argv",
+        ["index_tail.py", "https://cafe.example/list", "--collect-after-snapshot", "--interactive-login"],
+    )
+
+    rc = index_tail.main()
+
+    assert rc == 0
+    assert wait_calls == [session.page]
+    assert session.goto_calls == ["https://cafe.example/list?page=1"]

@@ -394,7 +394,8 @@ def main() -> int:
             trigger_url = build_page_url(args.url, 1)
             print(f"\n[index_tail] 브라우저 진입: {trigger_url}")
             session.goto(trigger_url)
-            wait_for_login(session.page)
+            if args.interactive_login:
+                wait_for_login(session.page)
 
             total = _collect_after_snapshot(
                 session,
@@ -413,7 +414,8 @@ def main() -> int:
         trigger_url = build_page_url(args.url, args.estimate)
         print(f"\n[index_tail] 브라우저 진입: {trigger_url}")
         session.goto(trigger_url)
-        wait_for_login(session.page)
+        if args.interactive_login:
+            wait_for_login(session.page)
 
         # 스냅샷 생성 (페이지 1 fetch → 최고 article_id 기록)
         snapshot = _create_snapshot(
