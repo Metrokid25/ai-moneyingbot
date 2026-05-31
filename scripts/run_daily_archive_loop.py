@@ -76,6 +76,7 @@ class LoopConfig:
     headed: bool = False
     market_schedule: bool = False
     interactive_login: bool = False
+    test_market_active_after_seconds: int | None = None
     argv_summary: str = ""
 
 
@@ -169,8 +170,34 @@ def market_schedule_decision(now: datetime) -> ScheduleDecision:
     return ScheduleDecision(active=True, interval_seconds=1800, label="market-18-23-30m")
 
 
-def schedule_decision_for(config: LoopConfig, now: datetime) -> ScheduleDecision:
+def test_market_schedule_decision(
+    config: LoopConfig,
+    now: datetime,
+    loop_started_at: datetime,
+) -> ScheduleDecision:
+    assert config.test_market_active_after_seconds is not None
+    elapsed_seconds = max(0, int((now - loop_started_at).total_seconds()))
+    if elapsed_seconds < config.test_market_active_after_seconds:
+        return ScheduleDecision(
+            active=False,
+            interval_seconds=max(1, config.test_market_active_after_seconds - elapsed_seconds),
+            label="market-schedule-test-wait",
+        )
+    return ScheduleDecision(
+        active=True,
+        interval_seconds=config.interval_seconds,
+        label="market-schedule-test-active",
+    )
+
+
+def schedule_decision_for(
+    config: LoopConfig,
+    now: datetime,
+    loop_started_at: datetime | None = None,
+) -> ScheduleDecision:
     if config.market_schedule:
+        if config.test_market_active_after_seconds is not None and loop_started_at is not None:
+            return test_market_schedule_decision(config, now, loop_started_at)
         return market_schedule_decision(now)
     return ScheduleDecision(active=True, interval_seconds=config.interval_seconds, label="fixed-interval")
 
@@ -863,6 +890,17 @@ def run_loop(
                 print(f"[archive_loop] stopping: {stop_reason}")
                 return 1
 
+        if config.market_schedule and config.test_market_active_after_seconds is not None:
+            now = clock()
+            decision = schedule_decision_for(config, now, loop_started_at)
+            if not decision.active:
+                update_status_for_schedule_decision(config, status, 0, decision, now)
+                path = append_schedule_skip_log(config, 0, now, decision)
+                print(f"[archive_loop] market schedule inactive: {decision.label}")
+                print(f"[archive_loop] next_interval_seconds: {decision.interval_seconds}")
+                print(f"[archive_loop] log       : {path}")
+                sleeper(decision.interval_seconds)
+
         for run_number in range(1, max_runs + 1):
             now = clock()
             if now >= stop_at:
@@ -870,7 +908,7 @@ def run_loop(
                 finalize_status(config, status, "duration reached before next run")
                 return 0
 
-            decision = schedule_decision_for(config, now)
+            decision = schedule_decision_for(config, now, loop_started_at)
             update_status_for_schedule_decision(config, status, run_number, decision, now)
             if not decision.active:
                 path = append_schedule_skip_log(config, run_number, now, decision)
@@ -945,6 +983,12 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="use local time windows: 23:00-06:00 stop, 06:00-07:00 30m, 07:00-08:00 10m, 08:00-16:00 5m, 16:00-18:00 10m, 18:00-23:00 30m",
     )
+    parser.add_argument(
+        "--test-market-active-after-seconds",
+        type=int,
+        default=None,
+        help="test-only market schedule override: wait inactive for N seconds, then treat the schedule as active",
+    )
     parser.add_argument("--status", action="store_true", help="print loop status and exit")
     parser.add_argument("--preflight", action="store_true", help="run read-only operational safety checks and exit")
     parser.add_argument(
@@ -964,6 +1008,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         parser.error("--stop-on-failed must be non-negative")
     if args.lock_stale_minutes < 0:
         parser.error("--lock-stale-minutes must be non-negative")
+    if args.test_market_active_after_seconds is not None:
+        if args.test_market_active_after_seconds < 1:
+            parser.error("--test-market-active-after-seconds must be positive")
+        if not args.market_schedule:
+            parser.error("--test-market-active-after-seconds requires --market-schedule")
     return args
 
 
@@ -997,6 +1046,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         headed=args.headed,
         market_schedule=args.market_schedule,
         interactive_login=args.interactive_login,
+        test_market_active_after_seconds=args.test_market_active_after_seconds,
         argv_summary=" ".join(argv if argv is not None else sys.argv[1:]),
     )
     return run_loop(config)

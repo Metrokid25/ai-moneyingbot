@@ -5,6 +5,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, "scripts")
 
 import run_daily_archive_loop as archive_loop
@@ -37,6 +39,7 @@ def make_config(tmp_path, **overrides):
         "headed": False,
         "market_schedule": False,
         "interactive_login": False,
+        "test_market_active_after_seconds": None,
         "argv_summary": "test argv",
     }
     values.update(overrides)
@@ -237,6 +240,66 @@ def test_market_schedule_inactive_skips_collection_and_sleeps_until_active(tmp_p
     assert status["next_interval_seconds"] == 23400
     assert status["last_schedule_active"] is False
     assert status["last_schedule_label"] == "market-closed-23-06"
+
+
+def test_market_schedule_test_after_seconds_waits_then_runs_once(tmp_path):
+    calls = []
+    slept = []
+    config = make_config(
+        tmp_path,
+        market_schedule=True,
+        interactive_login=True,
+        max_runs=1,
+        test_market_active_after_seconds=60,
+    )
+    clock_values = iter(
+        [
+            datetime(2026, 5, 31, 23, 30),
+            datetime(2026, 5, 31, 23, 30),
+            datetime(2026, 5, 31, 23, 31),
+            datetime(2026, 5, 31, 23, 31),
+        ]
+    )
+
+    def fake_runner(command, **kwargs):
+        calls.append((command, kwargs))
+        return completed(stdout="failed     : 0\n")
+
+    rc = archive_loop.run_loop(
+        config,
+        runner=fake_runner,
+        sleeper=slept.append,
+        clock=lambda: next(clock_values),
+    )
+
+    assert rc == 0
+    assert slept == [60]
+    assert len(calls) == 3
+    assert calls[0][0][1].endswith(str(Path("scripts") / "daily_archive.py"))
+    assert calls[1][0][1].endswith(str(Path("scripts") / "index_tail.py"))
+    assert calls[2][0][1].endswith(str(Path("scripts") / "batch_recollect.py"))
+    status = json.loads(config.status_file.read_text(encoding="utf-8"))
+    assert status["current_run"] == 1
+    assert status["last_schedule_active"] is True
+    assert status["last_schedule_label"] == "market-schedule-test-active"
+    assert status["stop_reason"] == "max runs completed"
+
+
+def test_market_schedule_test_after_seconds_is_rejected_without_market_schedule(tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        archive_loop.main(
+            [
+                "--list-url",
+                "https://example.test/list",
+                "--test-market-active-after-seconds",
+                "60",
+                "--log-dir",
+                str(tmp_path / "logs"),
+            ]
+        )
+
+    assert exc.value.code == 2
+    assert not (tmp_path / "logs").exists()
 
 
 def test_market_schedule_interactive_login_warms_up_before_inactive_wait(tmp_path):
