@@ -15,6 +15,7 @@ from rag_retrieval import (
     make_snippet,
     validate_query_vector,
     validate_run_mode,
+    validate_score_threshold,
     validate_top_k,
 )
 
@@ -185,6 +186,48 @@ def test_format_search_results_ranks_multiple_candidate_chunks_by_backend_score_
     assert rows[0]["score"] > rows[1]["score"] > rows[2]["score"]
 
 
+def test_format_search_results_filters_scores_below_threshold_and_reranks():
+    points = [
+        SimpleNamespace(
+            score=0.82,
+            payload={
+                "chunk_id": "strong-match:0",
+                "article_id": 10,
+                "title": "Strong match",
+                "text": "evidence above the retrieval threshold",
+            },
+        ),
+        SimpleNamespace(
+            score=0.7,
+            payload={
+                "chunk_id": "boundary-match:0",
+                "article_id": 20,
+                "title": "Boundary match",
+                "text": "evidence exactly at the retrieval threshold",
+            },
+        ),
+        SimpleNamespace(
+            score=0.69,
+            payload={
+                "chunk_id": "weak-match:0",
+                "article_id": 30,
+                "title": "Weak match",
+                "text": "weak evidence below the retrieval threshold",
+            },
+        ),
+    ]
+
+    rows = format_search_results(points, score_threshold=0.7)
+
+    assert [row["rank"] for row in rows] == [1, 2]
+    assert [row["chunk_id"] for row in rows] == [
+        "strong-match:0",
+        "boundary-match:0",
+    ]
+    assert [row["score"] for row in rows] == [0.82, 0.7]
+    assert all(row["score"] >= 0.7 for row in rows)
+
+
 def test_extract_source_metadata_accepts_nested_metadata_fallback():
     payload = {
         "metadata": {
@@ -236,6 +279,11 @@ def test_validate_run_mode_accepts_dry_run():
 
 def test_validate_run_mode_accepts_execute():
     validate_run_mode(dry_run=False, execute=True)
+
+
+def test_validate_score_threshold_rejects_nan():
+    with pytest.raises(ValueError, match="score_threshold"):
+        validate_score_threshold(float("nan"))
 
 
 def test_validate_query_vector_accepts_1024_vector():

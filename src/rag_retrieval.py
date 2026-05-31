@@ -64,6 +64,13 @@ def validate_top_k(top_k: int) -> None:
         raise ValueError(f"--top-k must be between 1 and {MAX_TOP_K}")
 
 
+def validate_score_threshold(score_threshold: float | None) -> None:
+    if score_threshold is None:
+        return
+    if not np.isfinite(float(score_threshold)):
+        raise ValueError("score_threshold must be a finite number")
+
+
 def make_snippet(text: str | None, max_chars: int = SNIPPET_CHARS) -> str:
     if not text:
         return ""
@@ -156,14 +163,17 @@ def search_qdrant(
     collection: str,
     query_vector: Sequence[float],
     top_k: int = DEFAULT_TOP_K,
+    score_threshold: float | None = None,
 ):
     validate_top_k(top_k)
+    validate_score_threshold(score_threshold)
     vector = validate_query_vector(query_vector)
     ensure_collection_exists(client, collection)
     return client.search(
         collection_name=collection,
         query_vector=vector.tolist(),
         limit=top_k,
+        score_threshold=score_threshold,
         with_payload=True,
         with_vectors=False,
     )
@@ -180,8 +190,17 @@ def format_search_result(point: Any, rank: int) -> dict[str, Any]:
     return row
 
 
-def format_search_results(points: Sequence[Any]) -> list[dict[str, Any]]:
-    return [format_search_result(point, rank=index + 1) for index, point in enumerate(points)]
+def format_search_results(
+    points: Sequence[Any],
+    score_threshold: float | None = None,
+) -> list[dict[str, Any]]:
+    validate_score_threshold(score_threshold)
+    rows = []
+    for point in points:
+        if score_threshold is not None and float(point.score) < score_threshold:
+            continue
+        rows.append(format_search_result(point, rank=len(rows) + 1))
+    return rows
 
 
 def validate_eval_queries(queries: Sequence[str]) -> None:
