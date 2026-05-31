@@ -207,39 +207,32 @@ def collect_execute_articles(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Collect article list rows in execute mode with strict bounds.
 
-    This is the single real-collection bridge. It reuses:
-    - `BrowserSession` from `src/browser.py`
-    - `parse_article_list` from `src/parser.py`
-
-    If `list_url` is omitted, no browser is opened and no network request is sent.
+    Execute mode intentionally delegates list-page collection to the
+    index_tail-style archive indexing API instead of the experimental local
+    fetch_list_rows() path.
     """
     if not list_url:
         return [], ["execute mode skipped: --list-url was not provided"]
 
-    import time  # noqa: WPS433
-
+    from archive_indexing import collect_index_rows  # noqa: WPS433
     from browser import BrowserSession  # noqa: WPS433
 
     pages_to_scan = page_limit if page_limit is not None else DEFAULT_PAGE_LIMIT
-    rows: list[dict[str, Any]] = []
     session = BrowserSession(
         user_data_dir=browser_profile_dir,
         headless=False if headed else None,
     )
     try:
-        for page_num in range(1, pages_to_scan + 1):
-            page_rows, err = fetch_list_rows(session, list_url, page_num)
-            if err:
-                raise RuntimeError(f"list page {page_num} failed: {err}")
-            for row in page_rows or []:
-                rows.append(row)
-                if len(rows) >= limit:
-                    return rows, []
-            if page_num < pages_to_scan:
-                time.sleep(delay_seconds)
+        rows = collect_index_rows(
+            session,
+            list_url,
+            limit=limit,
+            page_limit=pages_to_scan,
+            delay_seconds=delay_seconds,
+        )
     finally:
         session.close()
-    return rows, []
+    return rows, ["execute: using proven index_tail-style list indexing path"]
 
 
 def fetch_list_rows(
@@ -247,7 +240,7 @@ def fetch_list_rows(
     list_url: str,
     page_num: int,
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
-    """Fetch and parse one Cafe list page using the existing archive primitives."""
+    """Deprecated fallback for the old local execute list-page experiment."""
     import time  # noqa: WPS433
 
     from browser import (  # noqa: WPS433

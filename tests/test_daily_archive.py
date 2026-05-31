@@ -604,6 +604,42 @@ def test_execute_collect_body_failure_records_failed_queue(tmp_path, monkeypatch
     assert "block_signal=login_required" in queue["items"][0]["reason"]
 
 
+def test_execute_collect_body_uses_existing_collector_path(tmp_path, monkeypatch):
+    rows = [{"article_id": 1, "url": "mock://1", "title": "one"}]
+    collected_body_ids = []
+
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: (rows, []))
+    monkeypatch.setattr(daily_archive, "init_db", lambda: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "is_duplicate",
+        lambda article_id, seen_ids, *, dry_run: False,
+    )
+    monkeypatch.setattr(daily_archive, "save_article", lambda row, *, dry_run: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "collect_article_body",
+        lambda article_id: collected_body_ids.append(article_id)
+        or (daily_archive.Status.BODY_COLLECTED, None),
+    )
+
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=1,
+        page_limit=1,
+        list_url="https://example.test/list",
+        collect_body=True,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+
+    assert stats.saved == 1
+    assert stats.failed == 0
+    assert collected_body_ids == [1]
+
+
 def test_collect_execute_without_list_url_does_not_open_browser():
     rows, notes = daily_archive.collect_execute_articles(
         list_url=None,
@@ -630,8 +666,8 @@ def test_manual_login_verification_urls_include_collection_first_page():
     ]
 
 
-def test_collect_execute_articles_fetches_bounded_pages(monkeypatch):
-    calls: list[int] = []
+def test_collect_execute_articles_uses_index_tail_based_api(monkeypatch):
+    calls = []
     closed = False
     profile_dirs = []
     headless_values = []
@@ -645,17 +681,25 @@ def test_collect_execute_articles_fetches_bounded_pages(monkeypatch):
             nonlocal closed
             closed = True
 
-    def fake_fetch_rows(_session, _list_url, page_num):
-        calls.append(page_num)
+    def fake_collect_index_rows(session, list_url, **kwargs):
+        calls.append((session, list_url, kwargs))
         return [
-            {"article_id": page_num * 10 + 1, "url": f"mock://{page_num}/1"},
-            {"article_id": page_num * 10 + 2, "url": f"mock://{page_num}/2"},
-        ], None
+            {"article_id": 11, "url": "mock://1/1"},
+            {"article_id": 12, "url": "mock://1/2"},
+            {"article_id": 21, "url": "mock://2/1"},
+        ]
 
     fake_browser = types.ModuleType("browser")
     fake_browser.BrowserSession = FakeSession
-    monkeypatch.setattr(daily_archive, "fetch_list_rows", fake_fetch_rows)
+    fake_archive_indexing = types.ModuleType("archive_indexing")
+    fake_archive_indexing.collect_index_rows = fake_collect_index_rows
+    monkeypatch.setattr(
+        daily_archive,
+        "fetch_list_rows",
+        lambda *_args: pytest.fail("deprecated fetch_list_rows should not be used by execute"),
+    )
     monkeypatch.setitem(sys.modules, "browser", fake_browser)
+    monkeypatch.setitem(sys.modules, "archive_indexing", fake_archive_indexing)
 
     rows, notes = daily_archive.collect_execute_articles(
         list_url="https://example.test/list",
@@ -666,8 +710,13 @@ def test_collect_execute_articles_fetches_bounded_pages(monkeypatch):
     )
 
     assert [row["article_id"] for row in rows] == [11, 12, 21]
-    assert calls == [1, 2]
-    assert notes == []
+    assert calls[0][1] == "https://example.test/list"
+    assert calls[0][2] == {
+        "limit": 3,
+        "page_limit": 5,
+        "delay_seconds": 0,
+    }
+    assert notes == ["execute: using proven index_tail-style list indexing path"]
     assert closed is True
     assert profile_dirs == ["profile-test"]
     assert headless_values == [None]
@@ -685,8 +734,15 @@ def test_collect_execute_articles_headed_passes_headless_false(monkeypatch):
 
     fake_browser = types.ModuleType("browser")
     fake_browser.BrowserSession = FakeSession
+    fake_archive_indexing = types.ModuleType("archive_indexing")
+    fake_archive_indexing.collect_index_rows = lambda *_args, **_kwargs: []
     monkeypatch.setitem(sys.modules, "browser", fake_browser)
-    monkeypatch.setattr(daily_archive, "fetch_list_rows", lambda *_args: ([], None))
+    monkeypatch.setitem(sys.modules, "archive_indexing", fake_archive_indexing)
+    monkeypatch.setattr(
+        daily_archive,
+        "fetch_list_rows",
+        lambda *_args: pytest.fail("deprecated fetch_list_rows should not be used by execute"),
+    )
 
     rows, notes = daily_archive.collect_execute_articles(
         list_url="https://example.test/list",
@@ -696,7 +752,7 @@ def test_collect_execute_articles_headed_passes_headless_false(monkeypatch):
     )
 
     assert rows == []
-    assert notes == []
+    assert notes == ["execute: using proven index_tail-style list indexing path"]
     assert session_kwargs[0]["headless"] is False
 
 
