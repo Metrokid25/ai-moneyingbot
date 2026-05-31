@@ -395,6 +395,27 @@ def test_block_signal_in_stdout_stops_loop(tmp_path):
     assert status["last_run_warning"] == "block signal detected: login"
 
 
+def test_private_cafe_badge_in_stdout_does_not_stop_loop(tmp_path):
+    calls = []
+    slept = []
+
+    def fake_runner(command, **_kwargs):
+        calls.append(command)
+        return completed(stdout="비공개카페\nfailed     : 0\n")
+
+    config = make_config(tmp_path, max_runs=2, interval_seconds=5)
+
+    rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=slept.append)
+
+    assert rc == 0
+    assert len(calls) == 4
+    assert slept == [5]
+    status = json.loads(config.status_file.read_text(encoding="utf-8"))
+    assert status["is_running"] is False
+    assert status["stop_reason"] == "max runs completed"
+    assert status["last_run_warning"] is None
+
+
 def test_block_signal_in_stderr_stops_loop(tmp_path):
     calls = []
 

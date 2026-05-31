@@ -141,6 +141,61 @@ def test_login_detection_summary_exposes_safe_marker_booleans():
     assert "current_url_is_login=false" in summary
 
 
+def test_private_cafe_badge_with_cafe_home_is_not_blocked():
+    html = """
+    <html>
+      <head><title>굿머닝 카페</title></head>
+      <body>
+        <aside class="cafe-info"><span>비공개카페</span></aside>
+        <nav>카페 홈</nav>
+      </body>
+    </html>
+    """
+
+    detection = browser.detect_login_state("https://cafe.naver.com/example", html)
+
+    assert detection.reason is None
+    assert detection.detail == "private cafe badge ignored"
+    assert browser.check_blocked("https://cafe.naver.com/example", html) is None
+
+
+def test_private_cafe_badge_with_login_text_and_cafe_title_is_not_immediate_block():
+    html = """
+    <html>
+      <head><title>굿머닝 카페</title></head>
+      <body>
+        <aside class="cafe-info">비공개카페</aside>
+        <div>로그인 후 이용</div>
+      </body>
+    </html>
+    """
+
+    detection = browser.detect_login_state("https://cafe.naver.com/example", html)
+
+    assert detection.reason is None
+    assert detection.detail == "private cafe badge ignored"
+    assert detection.password_input_found is False
+    assert detection.current_url_is_login is False
+    assert browser.check_blocked("https://cafe.naver.com/example", html) is None
+
+
+def test_real_permission_and_block_markers_still_detected():
+    expected = {
+        "권한이 없습니다": "no_permission",
+        "접근 권한이 없습니다": "no_permission",
+        "가입 후 이용": "no_permission",
+        "카페 가입 후 이용": "no_permission",
+        "로그인 후 이용": "login_required",
+        "본인인증": "age_verification",
+        "captcha": "captcha",
+        "비정상 접근": "no_permission",
+        "이용이 제한": "no_permission",
+    }
+
+    for marker, reason in expected.items():
+        assert browser.check_blocked("https://cafe.naver.com/example", marker) == reason
+
+
 def test_existing_block_markers_still_detected():
     captcha_signal = next(signal for reason, signal in browser._BLOCK_CONTENT if reason == "captcha")
 

@@ -18,9 +18,15 @@ _BLOCK_CONTENT: list[Tuple[str, str]] = [
     ("login_required",   "로그인이 필요"),
     ("login_required",   "로그인 후 이용"),
     ("no_permission",    "접근 권한이 없습니다"),
+    ("no_permission",    "권한이 없습니다"),
     ("no_permission",    "가입한 회원만 이용"),
     ("no_permission",    "이 카페는 가입 후"),
-    ("no_permission",    "비공개 카페로 회원만"),
+    ("no_permission",    "가입 후 이용"),
+    ("no_permission",    "카페 가입 후 이용"),
+    ("no_permission",    "이용이 제한"),
+    ("no_permission",    "비정상 접근"),
+    ("age_verification", "본인인증"),
+    ("captcha",          "captcha"),
     ("captcha",          "자동입력 방지문자"),
     # ("age_verification", "본인확인"),  # 2026-04-27: genderUnknownLayer 모달이 모든 페이지 DOM에 박혀있어 false positive
     # ("age_verification", "성인인증"),  # 2026-04-27: 119investment 카페는 성인인증 대상 아님 (멤버 수년 경험상 0건)
@@ -60,6 +66,23 @@ _LOGIN_REQUIRED_MARKERS = (
     "먼저 로그인",
 )
 
+_PRIVATE_CAFE_BADGE_MARKERS = (
+    "비공개카페",
+    "비공개 카페",
+)
+
+_CAFE_ACCESS_MARKERS = (
+    "<title",
+    "카페 홈",
+    "카페홈",
+    "카페정보",
+    "카페 정보",
+    "cafe_name",
+    "cafe-info",
+    "cafe-menu",
+    "club-info",
+)
+
 
 @dataclass(frozen=True)
 class LoginDetection:
@@ -83,6 +106,15 @@ def _has_login_marker(html: str) -> bool:
     )
 
 
+def _has_private_cafe_badge(html: str) -> bool:
+    return any(marker in html for marker in _PRIVATE_CAFE_BADGE_MARKERS)
+
+
+def _has_cafe_access_marker(html: str) -> bool:
+    lowered = html.lower()
+    return any(marker.lower() in lowered for marker in _CAFE_ACCESS_MARKERS)
+
+
 def _is_login_url(url: str) -> bool:
     parsed = urlparse(url)
     host = parsed.netloc.lower()
@@ -102,6 +134,8 @@ def detect_login_state(
     has_article_list = _has_article_list_marker(html)
     has_login_marker = _has_login_marker(html) or login_form_visible
     password_input_found = password_input_visible or "type=\"password\"" in html.lower() or "type='password'" in html.lower()
+    has_private_cafe_badge = _has_private_cafe_badge(html)
+    has_cafe_access_marker = _has_cafe_access_marker(html)
 
     if "nid.naver.com" in urlparse(url).netloc.lower():
         return LoginDetection(
@@ -125,6 +159,15 @@ def detect_login_state(
         return LoginDetection(
             "login_required",
             "login form detected",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    if has_private_cafe_badge and has_cafe_access_marker:
+        return LoginDetection(
+            None,
+            "private cafe badge ignored",
             has_article_list,
             has_login_marker,
             password_input_found,
@@ -281,6 +324,8 @@ def check_blocked(url: str, content: str) -> Optional[str]:
     login_detection = detect_login_state(url, content)
     if login_detection.reason:
         return login_detection.reason
+    if login_detection.detail == "private cafe badge ignored":
+        return None
     for reason, signal in _BLOCK_URL:
         if signal in url:
             return reason
