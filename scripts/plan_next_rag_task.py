@@ -95,6 +95,278 @@ Completion criteria:
 - Move this task to `agent_tasks/done/` when complete.
 """,
     ),
+    PlannedTask(
+        slug="rag-retrieval-ranking-regression",
+        title="Add RAG retrieval ranking regression",
+        body="""Context:
+- Retrieval ranking quality can drift when scoring or result normalization changes.
+- The planner needs a backlog candidate that stays fully inside fixture-backed RAG
+  retrieval behavior.
+
+Goals:
+- Add a deterministic regression for ranking multiple candidate chunks.
+- Prefer synthetic records or existing fixtures over external services.
+- Document the expected ranking signal in the test name or assertion.
+
+Allowed scope:
+- `src/rag_retrieval.py`
+- `tests/test_rag_retrieval*.py`
+- `tests/fixtures/`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_retrieval.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Ranking behavior is covered by a focused regression.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-source-deduplication-regression",
+        title="Add RAG source deduplication regression",
+        body="""Context:
+- Answer context and source display should avoid repeated citations for the same
+  underlying article when duplicate chunks are retrieved.
+
+Goals:
+- Add a focused regression for source deduplication.
+- Use in-repo fixtures or synthetic chunks only.
+- Keep behavior deterministic and independent of vector services.
+
+Allowed scope:
+- `src/rag_answer_context.py`
+- `src/rag_answering.py`
+- `tests/test_rag_answer_context.py`
+- `tests/test_rag_*.py`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_answer_context.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Duplicate source handling is covered by a focused regression.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-answer-citation-formatting-regression",
+        title="Add RAG answer citation formatting regression",
+        body="""Context:
+- Answer citations are part of the user-facing RAG contract.
+- Small formatting drift can make answers harder to verify against sources.
+
+Goals:
+- Add or tighten a regression for citation formatting.
+- Cover source labels, ordering, and missing metadata fallback where practical.
+- Keep tests fixture-backed and deterministic.
+
+Allowed scope:
+- `src/rag_answering.py`
+- `src/rag_answer_context.py`
+- `tests/test_rag_answer_citation_contract.py`
+- `tests/test_rag_answering.py`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_answer_citation_contract.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Citation formatting behavior is covered by a focused regression.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-no-context-refusal-quality",
+        title="Improve RAG no-context refusal quality",
+        body="""Context:
+- No-context answers should be clear that the RAG corpus has insufficient
+  evidence, without inventing unsupported facts.
+
+Goals:
+- Add or tighten a focused no-context answer contract test.
+- Improve refusal wording only if the test exposes a real gap.
+- Keep the change independent of external services.
+
+Allowed scope:
+- `src/rag_answering.py`
+- `tests/test_rag_no_context_answer_contract.py`
+- `tests/test_rag_*.py`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_no_context_answer_contract.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- No-context refusal behavior is covered by a focused regression.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-chunk-metadata-validation",
+        title="Add RAG chunk metadata validation",
+        body="""Context:
+- Chunk metadata flows through ingest, retrieval, and answer citation display.
+- Missing or malformed metadata should be caught before it reaches answer
+  assembly.
+
+Goals:
+- Add fixture-backed validation for required chunk metadata fields.
+- Prefer a focused test over broad refactoring.
+- Keep validation inside RAG chunking or ingest-export boundaries.
+
+Allowed scope:
+- `src/rag_chunking.py`
+- `scripts/ingest_archive_export.py`
+- `tests/test_rag_chunking.py`
+- `tests/test_ingest_archive_export.py`
+- `tests/fixtures/`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_chunking.py tests/test_ingest_archive_export.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Chunk metadata requirements are covered by focused tests.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-web-ui-smoke-regression",
+        title="Add RAG web UI smoke regression",
+        body="""Context:
+- The local RAG web UI should continue rendering core controls and answer
+  surfaces as backend behavior evolves.
+
+Goals:
+- Add or tighten a smoke test for the RAG web UI.
+- Keep the test local and deterministic.
+- Avoid adding external browser, crawler, or Cafe dependencies.
+
+Allowed scope:
+- `scripts/serve_rag_web.py`
+- `tests/test_rag_web.py`
+- `tests/test_rag_*.py`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_web.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- The RAG web UI has focused smoke coverage for the selected behavior.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-pipeline-report-readability",
+        title="Improve RAG pipeline report readability",
+        body="""Context:
+- RAG pipeline reports should make task selection, verification, and blockers easy
+  to audit after autonomous runs.
+
+Goals:
+- Add or tighten coverage for RAG report content.
+- Improve report wording or structure only where tests show ambiguity.
+- Keep changes limited to RAG pipeline/report behavior.
+
+Allowed scope:
+- `scripts/run_rag_agent_pipeline.ps1`
+- `scripts/agent_next_task.py`
+- `tests/test_rag_review_pipeline.py`
+- `tests/test_rag_agent_next_task.py`
+- `docs/`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_review_pipeline.py tests/test_rag_agent_next_task.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- RAG report readability or auditability is covered by focused tests.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
+    PlannedTask(
+        slug="rag-focused-test-runner-coverage",
+        title="Improve RAG focused test runner coverage",
+        body="""Context:
+- The focused RAG test runner is the autorunner safety gate for RAG-owned work.
+- New RAG tests should be easy to include without broad, unrelated test runs.
+
+Goals:
+- Add or tighten coverage for the focused RAG test runner command list.
+- Include missing RAG-only tests when appropriate.
+- Keep the runner free of archive collection or write commands.
+
+Allowed scope:
+- `scripts/run_rag_focused_tests.py`
+- `tests/test_rag_focused_tests.py`
+- `tests/test_rag_*.py`
+
+Forbidden scope:
+- Archive crawling, parsing, collection, or archive writes.
+- Naver Cafe access.
+- `archive.db`, `.env`, raw `data/` originals, or archive-owned scripts.
+
+Verification:
+- `pytest tests/test_rag_focused_tests.py --basetemp=.tmp/rag_planner_pytest`
+- `python scripts/run_rag_focused_tests.py`
+- `git diff --check`
+
+Completion criteria:
+- Focused runner coverage reflects current RAG-owned tests.
+- The focused RAG test suite passes.
+- Move this task to `agent_tasks/done/` when complete.
+""",
+    ),
 )
 
 

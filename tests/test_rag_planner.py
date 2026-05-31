@@ -79,3 +79,46 @@ def test_planner_generates_only_one_task_per_run(tmp_path):
     assert first is not None
     assert second is None
     assert len(list((tmp_path / "agent_tasks" / "pending").glob("*-rag-*.md"))) == 1
+
+
+def test_planner_skips_duplicate_candidates_across_all_queues(tmp_path):
+    planner = load_planner()
+    write_task(
+        tmp_path,
+        "agent_tasks/pending/001-real-daily-archive-wiring.md",
+        "Archive task",
+    )
+    queues = ("pending", "running", "done", "failed")
+    for index, candidate in enumerate(planner.TASK_CANDIDATES[:-1], start=2):
+        queue = queues[index % len(queues)]
+        write_task(
+            tmp_path,
+            f"agent_tasks/{queue}/{index:03d}-{candidate.slug}.md",
+            candidate.title,
+        )
+
+    candidate = planner.choose_candidate(tmp_path)
+
+    assert candidate == planner.TASK_CANDIDATES[-1]
+
+
+def test_planner_reports_no_candidate_when_all_candidates_are_duplicates(tmp_path, capsys):
+    planner = load_planner()
+    write_task(
+        tmp_path,
+        "agent_tasks/pending/001-real-daily-archive-wiring.md",
+        "Archive task",
+    )
+    for index, candidate in enumerate(planner.TASK_CANDIDATES, start=2):
+        write_task(
+            tmp_path,
+            f"agent_tasks/done/{index:03d}-{candidate.slug}.md",
+            candidate.title,
+        )
+
+    result = planner.main(["--root", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert "PLANNER_NO_CANDIDATE" in output
+    assert list((tmp_path / "agent_tasks" / "pending").glob("*-rag-*.md")) == []
