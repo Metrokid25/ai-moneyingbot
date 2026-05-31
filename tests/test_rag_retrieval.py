@@ -142,6 +142,49 @@ def test_format_search_results_preserves_backend_source_order_and_ranks():
     ]
 
 
+def test_format_search_results_ranks_multiple_candidate_chunks_by_backend_score_order():
+    points = [
+        SimpleNamespace(
+            score=0.97,
+            payload={
+                "chunk_id": "rate-policy:0",
+                "article_id": 10,
+                "title": "Interest rate policy and liquidity",
+                "text": "Interest rate policy and liquidity signals for equities",
+            },
+        ),
+        SimpleNamespace(
+            score=0.64,
+            payload={
+                "chunk_id": "chip-cycle:0",
+                "article_id": 20,
+                "title": "Semiconductor cycle update",
+                "text": "Chip demand and earnings guidance",
+            },
+        ),
+        SimpleNamespace(
+            score=0.22,
+            payload={
+                "chunk_id": "housing-credit:0",
+                "article_id": 30,
+                "title": "Housing credit conditions",
+                "text": "Mortgage credit and property transaction trends",
+            },
+        ),
+    ]
+
+    rows = format_search_results(points)
+
+    assert [row["rank"] for row in rows] == [1, 2, 3]
+    assert [row["chunk_id"] for row in rows] == [
+        "rate-policy:0",
+        "chip-cycle:0",
+        "housing-credit:0",
+    ]
+    assert [row["score"] for row in rows] == [0.97, 0.64, 0.22]
+    assert rows[0]["score"] > rows[1]["score"] > rows[2]["score"]
+
+
 def test_extract_source_metadata_accepts_nested_metadata_fallback():
     payload = {
         "metadata": {
