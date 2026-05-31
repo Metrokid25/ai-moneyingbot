@@ -59,9 +59,9 @@ def test_pipeline_commits_and_pushes_only_through_pass_gated_options():
     assert "function Invoke-PassGatedPublish" in script
     assert 'if ($reviewResult -eq "PASS")' in script
     assert "Invoke-PassGatedPublish -Message $CommitMessage -Commit:$CommitOnPass -Push:$PushOnPass" in script
-    assert "& git commit -m $Message" in script
+    assert 'Invoke-GitPublishCommand -FailureContext "git commit" -Arguments @("commit", "-m", $Message)' in script
     assert 'if (-not $Push)' in script
-    assert "& git push" in script
+    assert 'Invoke-GitPublishCommand -FailureContext "git push" -Arguments @("push")' in script
     assert "PushOnPass not requested; push skipped." in script
     assert "Pipeline needs human review. Waiting for user approval before any commit or push." in script
     assert "Pipeline stopped after review failure. Inspect the review report before continuing." in script
@@ -73,9 +73,22 @@ def test_pipeline_stages_only_git_status_changed_paths_without_add_dot():
     assert "function Get-ChangedPaths" in script
     assert "git status --porcelain --untracked-files=all" in script
     assert "foreach ($path in $changedPaths)" in script
-    assert "& git add -- $path" in script
+    assert 'Invoke-GitPublishCommand -FailureContext "git add for $path" -Arguments @("add", "--", $path)' in script
     assert "git add ." not in script
     assert "& git add ." not in script
+
+
+def test_pipeline_tolerates_git_warning_output_and_uses_exit_codes():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Invoke-GitPublishCommand" in script
+    assert '$previousErrorActionPreference = $ErrorActionPreference' in script
+    assert '$ErrorActionPreference = "Continue"' in script
+    assert "$output = & git @Arguments *>&1" in script
+    assert "$exitCode = $LASTEXITCODE" in script
+    assert "$output | ForEach-Object { Write-Host $_ }" in script
+    assert "if ($exitCode -ne 0)" in script
+    assert "return $exitCode" in script
 
 
 def test_pipeline_blocks_forbidden_and_archive_owned_paths_before_publish():

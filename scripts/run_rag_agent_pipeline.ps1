@@ -90,6 +90,32 @@ function Test-ForbiddenPublishPath {
   return $false
 }
 
+function Invoke-GitPublishCommand {
+  param(
+    [string]$FailureContext,
+    [string[]]$Arguments
+  )
+
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $output = & git @Arguments *>&1
+    $exitCode = $LASTEXITCODE
+  } catch {
+    $output = @($_.Exception.Message)
+    $exitCode = 1
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  $output | ForEach-Object { Write-Host $_ }
+  if ($exitCode -ne 0) {
+    Write-Host "Publish gate failed: $FailureContext failed with exit code $exitCode."
+  }
+
+  return $exitCode
+}
+
 function Invoke-PassGatedPublish {
   param(
     [string]$Message,
@@ -122,20 +148,14 @@ function Invoke-PassGatedPublish {
 
   Write-Host "Publish gate passed. Staging git status changed files only."
   foreach ($path in $changedPaths) {
-    $addOutput = & git add -- $path 2>&1
-    $addExit = $LASTEXITCODE
-    $addOutput | ForEach-Object { Write-Host $_ }
+    $addExit = Invoke-GitPublishCommand -FailureContext "git add for $path" -Arguments @("add", "--", $path)
     if ($addExit -ne 0) {
-      Write-Host "Publish gate failed: git add failed for $path with exit code $addExit."
       return $addExit
     }
   }
 
-  $commitOutput = & git commit -m $Message 2>&1
-  $commitExit = $LASTEXITCODE
-  $commitOutput | ForEach-Object { Write-Host $_ }
+  $commitExit = Invoke-GitPublishCommand -FailureContext "git commit" -Arguments @("commit", "-m", $Message)
   if ($commitExit -ne 0) {
-    Write-Host "Publish gate failed: git commit failed with exit code $commitExit."
     return $commitExit
   }
 
@@ -144,11 +164,8 @@ function Invoke-PassGatedPublish {
     return 0
   }
 
-  $pushOutput = & git push 2>&1
-  $pushExit = $LASTEXITCODE
-  $pushOutput | ForEach-Object { Write-Host $_ }
+  $pushExit = Invoke-GitPublishCommand -FailureContext "git push" -Arguments @("push")
   if ($pushExit -ne 0) {
-    Write-Host "Publish gate failed: git push failed with exit code $pushExit."
     return $pushExit
   }
 
