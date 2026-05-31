@@ -282,6 +282,15 @@ def format_cost_usd(value: float | None) -> str:
     return f"{value:.8f}".rstrip("0").rstrip(".")
 
 
+def format_source_value(value: Any) -> str:
+    if value is None:
+        return "unknown"
+    text = str(value)
+    if not text.strip():
+        return "unknown"
+    return text
+
+
 def call_llm(
     messages: Sequence[dict[str, str]],
     model: str = DEFAULT_ANSWER_MODEL,
@@ -418,19 +427,19 @@ def format_answer_markdown(record: dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                f"- chunk_id: {source.get('chunk_id')}",
-                f"  source_id: {source.get('source_id')}",
-                f"  source_path: {source.get('source_path')}",
-                f"  article_id: {source.get('article_id')}",
-                f"  content_hash: {source.get('content_hash')}",
-                f"  url: {source.get('url')}",
-                f"  source_url: {source.get('source_url')}",
-                f"  created_at: {source.get('created_at')}",
-                f"  collected_at: {source.get('collected_at')}",
-                f"  posted_at: {source.get('posted_at')}",
-                f"  source: {source.get('source')}",
-                f"  title: {source.get('title')}",
-                f"  score: {source.get('score')}",
+                f"- chunk_id: {format_source_value(source.get('chunk_id'))}",
+                f"  source_id: {format_source_value(source.get('source_id'))}",
+                f"  source_path: {format_source_value(source.get('source_path'))}",
+                f"  article_id: {format_source_value(source.get('article_id'))}",
+                f"  content_hash: {format_source_value(source.get('content_hash'))}",
+                f"  url: {format_source_value(source.get('url'))}",
+                f"  source_url: {format_source_value(source.get('source_url'))}",
+                f"  created_at: {format_source_value(source.get('created_at'))}",
+                f"  collected_at: {format_source_value(source.get('collected_at'))}",
+                f"  posted_at: {format_source_value(source.get('posted_at'))}",
+                f"  source: {format_source_value(source.get('source'))}",
+                f"  title: {format_source_value(source.get('title'))}",
+                f"  score: {format_source_value(source.get('score'))}",
             ]
         )
     usage = record.get("usage")
