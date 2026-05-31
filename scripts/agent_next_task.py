@@ -94,9 +94,16 @@ def print_pending_status(project_root: Path) -> int:
     if tasks:
         print("RAG_TASK")
         print(f"task={tasks[0].relative_to(project_root)}")
+        print(f"selected_task={tasks[0].relative_to(project_root)}")
+        print(f"actionable_count={len(tasks)}")
+        print(f"skipped_count={len(skipped)}")
+        for skipped_task in skipped:
+            print(f"skipped={skipped_task.relative_to(project_root)}")
         return 0
 
     print("NO_ACTIONABLE_TASKS")
+    print("selected_task=(none)")
+    print("actionable_count=0")
     print(f"skipped_count={len(skipped)}")
     for skipped_task in skipped:
         print(f"skipped={skipped_task.relative_to(project_root)}")

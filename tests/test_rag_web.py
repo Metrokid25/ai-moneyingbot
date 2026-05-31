@@ -1,4 +1,5 @@
 import http.client
+from html.parser import HTMLParser
 import json
 import sqlite3
 import sys
@@ -13,6 +14,30 @@ import serve_rag_web
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+class HtmlIdCollector(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.ids: set[str] = set()
+        self.forms: list[dict[str, str]] = []
+        self.buttons: list[dict[str, str]] = []
+        self.inputs: list[dict[str, str]] = []
+        self.textareas: list[dict[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {key: value or "" for key, value in attrs}
+        element_id = attr_map.get("id")
+        if element_id:
+            self.ids.add(element_id)
+        if tag == "form":
+            self.forms.append(attr_map)
+        elif tag == "button":
+            self.buttons.append(attr_map)
+        elif tag == "input":
+            self.inputs.append(attr_map)
+        elif tag == "textarea":
+            self.textareas.append(attr_map)
 
 
 class RunningServer:
@@ -148,6 +173,37 @@ def test_get_root_returns_html(monkeypatch, archive_db_path):
     assert "질문" in html
     assert "실행" in html
     assert "실행 시 Voyage/OpenAI API 호출 및 비용이 발생할 수 있음" in html
+
+
+def test_get_root_renders_core_rag_controls_and_answer_surfaces(monkeypatch, archive_db_path):
+    def fake_run(**kwargs):
+        raise AssertionError("run_rag_answer should not be called for GET /")
+
+    with RunningServer(monkeypatch, fake_run, archive_db_path) as server:
+        status, headers, body = server.request("GET", "/")
+
+    html = body.decode("utf-8")
+    parser = HtmlIdCollector()
+    parser.feed(html)
+    form_ids = {form.get("id") for form in parser.forms}
+    input_by_id = {field.get("id"): field for field in parser.inputs}
+    textarea_by_id = {field.get("id"): field for field in parser.textareas}
+    button_by_id = {button.get("id"): button for button in parser.buttons}
+
+    assert status == 200
+    assert "text/html" in dict(headers)["Content-Type"]
+    assert form_ids == {"rag-form"}
+    assert textarea_by_id["query"]["name"] == "query"
+    assert textarea_by_id["query"].get("required") == ""
+    assert input_by_id["top-k"]["name"] == "top_k"
+    assert input_by_id["top-k"]["type"] == "number"
+    assert input_by_id["top-k"]["min"] == "1"
+    assert input_by_id["top-k"]["max"] == "20"
+    assert input_by_id["model"]["name"] == "model"
+    assert input_by_id["embedding-model"]["name"] == "embedding_model"
+    assert button_by_id["run-button"]["type"] == "submit"
+    assert {"status", "error", "answer", "sources", "usage"}.issubset(parser.ids)
+    assert 'fetch("/api/answer"' in html
 
 
 def test_post_answer_returns_mocked_result_and_expected_arguments(monkeypatch, archive_db_path):

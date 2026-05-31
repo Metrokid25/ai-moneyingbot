@@ -296,6 +296,14 @@ function Get-RemainingPendingTaskSummary {
   return @($taskOutput)
 }
 
+function Get-PendingRagTaskAudit {
+  $taskOutput = & python scripts\agent_next_task.py --status 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    return @("agent_next_task.py --status failed")
+  }
+  return @($taskOutput)
+}
+
 function Format-BooleanResult {
   param([bool]$Value)
   if ($Value) { return "yes" }
@@ -337,6 +345,10 @@ function Write-PipelineSummary {
   }
   Write-Host "remaining pending task summary:"
   foreach ($line in @(Get-RemainingPendingTaskSummary)) {
+    Write-Host "  $line"
+  }
+  Write-Host "pending RAG task audit:"
+  foreach ($line in @(Get-PendingRagTaskAudit)) {
     Write-Host "  $line"
   }
 }

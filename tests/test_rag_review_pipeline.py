@@ -131,6 +131,7 @@ def test_pipeline_prints_final_human_readable_summary_contract():
     script = read_text("scripts/run_rag_agent_pipeline.ps1")
 
     assert "function Write-PipelineSummary" in script
+    assert "function Get-PendingRagTaskAudit" in script
     assert "RAG Pipeline Summary" in script
     assert "pipeline result: $PipelineResult" in script
     assert "review result: $ReviewResult" in script
@@ -144,9 +145,11 @@ def test_pipeline_prints_final_human_readable_summary_contract():
     assert "latest commit hash: $(Get-LatestCommitHash)" in script
     assert "git status -sb:" in script
     assert "remaining pending task summary:" in script
+    assert "pending RAG task audit:" in script
     assert "git rev-parse --short HEAD" in script
     assert "git status -sb" in script
     assert "python scripts\\agent_next_task.py --list" in script
+    assert "python scripts\\agent_next_task.py --status" in script
 
 
 def test_pipeline_summary_is_written_for_all_review_outcomes_and_run_failure():
@@ -179,10 +182,14 @@ def test_pipeline_auto_plans_when_no_actionable_rag_task_exists():
     assert 'Write-Host "Planner created a task for a later pipeline run: $($plannerResult.CreatedTaskPath)"' in script
 
 
-def test_pipeline_no_action_detection_matches_agent_next_task_status_contract():
+def test_pipeline_no_action_detection_matches_agent_next_task_status_contract(tmp_path):
     script = read_text("scripts/run_rag_agent_pipeline.ps1")
+    pending = tmp_path / "agent_tasks" / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    archive_task = pending / "001-real-daily-archive-wiring.md"
+    archive_task.write_text("Title: Archive task\n", encoding="utf-8")
     result = subprocess.run(
-        ["python", "scripts/agent_next_task.py", "--status"],
+        ["python", "scripts/agent_next_task.py", "--root", str(tmp_path), "--status"],
         cwd=ROOT,
         check=True,
         text=True,
@@ -191,7 +198,10 @@ def test_pipeline_no_action_detection_matches_agent_next_task_status_contract():
 
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     assert lines[0] == "NO_ACTIONABLE_TASKS"
-    assert "skipped=agent_tasks\\pending\\001-real-daily-archive-wiring.md" in lines
+    assert "selected_task=(none)" in lines
+    assert "actionable_count=0" in lines
+    assert "skipped_count=1" in lines
+    assert f"skipped={archive_task.relative_to(tmp_path)}" in lines
     assert '$lines[0] -eq "NO_ACTIONABLE_TASKS"' in script
     assert '$skipsArchiveOwnedTask = $lines -contains "skipped=agent_tasks\\pending\\001-real-daily-archive-wiring.md"' in script
     assert "return ($hasNoActionResult -and $skipsArchiveOwnedTask)" in script
