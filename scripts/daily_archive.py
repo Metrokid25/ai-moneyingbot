@@ -36,6 +36,8 @@ MAX_PAGE_LIMIT = 10
 DEFAULT_DELAY_SECONDS = 3.0
 DEFAULT_LOGIN_CHECK_RETRIES = 3
 DEFAULT_LOGIN_URL = "https://nid.naver.com/nidlogin.login"
+LIST_PAGE_READY_RETRIES = 3
+LIST_PAGE_READY_DELAY_SECONDS = 1.0
 
 
 @dataclass
@@ -246,20 +248,115 @@ def fetch_list_rows(
     page_num: int,
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
     """Fetch and parse one Cafe list page using the existing archive primitives."""
-    from browser import check_blocked  # noqa: WPS433
+    import time  # noqa: WPS433
+
+    from browser import (  # noqa: WPS433
+        check_blocked,
+        detect_login_state,
+        has_article_list_marker,
+    )
     from parser import parse_article_list  # noqa: WPS433
 
     page_url = build_page_url(list_url, page_num)
     final_url, err = session.goto(page_url)
-    if err:
+    if err and err != "login_required":
         return None, err
-    html, frame_err = session.get_frame_html()
-    if frame_err or html is None:
-        return None, frame_err or "frame_load_failed"
-    blocked = check_blocked(final_url, html)
-    if blocked:
-        return None, blocked
-    return parse_article_list(html, final_url), None
+
+    last_error = err
+    last_detection = None
+    last_title = _safe_page_title(session)
+    current_url = _safe_current_url(session, final_url)
+    for attempt in range(1, LIST_PAGE_READY_RETRIES + 1):
+        html, frame_err = session.get_frame_html()
+        current_url = _safe_current_url(session, final_url)
+        last_title = _safe_page_title(session)
+        if frame_err and frame_err != "login_required":
+            return None, frame_err
+        if html is None:
+            last_error = frame_err or "frame_load_failed"
+            if frame_err == "login_required":
+                page_html = _safe_page_content(session)
+                if page_html:
+                    last_detection = detect_login_state(current_url, page_html)
+                    if _is_definite_login_required(last_detection):
+                        _print_login_required_diagnostics(current_url, last_title, last_detection)
+                        return None, frame_err
+        else:
+            last_detection = detect_login_state(current_url, html)
+            if has_article_list_marker(html):
+                return parse_article_list(html, current_url), None
+
+            blocked = check_blocked(current_url, html)
+            if blocked and _is_definite_login_required(last_detection):
+                _print_login_required_diagnostics(current_url, last_title, last_detection)
+                return None, blocked
+            if blocked:
+                last_error = blocked
+            else:
+                rows = parse_article_list(html, current_url)
+                if rows:
+                    return rows, None
+                last_error = frame_err
+
+        if attempt < LIST_PAGE_READY_RETRIES:
+            time.sleep(LIST_PAGE_READY_DELAY_SECONDS)
+
+    if last_detection is not None and last_error == "login_required":
+        _print_login_required_diagnostics(current_url, last_title, last_detection)
+    if last_error is None:
+        return [], None
+    return None, last_error
+
+
+def _safe_page_title(session: Any) -> str:
+    page = getattr(session, "page", None)
+    title = getattr(page, "title", None)
+    if not callable(title):
+        return "-"
+    try:
+        return str(title())
+    except Exception:
+        return "-"
+
+
+def _safe_current_url(session: Any, fallback: str) -> str:
+    page = getattr(session, "page", None)
+    return str(getattr(page, "url", None) or fallback)
+
+
+def _safe_page_content(session: Any) -> str:
+    page = getattr(session, "page", None)
+    content = getattr(page, "content", None)
+    if not callable(content):
+        return ""
+    try:
+        return str(content())
+    except Exception:
+        return ""
+
+
+def _is_definite_login_required(detection: Any) -> bool:
+    return bool(
+        detection
+        and detection.reason == "login_required"
+        and (
+            detection.current_url_is_login
+            or detection.password_input_found
+            or detection.detail == "login form detected"
+            or detection.detail == "redirected to login url"
+            or detection.detail == "redirected to login path"
+        )
+    )
+
+
+def _print_login_required_diagnostics(url: str, title: str, detection: Any) -> None:
+    from browser import format_login_detection_summary  # noqa: WPS433
+
+    print(
+        "[DEBUG] login_required detected: "
+        f"{detection.detail}; url={url}; title={title}; "
+        f"{format_login_detection_summary(detection)}"
+    )
 
 
 def build_page_url(base_url: str, page: int) -> str:
@@ -268,6 +365,13 @@ def build_page_url(base_url: str, page: int) -> str:
     qs["page"] = [str(page)]
     new_query = urlencode({key: value[0] for key, value in qs.items()})
     return urlunparse(parsed._replace(query=new_query))
+
+
+def manual_login_verification_urls(login_url: str) -> list[str]:
+    urls = [login_url]
+    if "cafe.naver.com" in urlparse(login_url).netloc.lower():
+        urls.append(build_page_url(login_url, 1))
+    return list(dict.fromkeys(urls))
 
 
 def collect_article_body(article_id: int) -> tuple[str, str | None]:
@@ -458,13 +562,14 @@ def prepare_manual_login(
     print("  sign in to Naver manually in the opened browser")
     print("  if captcha or identity verification appears, handle it manually")
     print("  after login, confirm the mentor teacher article-list page is visible")
-    print("  after Enter, this command reopens login_url to verify access")
+    print("  after Enter, this command reopens login_url and page=1 to verify access")
     print("  do not put this command in Windows Task Scheduler")
     if login_url == DEFAULT_LOGIN_URL:
         print("  카페 접근 확인을 위해 --login-url 사용 권장")
         print("  recommended: use --login-url to confirm Cafe access")
 
     session = BrowserSession(user_data_dir=profile_dir, headless=False)
+    verification_urls = manual_login_verification_urls(login_url)
     try:
         _final_url, initial_err = session.goto(login_url)
         if initial_err:
@@ -477,13 +582,19 @@ def prepare_manual_login(
             )
             wait_for_manual_confirmation()
             print(f"[daily_archive] verifying login_url access ({attempt}/{max_attempts})")
-            _final_url, verify_err = session.goto(login_url)
+            failed_url = None
+            verify_err = None
+            for verify_url in verification_urls:
+                _final_url, verify_err = session.goto(verify_url)
+                if verify_err:
+                    failed_url = verify_url
+                    break
+                print(f"[daily_archive] article-list page appears accessible: {verify_url}")
             if not verify_err:
-                print("[daily_archive] article-list page appears accessible")
                 print("[daily_archive] login preparation complete")
                 return 0
 
-            print(f"[daily_archive] still {verify_err}")
+            print(f"[daily_archive] still {verify_err}: {failed_url}")
             if attempt < max_attempts:
                 print(
                     "[daily_archive] in the browser, confirm the mentor teacher article-list "

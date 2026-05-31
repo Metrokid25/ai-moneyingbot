@@ -12,12 +12,14 @@ Use the mentor teacher article-list URL, not only the Naver home/login page:
 - Naver home login alone may not be enough to confirm Cafe article-list access.
 - `browser profile exists` only means the folder exists; it does not prove that Naver Cafe login is valid.
 - The manual login browser is opened in headed mode so the user can complete login and verification directly.
-- After Enter, `--login --login-url` reopens the same URL in the same persistent profile and checks whether it is still `login_required`.
+- After Enter, `--login --login-url` reopens the same URL and the actual first collection page (`page=1`) in the same persistent profile and checks whether either is still `login_required`.
 - If verification fails, keep the browser open, make sure the article list is actually visible, and press Enter again.
 - Proceed to a real `run_daily_archive_loop.py` collection test only after login verification succeeds.
 - Manual login always uses a headed browser. If headless collection still returns `login_required`, retry one bounded collection in headed mode first:
   `.\.venv\Scripts\python.exe scripts\run_daily_archive_loop.py --headed --list-url "<멘토선생님 작성글 목록 URL>" --max-runs 1 --limit 1`
 - If Naver blocks headless collection but headed collection works, consider `--headed` for 24h operation and add it to the scheduler wrapper command.
+- Naver Cafe `f-e` pages can populate the list dynamically; the collector waits briefly for article-list markers before deciding that a page is blocked.
+- If `login_required` repeats, inspect the debug `url`, `title`, `reason`, and marker summary (`article_markers_found`, `login_markers_found`, `password_input_found`, `current_url_is_login`).
 - In the bot-only browser, open the mentor teacher article-list URL and confirm that the article list is visible.
 - The command does not collect articles and does not write to the DB, state, or reports.
 - If captcha or identity verification appears, the user must handle it manually.

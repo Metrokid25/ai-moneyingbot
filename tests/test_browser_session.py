@@ -128,6 +128,19 @@ def test_not_logged_in_error_without_article_list_marker_is_login_required():
     assert detail == "no article-list markers found and login marker visible"
 
 
+def test_login_detection_summary_exposes_safe_marker_booleans():
+    html = '<form><input id="id"><input type="password"></form>'
+
+    detection = browser.detect_login_state("https://cafe.naver.com/f-e/cafes/1/members/x", html)
+
+    assert detection.reason == "login_required"
+    summary = browser.format_login_detection_summary(detection)
+    assert "article_markers_found=false" in summary
+    assert "login_markers_found=true" in summary
+    assert "password_input_found=true" in summary
+    assert "current_url_is_login=false" in summary
+
+
 def test_existing_block_markers_still_detected():
     captcha_signal = next(signal for reason, signal in browser._BLOCK_CONTENT if reason == "captcha")
 

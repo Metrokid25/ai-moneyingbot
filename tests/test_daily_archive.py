@@ -621,6 +621,15 @@ def test_build_page_url_replaces_page_parameter():
     assert url == "https://example.test/list?clubid=1&page=2"
 
 
+def test_manual_login_verification_urls_include_collection_first_page():
+    login_url = "https://cafe.naver.com/f-e/cafes/29082876/members/example"
+
+    assert daily_archive.manual_login_verification_urls(login_url) == [
+        login_url,
+        login_url + "?page=1",
+    ]
+
+
 def test_collect_execute_articles_fetches_bounded_pages(monkeypatch):
     calls: list[int] = []
     closed = False
@@ -691,11 +700,157 @@ def test_collect_execute_articles_headed_passes_headless_false(monkeypatch):
     assert session_kwargs[0]["headless"] is False
 
 
+def test_fetch_list_rows_waits_until_article_marker_appears(monkeypatch):
+    monkeypatch.setattr(daily_archive, "LIST_PAGE_READY_DELAY_SECONDS", 0)
+    page_url = "https://cafe.naver.com/f-e/cafes/1/members/example?page=1"
+    htmls = [
+        '<html><script>window.e="NotLoggedInError"</script></html>',
+        """
+        <div class="article-board">
+          <table><tbody><tr>
+            <td class="td_article"><a href="/ArticleRead.nhn?articleid=123">ready</a></td>
+            <td class="td_date">2026.05.31</td>
+          </tr></tbody></table>
+        </div>
+        """,
+    ]
+
+    class FakePage:
+        url = page_url
+
+        def title(self):
+            return ""
+
+    class FakeSession:
+        page = FakePage()
+
+        def __init__(self):
+            self.html_calls = 0
+
+        def goto(self, url):
+            assert url == page_url
+            return url, "login_required"
+
+        def get_frame_html(self):
+            html = htmls[self.html_calls]
+            self.html_calls += 1
+            return html, None
+
+    session = FakeSession()
+
+    rows, err = daily_archive.fetch_list_rows(
+        session,
+        "https://cafe.naver.com/f-e/cafes/1/members/example",
+        1,
+    )
+
+    assert err is None
+    assert [row["article_id"] for row in rows] == [123]
+    assert session.html_calls == 2
+
+
+def test_fetch_list_rows_rechecks_ambiguous_empty_title_page(monkeypatch):
+    monkeypatch.setattr(daily_archive, "LIST_PAGE_READY_DELAY_SECONDS", 0)
+    page_url = "https://cafe.naver.com/f-e/cafes/1/members/example?page=1"
+    htmls = [
+        "<html></html>",
+        "<html><body>loading</body></html>",
+        """
+        <div class="article-board">
+          <table><tbody><tr>
+            <td class="td_article"><a href="/ArticleRead.nhn?articleid=456">ready</a></td>
+          </tr></tbody></table>
+        </div>
+        """,
+    ]
+
+    class FakePage:
+        url = page_url
+
+        def title(self):
+            return ""
+
+    class FakeSession:
+        page = FakePage()
+
+        def __init__(self):
+            self.html_calls = 0
+
+        def goto(self, url):
+            return url, None
+
+        def get_frame_html(self):
+            html = htmls[self.html_calls]
+            self.html_calls += 1
+            return html, None
+
+    session = FakeSession()
+
+    rows, err = daily_archive.fetch_list_rows(
+        session,
+        "https://cafe.naver.com/f-e/cafes/1/members/example",
+        1,
+    )
+
+    assert err is None
+    assert [row["article_id"] for row in rows] == [456]
+    assert session.html_calls == 3
+
+
+def test_fetch_list_rows_reports_safe_login_diagnostics(monkeypatch, capsys):
+    monkeypatch.setattr(daily_archive, "LIST_PAGE_READY_DELAY_SECONDS", 0)
+    page_url = "https://cafe.naver.com/f-e/cafes/1/members/example?page=1"
+
+    class FakePage:
+        url = page_url
+
+        def title(self):
+            return "Naver Login"
+
+    class FakeSession:
+        page = FakePage()
+
+        def __init__(self):
+            self.html_calls = 0
+
+        def goto(self, url):
+            return url, None
+
+        def get_frame_html(self):
+            self.html_calls += 1
+            return '<form><input id="id"><input type="password"></form>', None
+
+    session = FakeSession()
+
+    rows, err = daily_archive.fetch_list_rows(
+        session,
+        "https://cafe.naver.com/f-e/cafes/1/members/example",
+        1,
+    )
+
+    captured = capsys.readouterr()
+    assert rows is None
+    assert err == "login_required"
+    assert session.html_calls == 1
+    assert "article_markers_found=false" in captured.out
+    assert "login_markers_found=true" in captured.out
+    assert "password_input_found=true" in captured.out
+    assert "current_url_is_login=false" in captured.out
+    assert "cookie" not in captured.out.lower()
+    assert "session" not in captured.out.lower()
+    assert "<form" not in captured.out
+
+
 def test_login_mode_opens_profile_without_collecting_or_writing(tmp_path, monkeypatch, capsys):
     calls = []
     closed = False
     login_url = "https://cafe.naver.com/f-e/cafes/29082876/members/example"
-    goto_results = [("https://nid.naver.com/login", "login_required"), (login_url, None)]
+    page_url = login_url + "?page=1"
+    goto_results = [
+        ("https://nid.naver.com/login", "login_required"),
+        (login_url, None),
+        (page_url, None),
+    ]
 
     class FakeSession:
         def __init__(self, **kwargs):
@@ -742,6 +897,7 @@ def test_login_mode_opens_profile_without_collecting_or_writing(tmp_path, monkey
     assert "do not put this command in Windows Task Scheduler" in captured.out
     assert ("session", tmp_path / "profile", False) in calls
     assert calls.count(("goto", login_url)) == 2
+    assert calls.count(("goto", page_url)) == 1
     assert any(call[0] == "wait_for_enter" for call in calls)
     assert closed is True
     assert not (tmp_path / "state").exists()

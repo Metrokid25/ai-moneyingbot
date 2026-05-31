@@ -1,5 +1,6 @@
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import urlparse
@@ -60,6 +61,16 @@ _LOGIN_REQUIRED_MARKERS = (
 )
 
 
+@dataclass(frozen=True)
+class LoginDetection:
+    reason: Optional[str]
+    detail: Optional[str]
+    article_markers_found: bool
+    login_markers_found: bool
+    password_input_found: bool
+    current_url_is_login: bool
+
+
 def _has_article_list_marker(html: str) -> bool:
     lowered = html.lower()
     return any(marker in lowered for marker in _ARTICLE_LIST_MARKERS)
@@ -72,6 +83,83 @@ def _has_login_marker(html: str) -> bool:
     )
 
 
+def _is_login_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    return "nid.naver.com" in host or ("login" in path and ("naver.com" in host or not host))
+
+
+def detect_login_state(
+    url: str,
+    html: str,
+    *,
+    login_form_visible: bool = False,
+    password_input_visible: bool = False,
+) -> LoginDetection:
+    """Return login detection details without dumping page/session content."""
+    current_url_is_login = _is_login_url(url)
+    has_article_list = _has_article_list_marker(html)
+    has_login_marker = _has_login_marker(html) or login_form_visible
+    password_input_found = password_input_visible or "type=\"password\"" in html.lower() or "type='password'" in html.lower()
+
+    if "nid.naver.com" in urlparse(url).netloc.lower():
+        return LoginDetection(
+            "login_required",
+            "redirected to login url",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    if current_url_is_login:
+        return LoginDetection(
+            "login_required",
+            "redirected to login path",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    if login_form_visible or password_input_found:
+        return LoginDetection(
+            "login_required",
+            "login form detected",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    if has_article_list:
+        return LoginDetection(
+            None,
+            "article-list markers found",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    if has_login_marker:
+        return LoginDetection(
+            "login_required",
+            "no article-list markers found and login marker visible",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    return LoginDetection(None, None, has_article_list, has_login_marker, password_input_found, current_url_is_login)
+
+
+def format_login_detection_summary(detection: LoginDetection) -> str:
+    return (
+        f"article_markers_found={str(detection.article_markers_found).lower()}, "
+        f"login_markers_found={str(detection.login_markers_found).lower()}, "
+        f"password_input_found={str(detection.password_input_found).lower()}, "
+        f"current_url_is_login={str(detection.current_url_is_login).lower()}"
+    )
+
+
 def detect_login_required(
     url: str,
     html: str,
@@ -79,23 +167,12 @@ def detect_login_required(
     login_form_visible: bool = False,
 ) -> tuple[Optional[str], Optional[str]]:
     """Return login_required only when the page is actually a login/block page."""
-    parsed = urlparse(url)
-    host = parsed.netloc.lower()
-    path = parsed.path.lower()
-    if "nid.naver.com" in host:
-        return "login_required", "redirected to login url"
-    if "login" in path and ("naver.com" in host or not host):
-        return "login_required", "redirected to login path"
-    if login_form_visible:
-        return "login_required", "login form detected"
+    detection = detect_login_state(url, html, login_form_visible=login_form_visible)
+    return detection.reason, detection.detail
 
-    has_article_list = _has_article_list_marker(html)
-    has_login_marker = _has_login_marker(html)
-    if has_article_list:
-        return None, "article-list markers found"
-    if has_login_marker:
-        return "login_required", "no article-list markers found and login marker visible"
-    return None, None
+
+def has_article_list_marker(html: str) -> bool:
+    return _has_article_list_marker(html)
 
 
 def _legacy_is_login_page(page: Page) -> Optional[str]:
@@ -147,17 +224,29 @@ def _is_login_page(page: Page) -> Optional[str]:
         html = ""
 
     login_form_visible = False
+    password_input_visible = False
     try:
         if page.query_selector('input[id="id"], input[name="id"], input[type="password"]'):
             login_form_visible = True
+        if page.query_selector('input[type="password"]'):
+            password_input_visible = True
     except PlaywrightError:
         pass
 
-    reason, detail = detect_login_required(url, html, login_form_visible=login_form_visible)
-    if reason:
-        print(f"[DEBUG] login_required detected: {detail}; url={url}; title={title}")
-        return reason
-    if detail == "article-list markers found":
+    detection = detect_login_state(
+        url,
+        html,
+        login_form_visible=login_form_visible,
+        password_input_visible=password_input_visible,
+    )
+    if detection.reason:
+        print(
+            "[DEBUG] login_required detected: "
+            f"{detection.detail}; url={url}; title={title}; "
+            f"{format_login_detection_summary(detection)}"
+        )
+        return detection.reason
+    if detection.detail == "article-list markers found":
         print("[DEBUG] login_required skipped: article-list markers found")
     if 'id="__next_error__"' in html:
         print("[DEBUG] next_error detected: __next_error__ without login markers")
@@ -189,9 +278,9 @@ def wait_for_login(page: Page) -> None:
 
 
 def check_blocked(url: str, content: str) -> Optional[str]:
-    login_reason, _detail = detect_login_required(url, content)
-    if login_reason:
-        return login_reason
+    login_detection = detect_login_state(url, content)
+    if login_detection.reason:
+        return login_detection.reason
     for reason, signal in _BLOCK_URL:
         if signal in url:
             return reason
