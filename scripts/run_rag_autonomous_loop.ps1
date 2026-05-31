@@ -2,7 +2,7 @@ param(
   [int]$Cycles = 1,
   [switch]$CommitOnPass,
   [switch]$PushOnPass,
-  [string]$CommitMessage = "RAG pipeline pass-gated update"
+  [string]$CommitMessage = ""
 )
 
 Set-StrictMode -Version Latest
@@ -59,7 +59,7 @@ for ($cycle = 1; $cycle -le $Cycles; $cycle += 1) {
   $pipelineArgs = @{}
   if ($CommitOnPass) { $pipelineArgs.CommitOnPass = $true }
   if ($PushOnPass) { $pipelineArgs.PushOnPass = $true }
-  if ($CommitOnPass -and -not [string]::IsNullOrWhiteSpace($CommitMessage)) {
+  if ($CommitOnPass -and $PSBoundParameters.ContainsKey("CommitMessage") -and -not [string]::IsNullOrWhiteSpace($CommitMessage)) {
     $pipelineArgs.CommitMessage = $CommitMessage
   }
 

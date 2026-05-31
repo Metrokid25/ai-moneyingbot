@@ -26,6 +26,8 @@ def test_autonomous_loop_forwards_publish_options_only_when_requested():
     assert "$pipelineArgs = @{}" in script
     assert 'if ($CommitOnPass) { $pipelineArgs.CommitOnPass = $true }' in script
     assert 'if ($PushOnPass) { $pipelineArgs.PushOnPass = $true }' in script
+    assert '[string]$CommitMessage = ""' in script
+    assert '$PSBoundParameters.ContainsKey("CommitMessage")' in script
     assert '$pipelineArgs.CommitMessage = $CommitMessage' in script
     assert "& $PipelineScript @pipelineArgs *>&1" in script
     assert "git add ." not in script

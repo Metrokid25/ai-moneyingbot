@@ -47,7 +47,7 @@ def test_pipeline_runs_no_push_then_review_with_publish_options_defaulting_off()
 
     assert "[switch]$CommitOnPass" in script
     assert "[switch]$PushOnPass" in script
-    assert '[string]$CommitMessage = "RAG pipeline pass-gated update"' in script
+    assert '[string]$CommitMessage = ""' in script
     assert "& $OnceScript -NoPush" in script
     assert "& $ReviewScript" in script
     assert "Test-NoActionableRagTask" in script
@@ -61,15 +61,15 @@ def test_pipeline_commits_and_pushes_only_through_pass_gated_options():
 
     assert "function Invoke-PassGatedPublish" in script
     assert 'if ($reviewResult -eq "PASS")' in script
-    assert "Invoke-PassGatedPublish -Message $CommitMessage -Commit:$CommitOnPass -Push:$PushOnPass" in script
-    assert 'Invoke-GitPublishCommand -FailureContext "git commit" -Arguments @("commit", "-m", $Message)' in script
+    assert "Invoke-PassGatedPublish -Message $CommitMessage -PlannerResult $plannerResult -Commit:$CommitOnPass -Push:$PushOnPass" in script
+    assert 'Invoke-GitPublishCommand -FailureContext "git commit" -Arguments @("commit", "-m", $resolvedMessage)' in script
     assert 'if (-not $Push)' in script
     assert 'Invoke-GitPublishCommand -FailureContext "git push" -Arguments @("push")' in script
     assert "PushOnPass not requested; push skipped." in script
     assert "Pipeline needs human review. Waiting for user approval before any commit or push." in script
     assert "Pipeline stopped after review failure. Inspect the review report before continuing." in script
     assert "Pipeline found no actionable RAG task. No commit or push will run." in script
-    assert '$publishResult = Invoke-PassGatedPublish -Message $CommitMessage -Commit:$CommitOnPass -Push:$PushOnPass' in script
+    assert '$publishResult = Invoke-PassGatedPublish -Message $CommitMessage -PlannerResult $plannerResult -Commit:$CommitOnPass -Push:$PushOnPass' in script
 
 
 def test_pipeline_stages_only_git_status_changed_paths_without_add_dot():
@@ -162,6 +162,22 @@ def test_pipeline_summary_is_written_for_all_review_outcomes_and_run_failure():
     assert '$pipelineResult = "NEEDS_HUMAN_REVIEW"' in script
     assert '$pipelineResult = "FAIL"' in script
     assert "Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult -PlannerResult $plannerResult" in script
+
+
+def test_pipeline_generates_task_specific_commit_messages_without_archive_owned_task():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Resolve-PassGatedCommitMessage" in script
+    assert "function Get-RagTaskNameFromPath" in script
+    assert 'if (-not [string]::IsNullOrWhiteSpace($ExplicitMessage))' in script
+    assert 'return $ExplicitMessage' in script
+    assert 'return "Plan next RAG task: $plannedTask"' in script
+    assert 'return "Complete RAG task: $completedTask"' in script
+    assert 'return "RAG pipeline pass-gated update"' in script
+    assert '$fileName -eq "001-real-daily-archive-wiring.md"' in script
+    assert '$fileName -notmatch "^\\d+-rag-.+\\.md$"' in script
+    assert '$p.StartsWith("agent_tasks/done/")' in script
+    assert "Pass-gated commit message: $resolvedMessage" in script
 
 
 def test_pipeline_auto_plans_when_no_actionable_rag_task_exists():

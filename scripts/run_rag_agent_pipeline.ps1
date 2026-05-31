@@ -1,7 +1,7 @@
 param(
   [switch]$CommitOnPass,
   [switch]$PushOnPass,
-  [string]$CommitMessage = "RAG pipeline pass-gated update"
+  [string]$CommitMessage = ""
 )
 
 Set-StrictMode -Version Latest
@@ -98,6 +98,51 @@ function Test-ForbiddenPublishPath {
   if ($forbiddenExact -contains $p) { return $true }
   if ($p.StartsWith("data/")) { return $true }
   return $false
+}
+
+function Get-RagTaskNameFromPath {
+  param([string]$Path)
+
+  $p = $Path.Replace("\", "/")
+  $fileName = Split-Path -Leaf $p
+  if ($fileName -eq "001-real-daily-archive-wiring.md") {
+    return ""
+  }
+  if ($fileName -notmatch "^\d+-rag-.+\.md$") {
+    return ""
+  }
+  return [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+}
+
+function Resolve-PassGatedCommitMessage {
+  param(
+    [string]$ExplicitMessage,
+    [hashtable]$PlannerResult,
+    [string[]]$ChangedPaths
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($ExplicitMessage)) {
+    return $ExplicitMessage
+  }
+
+  if ($PlannerResult.Result -eq "CREATED_TASK") {
+    $plannedTask = Get-RagTaskNameFromPath -Path $PlannerResult.CreatedTaskPath
+    if (-not [string]::IsNullOrWhiteSpace($plannedTask)) {
+      return "Plan next RAG task: $plannedTask"
+    }
+  }
+
+  foreach ($path in $ChangedPaths) {
+    $p = $path.Replace("\", "/")
+    if ($p.StartsWith("agent_tasks/done/")) {
+      $completedTask = Get-RagTaskNameFromPath -Path $p
+      if (-not [string]::IsNullOrWhiteSpace($completedTask)) {
+        return "Complete RAG task: $completedTask"
+      }
+    }
+  }
+
+  return "RAG pipeline pass-gated update"
 }
 
 function Invoke-GitPublishCommand {
@@ -207,6 +252,7 @@ function Invoke-RagPlanner {
 function Invoke-PassGatedPublish {
   param(
     [string]$Message,
+    [hashtable]$PlannerResult,
     [switch]$Commit,
     [switch]$Push
   )
@@ -238,6 +284,9 @@ function Invoke-PassGatedPublish {
     return $result
   }
 
+  $resolvedMessage = Resolve-PassGatedCommitMessage -ExplicitMessage $Message -PlannerResult $PlannerResult -ChangedPaths $changedPaths
+  Write-Host "Pass-gated commit message: $resolvedMessage"
+
   Write-Host "Publish gate passed. Staging git status changed files only."
   foreach ($path in $changedPaths) {
     $addExit = Invoke-GitPublishCommand -FailureContext "git add for $path" -Arguments @("add", "--", $path)
@@ -248,7 +297,7 @@ function Invoke-PassGatedPublish {
   }
 
   $result.CommitAttempted = $true
-  $commitExit = Invoke-GitPublishCommand -FailureContext "git commit" -Arguments @("commit", "-m", $Message)
+  $commitExit = Invoke-GitPublishCommand -FailureContext "git commit" -Arguments @("commit", "-m", $resolvedMessage)
   if ($commitExit -ne 0) {
     $result.ExitCode = $commitExit
     return $result
@@ -371,7 +420,7 @@ if (Test-NoActionableRagTask) {
   } elseif ($plannerResult.Result -eq "CREATED_TASK") {
     Write-Host "Planner created a task for a later pipeline run: $($plannerResult.CreatedTaskPath)"
     $pipelineResult = "PLANNER_CREATED_TASK"
-    $publishResult = Invoke-PassGatedPublish -Message $CommitMessage -Commit:$CommitOnPass -Push:$PushOnPass
+    $publishResult = Invoke-PassGatedPublish -Message $CommitMessage -PlannerResult $plannerResult -Commit:$CommitOnPass -Push:$PushOnPass
     $pipelineExit = $publishResult.ExitCode
     if ($pipelineExit -ne 0) {
       $pipelineResult = "FAIL"
@@ -418,7 +467,7 @@ if ($reviewExit -ne 0 -or $reviewResult -eq "FAIL") {
 }
 
 if ($reviewResult -eq "PASS") {
-  $publishResult = Invoke-PassGatedPublish -Message $CommitMessage -Commit:$CommitOnPass -Push:$PushOnPass
+  $publishResult = Invoke-PassGatedPublish -Message $CommitMessage -PlannerResult $plannerResult -Commit:$CommitOnPass -Push:$PushOnPass
   if ($publishResult.ExitCode -eq 0) {
     $pipelineResult = "PASS"
   } else {
