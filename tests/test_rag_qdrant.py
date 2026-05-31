@@ -34,6 +34,8 @@ def _metadata(chunk_id: str) -> dict:
         "body_len": 4,
         "author": "author",
         "source": "naver_cafe_119investment_goodmorning",
+        "source_id": article_id,
+        "source_path": f"https://example.test/articles/{article_id}",
         "url": f"https://example.test/articles/{article_id}",
         "source_url": f"https://example.test/articles/{article_id}",
         "content_hash": f"hash-{article_id}",

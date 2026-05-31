@@ -23,8 +23,20 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("pytest", "tests/test_rag_answering.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
     (
+        f"pytest tests/test_rag_answer_context.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_answer_context.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
         f"pytest tests/test_rag_web.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_web.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_ingest_archive_export.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_ingest_archive_export.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_rag_chunking.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_chunking.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
     (
         f"pytest tests/test_rag_fixture_jsonl_smoke.py --basetemp={PYTEST_BASETEMP}",
@@ -39,8 +51,24 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("pytest", "tests/test_rag_fixture_retrieval_eval.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
     (
+        f"pytest tests/test_retrieval_eval.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_retrieval_eval.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_rag_eval_questions.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_eval_questions.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_rag_retrieval_eval_set.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_retrieval_eval_set.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
         f"pytest tests/test_rag_golden_questions.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_golden_questions.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_rag_retrieval.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_retrieval.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
     (
         f"pytest tests/test_rag_retrieval_regression.py --basetemp={PYTEST_BASETEMP}",
@@ -63,6 +91,10 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("pytest", "tests/test_rag_answer_grounding_eval.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
     (
+        f"pytest tests/test_rag_qdrant.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_qdrant.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
         f"pytest tests/test_rag_agent_next_task.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_agent_next_task.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
@@ -81,6 +113,10 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         f"pytest tests/test_rag_planner.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_planner.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_rag_focused_tests.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_focused_tests.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
 )
 
