@@ -36,6 +36,7 @@ def make_config(tmp_path, **overrides):
         "browser_profile_dir": tmp_path / "state" / "browser_profile",
         "headed": False,
         "market_schedule": False,
+        "interactive_login": False,
         "argv_summary": "test argv",
     }
     values.update(overrides)
@@ -127,6 +128,15 @@ def test_proven_archive_cycle_preserves_existing_script_browser_behavior(tmp_pat
 
     assert "--headed" not in flattened
     assert "--browser-profile-dir" not in flattened
+
+
+def test_interactive_login_is_passed_to_index_tail_only(tmp_path):
+    config = make_config(tmp_path, interactive_login=True)
+
+    commands = archive_loop.build_archive_cycle_commands(config)
+
+    assert commands[0][-1] == "--interactive-login"
+    assert "--interactive-login" not in commands[1]
 
 
 def test_default_max_runs_is_calculated_from_duration_and_interval():
@@ -626,6 +636,7 @@ def test_help_does_not_require_lock(monkeypatch, capsys):
     assert "--lock-stale-minutes" in captured.out
     assert "--headed" in captured.out
     assert "--market-schedule" in captured.out
+    assert "--interactive-login" in captured.out
     assert "index_tail.py" in captured.out
     assert "batch_recollect.py" in captured.out
 

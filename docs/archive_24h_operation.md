@@ -96,6 +96,22 @@ When `--market-schedule` is set, the time-window interval overrides `--interval-
 Status records `schedule_mode`, `next_interval_seconds`, `last_schedule_label`, and whether the last schedule decision was active.
 During the stopped window, no collection subprocess is started; the loop writes a skip entry to `logs/archive_loop/` and waits for the next active window.
 
+## Interactive Login Collection Test
+
+Use `--interactive-login` for the old successful manual flow: the browser stays open, the user logs in directly, then PowerShell Enter continues collection in the same browser session.
+This is not automatic login and does not bypass CAPTCHA or identity verification.
+
+Start with one bounded run:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_daily_archive_loop.py --interactive-login --list-url "<멘토선생님 작성글 목록 URL>" --max-runs 1
+```
+
+If the browser shows a login page, complete Naver login manually.
+When the mentor teacher article list is visible, press Enter in PowerShell.
+`run_daily_archive_loop.py` passes `--interactive-login` only to `index_tail.py`; after `index_tail.py` succeeds, the existing `batch_recollect.py` body collection step runs as before.
+For unattended 24h operation, do not rely on interactive login; if the session expires, let the loop stop and rerun a bounded interactive login recovery manually.
+
 ## 상태 확인
 
 실제 수집을 실행하지 않고 현재 상태만 확인한다.

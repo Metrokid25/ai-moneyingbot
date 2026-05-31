@@ -80,6 +80,7 @@ class LoopConfig:
     browser_profile_dir: Path = DEFAULT_BROWSER_PROFILE_DIR
     headed: bool = False
     market_schedule: bool = False
+    interactive_login: bool = False
     argv_summary: str = ""
 
 
@@ -187,12 +188,15 @@ def build_archive_cycle_commands(config: LoopConfig) -> list[list[str]]:
 
 
 def build_index_tail_command(config: LoopConfig) -> list[str]:
-    return [
+    command = [
         config.python,
         str(PROJECT_ROOT / "scripts" / "index_tail.py"),
         config.list_url,
         "--collect-after-snapshot",
     ]
+    if config.interactive_login:
+        command.append("--interactive-login")
+    return command
 
 
 def build_batch_recollect_command(config: LoopConfig) -> list[str]:
@@ -881,6 +885,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--browser-profile-dir", type=Path, default=DEFAULT_BROWSER_PROFILE_DIR)
     parser.add_argument("--headed", action="store_true", help="retained for compatibility; proven scripts keep their existing browser behavior")
     parser.add_argument(
+        "--interactive-login",
+        action="store_true",
+        help="pass --interactive-login to index_tail.py so manual browser login can continue in the same session",
+    )
+    parser.add_argument(
         "--market-schedule",
         action="store_true",
         help="use local time windows: 23:00-06:00 stop, 06:00-07:00 30m, 07:00-08:00 10m, 08:00-16:00 5m, 16:00-18:00 10m, 18:00-23:00 30m",
@@ -936,6 +945,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         browser_profile_dir=args.browser_profile_dir,
         headed=args.headed,
         market_schedule=args.market_schedule,
+        interactive_login=args.interactive_login,
         argv_summary=" ".join(argv if argv is not None else sys.argv[1:]),
     )
     return run_loop(config)

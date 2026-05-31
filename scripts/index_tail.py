@@ -35,9 +35,46 @@ _SNAPSHOT_DIR = _PROJECT_ROOT / "data"
 
 SCAN_FORWARD_MAX = 15   # estimate에서 최대 전진 폭
 SCAN_BACKWARD_MAX = 50  # estimate에서 최대 후퇴 폭
+INTERACTIVE_LOGIN_RETRIES = 3
 
 
 # ── 스냅샷 유틸 ───────────────────────────────────────────────────────────────
+
+def _is_login_required_error(err) -> bool:
+    if err is None:
+        return False
+    text = str(err).lower()
+    return "login_required" in text or "login" in text or "로그인" in str(err)
+
+
+def _wait_for_interactive_login(input_func=input) -> None:
+    print("[index_tail] login_required detected.")
+    print("[index_tail] 브라우저에서 사용자가 직접 네이버 로그인해야 합니다.")
+    print("[index_tail] CAPTCHA/본인인증이 뜨면 사용자가 직접 처리해야 합니다.")
+    print("[index_tail] 멘토선생님 작성글 목록이 보이면 PowerShell에서 Enter를 누르세요.")
+    input_func("[index_tail] Enter를 누르면 같은 브라우저 세션으로 다시 확인합니다...")
+
+
+def _fetch_rows_with_interactive_login(
+    session: "BrowserSession",
+    list_url: str,
+    page_num: int,
+    *,
+    interactive_login: bool = False,
+    input_func=input,
+    max_retries: int = INTERACTIVE_LOGIN_RETRIES,
+):
+    attempts = 0
+    while True:
+        rows, err = _fetch_rows(session, list_url, page_num)
+        if not interactive_login or not _is_login_required_error(err):
+            return rows, err
+        if attempts >= max_retries:
+            return rows, err
+        attempts += 1
+        _wait_for_interactive_login(input_func=input_func)
+        print(f"[index_tail] 같은 브라우저 세션으로 page {page_num} 재확인 ({attempts}/{max_retries})")
+
 
 def _get_db_max_id() -> Optional[int]:
     conn = get_conn()
@@ -48,9 +85,21 @@ def _get_db_max_id() -> Optional[int]:
         conn.close()
 
 
-def _create_snapshot(session: "BrowserSession", list_url: str) -> Optional[dict]:
+def _create_snapshot(
+    session: "BrowserSession",
+    list_url: str,
+    *,
+    interactive_login: bool = False,
+    input_func=input,
+) -> Optional[dict]:
     """페이지 1 fetch → 최고 article_id 스냅샷 생성 후 data/snapshot_<ts>.json 저장."""
-    rows, err = _fetch_rows(session, list_url, 1)
+    rows, err = _fetch_rows_with_interactive_login(
+        session,
+        list_url,
+        1,
+        interactive_login=interactive_login,
+        input_func=input_func,
+    )
     if err or not rows:
         print(f"[snapshot] 페이지 1 fetch 실패: {err}")
         return None
@@ -83,7 +132,14 @@ def _load_latest_snapshot() -> Optional[dict]:
     return data
 
 
-def _collect_after_snapshot(session: "BrowserSession", list_url: str, min_id: int) -> int:
+def _collect_after_snapshot(
+    session: "BrowserSession",
+    list_url: str,
+    min_id: int,
+    *,
+    interactive_login: bool = False,
+    input_func=input,
+) -> int:
     """min_id 이상인 신규 글만 page 1부터 순방향 수집.
 
     article_id < min_id 글을 처음 만나는 순간 수집 종료.
@@ -94,22 +150,17 @@ def _collect_after_snapshot(session: "BrowserSession", list_url: str, min_id: in
         page_url = build_page_url(list_url, page)
         print(f"\n[after-snapshot][PAGE {page}] {page_url}")
 
-        final_url, err = session.goto(page_url)
+        rows, err = _fetch_rows_with_interactive_login(
+            session,
+            list_url,
+            page,
+            interactive_login=interactive_login,
+            input_func=input_func,
+        )
         if err:
             print(f"  [STOP] 차단 감지: {err}")
             break
 
-        html, frame_err = session.get_frame_html()
-        if frame_err or html is None:
-            print(f"  [STOP] 프레임 로드 실패: {frame_err}")
-            break
-
-        blocked = check_blocked(final_url, html or "")
-        if blocked:
-            print(f"  [STOP] 차단 감지 (iframe): {blocked}")
-            break
-
-        rows = parse_article_list(html, final_url)
         if not rows:
             print(f"  [STOP] 빈 페이지 또는 파싱 실패")
             break
@@ -169,11 +220,24 @@ def _fetch_rows(session: BrowserSession, list_url: str, page_num: int):
     return rows, None
 
 
-def find_tail(session: BrowserSession, list_url: str, estimate: int):
+def find_tail(
+    session: BrowserSession,
+    list_url: str,
+    estimate: int,
+    *,
+    interactive_login: bool = False,
+    input_func=input,
+):
     """끝페이지 번호 반환 (None=감지 실패)."""
     print(f"\n[tail_scan] estimate={estimate} 에서 탐색 시작...")
 
-    rows, err = _fetch_rows(session, list_url, estimate)
+    rows, err = _fetch_rows_with_interactive_login(
+        session,
+        list_url,
+        estimate,
+        interactive_login=interactive_login,
+        input_func=input_func,
+    )
     if err:
         print(f"[tail_scan] estimate 페이지 에러: {err}")
         return None
@@ -186,7 +250,13 @@ def find_tail(session: BrowserSession, list_url: str, estimate: int):
             if page < 1:
                 break
             _sleep()
-            rows, err = _fetch_rows(session, list_url, page)
+            rows, err = _fetch_rows_with_interactive_login(
+                session,
+                list_url,
+                page,
+                interactive_login=interactive_login,
+                input_func=input_func,
+            )
             if err:
                 print(f"[tail_scan] page {page} 에러: {err}, 계속 후퇴...")
                 continue
@@ -203,7 +273,13 @@ def find_tail(session: BrowserSession, list_url: str, estimate: int):
     for fwd in range(1, SCAN_FORWARD_MAX + 1):
         page = estimate + fwd
         _sleep()
-        rows, err = _fetch_rows(session, list_url, page)
+        rows, err = _fetch_rows_with_interactive_login(
+            session,
+            list_url,
+            page,
+            interactive_login=interactive_login,
+            input_func=input_func,
+        )
         if err:
             print(f"[tail_scan] page {page} 에러: {err}, 여기서 중단")
             break
@@ -222,6 +298,9 @@ def index_pages(
     list_url: str,
     pages: list[int],
     snapshot_max_id: Optional[int] = None,
+    *,
+    interactive_login: bool = False,
+    input_func=input,
 ) -> int:
     """pages 목록을 순서대로 인덱싱. 저장 건수 반환.
 
@@ -232,22 +311,13 @@ def index_pages(
         page_url = build_page_url(list_url, page_num)
         print(f"\n[PAGE {page_num}] {page_url}")
 
-        final_url, err = session.goto(page_url)
-        if err:
-            print(f"  [STOP] 차단 감지: {err}")
-            break
-
-        html, frame_err = session.get_frame_html()
-        if frame_err or html is None:
-            print(f"  [STOP] 프레임 로드 실패: {frame_err}")
-            break
-
-        blocked = check_blocked(final_url, html or "")
-        if blocked:
-            print(f"  [STOP] 차단 감지 (iframe): {blocked}")
-            break
-
-        rows = parse_article_list(html, final_url)
+        rows, err = _fetch_rows_with_interactive_login(
+            session,
+            list_url,
+            page_num,
+            interactive_login=interactive_login,
+            input_func=input_func,
+        )
         if not rows:
             print(f"  [WARN] 글 행 파싱 실패 또는 빈 페이지, 스킵")
             _sleep()
@@ -298,6 +368,11 @@ def main() -> int:
         action="store_true",
         help="최근 스냅샷 이후 신규 글(article_id > snapshot_max_id)만 수집",
     )
+    ap.add_argument(
+        "--interactive-login",
+        action="store_true",
+        help="login_required 발생 시 브라우저를 유지하고 사용자의 수동 로그인/Enter 후 같은 세션으로 재시도",
+    )
     args = ap.parse_args()
 
     print(f"[index_tail] url     : {args.url}")
@@ -321,7 +396,12 @@ def main() -> int:
             session.goto(trigger_url)
             wait_for_login(session.page)
 
-            total = _collect_after_snapshot(session, args.url, min_id)
+            total = _collect_after_snapshot(
+                session,
+                args.url,
+                min_id,
+                interactive_login=args.interactive_login,
+            )
             print(f"\n[index_tail] 완료. 총 {total}개 저장")
             return 0
 
@@ -336,13 +416,22 @@ def main() -> int:
         wait_for_login(session.page)
 
         # 스냅샷 생성 (페이지 1 fetch → 최고 article_id 기록)
-        snapshot = _create_snapshot(session, args.url)
+        snapshot = _create_snapshot(
+            session,
+            args.url,
+            interactive_login=args.interactive_login,
+        )
         snapshot_max_id = snapshot["snapshot_max_id"] if snapshot else None
         if snapshot_max_id is None:
             print("[index_tail] WARN: 스냅샷 생성 실패, snapshot 필터 없이 진행")
 
         # 끝페이지 탐색
-        tail = find_tail(session, args.url, args.estimate)
+        tail = find_tail(
+            session,
+            args.url,
+            args.estimate,
+            interactive_login=args.interactive_login,
+        )
         if tail is None:
             print("[index_tail] 끝페이지 탐색 실패, 종료")
             return 1
@@ -352,7 +441,13 @@ def main() -> int:
         pages = [p for p in range(tail, tail - args.tail, -1) if p >= 1]
         print(f"[index_tail] 인덱싱 대상: {pages}")
 
-        total = index_pages(session, args.url, pages, snapshot_max_id=snapshot_max_id)
+        total = index_pages(
+            session,
+            args.url,
+            pages,
+            snapshot_max_id=snapshot_max_id,
+            interactive_login=args.interactive_login,
+        )
         print(f"\n[index_tail] 완료. 총 {total}개 저장")
         return 0
 
