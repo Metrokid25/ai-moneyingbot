@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Sequence
 
 from dotenv import load_dotenv
-from rag_answer_context import build_context_items
+from rag_answer_context import build_context_items, source_identity_key
 from rag_retrieval import embed_query, open_qdrant_client, search_qdrant
 
 
@@ -73,7 +73,17 @@ def build_source(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_sources(items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [build_source(item) for item in items]
+    sources: list[dict[str, Any]] = []
+    seen_sources: set[tuple[str, str]] = set()
+    for item in items:
+        source = build_source(item)
+        identity = source_identity_key(source)
+        if identity is not None and identity in seen_sources:
+            continue
+        if identity is not None:
+            seen_sources.add(identity)
+        sources.append(source)
+    return sources
 
 
 def _normalized_text(value: Any) -> str:

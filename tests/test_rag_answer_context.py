@@ -118,6 +118,47 @@ def test_build_context_items_assigns_ranks():
     assert [item["rank"] for item in items] == [1, 2]
 
 
+def test_build_context_items_deduplicates_retrieved_chunks_for_same_source_article():
+    points = [
+        SimpleNamespace(
+            score=0.95,
+            payload={
+                "chunk_id": "1001:0",
+                "article_id": 1001,
+                "title": "Rates",
+                "url": "https://example.test/articles/1001",
+                "text": "first chunk",
+            },
+        ),
+        SimpleNamespace(
+            score=0.93,
+            payload={
+                "chunk_id": "1001:1",
+                "article_id": 1001,
+                "title": "Rates",
+                "url": "https://example.test/articles/1001",
+                "text": "duplicate article chunk",
+            },
+        ),
+        SimpleNamespace(
+            score=0.91,
+            payload={
+                "chunk_id": "1002:0",
+                "article_id": 1002,
+                "title": "FX",
+                "url": "https://example.test/articles/1002",
+                "text": "second article",
+            },
+        ),
+    ]
+
+    items = build_context_items(points)
+
+    assert [item["chunk_id"] for item in items] == ["1001:0", "1002:0"]
+    assert [item["rank"] for item in items] == [1, 2]
+    assert "duplicate article chunk" not in [item["text"] for item in items]
+
+
 def test_build_context_items_applies_compact_text_token_budget_across_candidates():
     points = [
         SimpleNamespace(score=0.9, payload={"chunk_id": "1:0", "text": "alpha beta gamma delta"}),

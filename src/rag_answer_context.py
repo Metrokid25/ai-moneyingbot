@@ -50,6 +50,14 @@ def build_context_item(point: Any, rank: int, max_chars: int = DEFAULT_SNIPPET_C
     }
 
 
+def source_identity_key(item: dict[str, Any]) -> tuple[str, str] | None:
+    for key in ("source_id", "article_id", "url", "source_url", "content_hash"):
+        value = item.get(key)
+        if value is not None and str(value).strip():
+            return key, " ".join(str(value).casefold().split())
+    return None
+
+
 def build_context_items(
     points: Sequence[Any],
     max_chars: int = DEFAULT_SNIPPET_CHARS,
@@ -59,11 +67,17 @@ def build_context_items(
         raise ValueError("max_text_tokens must be non-negative")
 
     items: list[dict[str, Any]] = []
+    seen_sources: set[tuple[str, str]] = set()
     remaining_tokens = max_text_tokens
     for point in points:
         if remaining_tokens == 0:
             break
         item = build_context_item(point, rank=len(items) + 1, max_chars=max_chars)
+        identity = source_identity_key(item)
+        if identity is not None and identity in seen_sources:
+            continue
+        if identity is not None:
+            seen_sources.add(identity)
         if remaining_tokens is not None:
             item["text"] = truncate_text_tokens(item["text"], max_tokens=remaining_tokens)
             item["empty_text"] = not bool(item["text"].strip())

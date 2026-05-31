@@ -94,6 +94,46 @@ def test_sources_include_required_fields():
     ]
 
 
+def test_sources_deduplicate_multiple_chunks_for_same_source_article():
+    context_items = [
+        {
+            "rank": 1,
+            "score": 0.95,
+            "chunk_id": "1001:0",
+            "article_id": 1001,
+            "content_hash": "hash-1001",
+            "url": "https://example.test/articles/1001",
+            "source_url": "https://example.test/articles/1001",
+            "title": "Rates",
+        },
+        {
+            "rank": 2,
+            "score": 0.93,
+            "chunk_id": "1001:1",
+            "article_id": 1001,
+            "content_hash": "hash-1001",
+            "url": "https://example.test/articles/1001",
+            "source_url": "https://example.test/articles/1001",
+            "title": "Rates",
+        },
+        {
+            "rank": 3,
+            "score": 0.91,
+            "chunk_id": "1002:0",
+            "article_id": 1002,
+            "content_hash": "hash-1002",
+            "url": "https://example.test/articles/1002",
+            "source_url": "https://example.test/articles/1002",
+            "title": "FX",
+        },
+    ]
+
+    sources = build_sources(context_items)
+
+    assert [source["chunk_id"] for source in sources] == ["1001:0", "1002:0"]
+    assert [source["article_id"] for source in sources] == [1001, 1002]
+
+
 def test_answer_formats_include_sources():
     record = build_answer_record(
         query="question",
