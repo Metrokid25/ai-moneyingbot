@@ -2,6 +2,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional, Tuple
+from urllib.parse import urlparse
 from playwright.sync_api import (
     sync_playwright, Page, Browser, BrowserContext,
     Error as PlaywrightError,
@@ -25,7 +26,79 @@ _BLOCK_CONTENT: list[Tuple[str, str]] = [
 ]
 
 
-def _is_login_page(page: Page) -> Optional[str]:
+_ARTICLE_LIST_MARKERS = (
+    "article-board",
+    "board-box",
+    "article_list",
+    "board_list_w",
+    "board-list__item",
+    "td_article",
+    "articleid=",
+    "articleid%3d",
+)
+
+_LOGIN_FORM_MARKERS = (
+    'id="id"',
+    "id='id'",
+    'name="id"',
+    "name='id'",
+    'id="pw"',
+    "id='pw'",
+    'name="pw"',
+    "name='pw'",
+    'type="password"',
+    "type='password'",
+    "nidlogin.login",
+)
+
+_LOGIN_REQUIRED_MARKERS = (
+    "notloggedinerror",
+    "login_required",
+    "로그인이 필요",
+    "로그인 후 이용",
+    "먼저 로그인",
+)
+
+
+def _has_article_list_marker(html: str) -> bool:
+    lowered = html.lower()
+    return any(marker in lowered for marker in _ARTICLE_LIST_MARKERS)
+
+
+def _has_login_marker(html: str) -> bool:
+    lowered = html.lower()
+    return any(marker in lowered for marker in _LOGIN_FORM_MARKERS) or any(
+        marker.lower() in lowered for marker in _LOGIN_REQUIRED_MARKERS
+    )
+
+
+def detect_login_required(
+    url: str,
+    html: str,
+    *,
+    login_form_visible: bool = False,
+) -> tuple[Optional[str], Optional[str]]:
+    """Return login_required only when the page is actually a login/block page."""
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    if "nid.naver.com" in host:
+        return "login_required", "redirected to login url"
+    if "login" in path and ("naver.com" in host or not host):
+        return "login_required", "redirected to login path"
+    if login_form_visible:
+        return "login_required", "login form detected"
+
+    has_article_list = _has_article_list_marker(html)
+    has_login_marker = _has_login_marker(html)
+    if has_article_list:
+        return None, "article-list markers found"
+    if has_login_marker:
+        return "login_required", "no article-list markers found and login marker visible"
+    return None, None
+
+
+def _legacy_is_login_page(page: Page) -> Optional[str]:
     """현재 페이지 상태 감지. 'login_required', 'next_error', None 중 하나 반환."""
     url = page.url
     if "nid.naver.com" in url:
@@ -40,8 +113,8 @@ def _is_login_page(page: Page) -> Optional[str]:
     except PlaywrightError:
         html = ""
 
-    if "NotLoggedInError" in html:
-        print("[DEBUG] 로그인 페이지 감지: NotLoggedInError 문자열 존재")
+    if False and "legacy_disabled_not_logged_in_error" in html:
+        print("[DEBUG] legacy login detector disabled")
         return "login_required"
     if "카페 멤버이시면 먼저 로그인을 해야 합니다" in html:
         print("[DEBUG] 로그인 페이지 감지: 로그인 안내 문자열 존재")
@@ -58,6 +131,33 @@ def _is_login_page(page: Page) -> Optional[str]:
     except PlaywrightError:
         pass
 
+    return None
+
+
+def _is_login_page(page: Page) -> Optional[str]:
+    """Detect login pages without treating embedded error strings as decisive."""
+    url = page.url
+    try:
+        html = page.content()
+    except PlaywrightError:
+        html = ""
+
+    login_form_visible = False
+    try:
+        if page.query_selector('input[id="id"], input[name="id"], input[type="password"]'):
+            login_form_visible = True
+    except PlaywrightError:
+        pass
+
+    reason, detail = detect_login_required(url, html, login_form_visible=login_form_visible)
+    if reason:
+        print(f"[DEBUG] login_required detected: {detail}")
+        return reason
+    if detail == "article-list markers found":
+        print("[DEBUG] login_required skipped: article-list markers found")
+    if 'id="__next_error__"' in html:
+        print("[DEBUG] next_error detected: __next_error__ without login markers")
+        return "next_error"
     return None
 
 
@@ -85,6 +185,9 @@ def wait_for_login(page: Page) -> None:
 
 
 def check_blocked(url: str, content: str) -> Optional[str]:
+    login_reason, _detail = detect_login_required(url, content)
+    if login_reason:
+        return login_reason
     for reason, signal in _BLOCK_URL:
         if signal in url:
             return reason

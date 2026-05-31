@@ -86,3 +86,49 @@ def test_browser_session_accepts_headless_override(tmp_path, monkeypatch):
             },
         )
     ]
+
+
+def test_not_logged_in_error_with_article_list_marker_is_not_login_required():
+    html = """
+    <html>
+      <script>window.__ERROR__ = "NotLoggedInError";</script>
+      <div class="article-board">
+        <tbody><tr><td class="td_article"><a href="/ArticleRead.nhn?articleid=123">title</a></td></tr></tbody>
+      </div>
+    </html>
+    """
+
+    reason, detail = browser.detect_login_required("https://cafe.naver.com/f-e/cafes/1/members/x", html)
+
+    assert reason is None
+    assert detail == "article-list markers found"
+    assert browser.check_blocked("https://cafe.naver.com/f-e/cafes/1/members/x", html) is None
+
+
+def test_login_form_marker_is_login_required():
+    html = """
+    <form action="https://nid.naver.com/nidlogin.login">
+      <input id="id" name="id">
+      <input id="pw" name="pw" type="password">
+    </form>
+    """
+
+    reason, detail = browser.detect_login_required("https://nid.naver.com/nidlogin.login", html)
+
+    assert reason == "login_required"
+    assert detail == "redirected to login url"
+
+
+def test_not_logged_in_error_without_article_list_marker_is_login_required():
+    html = '<div id="__next_error__">NotLoggedInError</div>'
+
+    reason, detail = browser.detect_login_required("https://cafe.naver.com/f-e/cafes/1/members/x", html)
+
+    assert reason == "login_required"
+    assert detail == "no article-list markers found and login marker visible"
+
+
+def test_existing_block_markers_still_detected():
+    captcha_signal = next(signal for reason, signal in browser._BLOCK_CONTENT if reason == "captcha")
+
+    assert browser.check_blocked("https://cafe.naver.com/example", captcha_signal) == "captcha"
