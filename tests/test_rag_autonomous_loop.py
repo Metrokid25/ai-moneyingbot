@@ -56,6 +56,53 @@ def test_autonomous_loop_continues_only_on_allowed_success_states():
     assert "RAG autonomous loop stopped after cycle $cycle on terminal state $pipelineResult." in script
 
 
+def test_autonomous_loop_prints_operator_summary_contract():
+    script = read_loop_script()
+
+    assert "function Write-OperatorSummary" in script
+    assert "RAG Autonomous Operator Summary" in script
+    assert "total cycles: $TotalCycles" in script
+    assert "completed cycles: $CompletedCycles" in script
+    assert "successful cycles: $SuccessfulCycles" in script
+    assert "stopped reason: $StoppedReason" in script
+    assert "generated task list:" in script
+    assert "completed task list:" in script
+    assert "commit attempted count: $CommitAttemptedCount" in script
+    assert "commit succeeded count: $CommitSucceededCount" in script
+    assert "push attempted count: $PushAttemptedCount" in script
+    assert "push succeeded count: $PushSucceededCount" in script
+    assert "latest commit hash: $(Get-LatestCommitHash)" in script
+    assert "final git status -sb:" in script
+    assert "remaining pending summary:" in script
+    assert "failed task summary:" in script
+    assert "Write-OperatorSummary -TotalCycles $Cycles" in script
+
+
+def test_autonomous_loop_collects_pipeline_summary_counts_and_task_lists():
+    script = read_loop_script()
+
+    assert 'Get-SummaryValue -PipelineOutput $pipelineOutput -Label "planner created task path"' in script
+    assert 'Get-SummaryValue -PipelineOutput $pipelineOutput -Label "completed task path"' in script
+    assert 'Get-SummaryValue -PipelineOutput $pipelineOutput -Label "commit attempted"' in script
+    assert 'Get-SummaryValue -PipelineOutput $pipelineOutput -Label "commit succeeded"' in script
+    assert 'Get-SummaryValue -PipelineOutput $pipelineOutput -Label "push attempted"' in script
+    assert 'Get-SummaryValue -PipelineOutput $pipelineOutput -Label "push succeeded"' in script
+    assert "$generatedTasks.Add($createdTaskPath)" in script
+    assert "$completedTasks.Add($completedTaskPath)" in script
+    assert "$commitAttemptedCount += 1" in script
+    assert "$pushSucceededCount += 1" in script
+
+
+def test_autonomous_loop_treats_planner_no_candidate_as_normal_no_action_stop():
+    script = read_loop_script()
+
+    assert '$plannerResult = Get-SummaryValue -PipelineOutput $pipelineOutput -Label "planner result"' in script
+    assert 'if ($pipelineResult -eq "NO_ACTIONABLE_TASKS" -and $plannerResult -eq "NO_CANDIDATE")' in script
+    assert '$stoppedReason = "no actionable RAG tasks and planner has no candidate"' in script
+    assert "RAG autonomous loop stopped after cycle $cycle because planner returned no candidate." in script
+    assert "$finalExitCode = 1" not in script.split('if ($pipelineResult -eq "NO_ACTIONABLE_TASKS" -and $plannerResult -eq "NO_CANDIDATE")', 1)[1].split("if (-not (Test-ContinueResult", 1)[0]
+
+
 def test_autonomous_loop_preserves_archive_owned_protection_by_delegating_to_pipeline():
     script = read_loop_script()
     pipeline = (ROOT / "scripts" / "run_rag_agent_pipeline.ps1").read_text(encoding="utf-8")
