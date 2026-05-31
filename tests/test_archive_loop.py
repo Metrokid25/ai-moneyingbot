@@ -474,6 +474,8 @@ def test_preflight_returns_zero_when_required_files_are_ready(tmp_path, monkeypa
     assert "[OK] archive.db articles: count=1" in captured.out
     assert "[WARN] list-url: real collection still requires" in captured.out
     assert "[WARN] browser profile:" in captured.out
+    assert "--login-url" in captured.out
+    assert "mentor teacher article-list URL" in captured.out
     assert "[archive_loop] summary:" in captured.out
     assert config.state_dir.exists()
     assert config.log_dir.exists()

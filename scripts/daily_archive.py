@@ -428,9 +428,17 @@ def prepare_manual_login(
     profile_dir = browser_profile_dir or DEFAULT_BROWSER_PROFILE_DIR
     print("[daily_archive] manual login mode")
     print(f"  browser_profile_dir: {profile_dir}")
-    print("  no collection, DB write, state update, or report write will be performed")
-    print("  complete Naver login manually in the opened browser")
-    print("  do not attempt to bypass captcha or identity verification")
+    print(f"  login_url: {login_url}")
+    print("  this command does not collect articles")
+    print("  no DB write, state update, or report write will be performed")
+    print("  sign in to Naver manually in the opened browser")
+    print("  if captcha or identity verification appears, handle it manually")
+    print("  after login, confirm the mentor teacher article-list page is visible")
+    print("  press Enter in PowerShell after confirmation to exit")
+    print("  do not put this command in Windows Task Scheduler")
+    if login_url == "https://nid.naver.com/nidlogin.login":
+        print("  카페 접근 확인을 위해 --login-url 사용 권장")
+        print("  recommended: use --login-url to confirm Cafe access")
 
     session = BrowserSession(user_data_dir=profile_dir)
     try:
@@ -490,6 +498,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="use mock data and avoid data/")
     parser.add_argument("--execute", action="store_true", help="run bounded archive collection")
     parser.add_argument("--login", action="store_true", help="open persistent browser profile for manual Naver login")
+    parser.add_argument(
+        "--login-url",
+        default="https://nid.naver.com/nidlogin.login",
+        help="URL to open in manual login mode; use the mentor teacher article-list URL to confirm Cafe access",
+    )
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--page-limit", type=int, default=DEFAULT_PAGE_LIMIT)
     parser.add_argument("--list-url", default=None, help="Naver Cafe article-list URL for execute mode")
@@ -524,13 +537,16 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     if args.login:
-        return prepare_manual_login(browser_profile_dir=args.browser_profile_dir)
+        return prepare_manual_login(
+            browser_profile_dir=args.browser_profile_dir,
+            login_url=args.login_url,
+        )
 
     if not args.dry_run and not args.execute:
         print("[daily_archive] no collection mode selected")
         print("  no browser, network, DB, state, or report changes were made")
         print("  safe validation : python scripts/daily_archive.py --dry-run")
-        print("  manual login    : python scripts/daily_archive.py --login")
+        print("  manual login    : python scripts/daily_archive.py --login --login-url <MENTOR_LIST_URL>")
         print("  real collection : python scripts/daily_archive.py --execute --limit N --list-url <URL>")
         print("  execute mode requires both --limit and --list-url and remains bounded")
         return 0

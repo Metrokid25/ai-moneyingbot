@@ -464,7 +464,11 @@ def browser_profile_summary_for_preflight(path: Path) -> tuple[str, str]:
         return "FAIL", f"{path} exists but is not a directory"
     return (
         "WARN",
-        f"{path} not found; run `python scripts/daily_archive.py --login` before collection",
+        (
+            f"{path} not found; run "
+            "`python scripts/daily_archive.py --login --login-url \"<mentor teacher article-list URL>\"` "
+            "before collection"
+        ),
     )
 
 
