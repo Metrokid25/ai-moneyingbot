@@ -1,8 +1,9 @@
-"""Run bounded daily archive collection on a fixed interval.
+"""Run the proven archive indexing/recollection scripts on a fixed interval.
 
-This wrapper intentionally delegates each collection pass to
-`scripts/daily_archive.py --execute --limit N --list-url URL`.
-It does not perform collection directly.
+Each loop pass delegates to the existing successful archive path:
+`scripts/index_tail.py <list-url> --collect-after-snapshot`, followed by
+`scripts/batch_recollect.py`. The wrapper does not parse Naver pages or
+perform collection directly.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from config import DEFAULT_BROWSER_PROFILE_DIR, HEADLESS  # noqa: E402
+from config import DEFAULT_BROWSER_PROFILE_DIR  # noqa: E402
 
 DEFAULT_INTERVAL_SECONDS = 600
 DEFAULT_DURATION_HOURS = 24.0
@@ -74,6 +75,7 @@ class LoopConfig:
     log_dir: Path = DEFAULT_LOG_DIR
     status_file: Path = DEFAULT_STATUS_FILE
     lock_file: Path = DEFAULT_LOCK_FILE
+    db_file: Path = DEFAULT_DB_FILE
     lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
     browser_profile_dir: Path = DEFAULT_BROWSER_PROFILE_DIR
     headed: bool = False
@@ -88,13 +90,17 @@ class RunResult:
     returncode: int
     stdout: str
     stderr: str
-    command: list[str]
+    commands: list[list[str]]
+    before_article_count: int | None = None
+    after_article_count: int | None = None
+    latest_article_id: int | None = None
 
 
 @dataclass
 class PreflightConfig:
     project_root: Path = PROJECT_ROOT
-    daily_archive_path: Path = PROJECT_ROOT / "scripts" / "daily_archive.py"
+    index_tail_path: Path = PROJECT_ROOT / "scripts" / "index_tail.py"
+    batch_recollect_path: Path = PROJECT_ROOT / "scripts" / "batch_recollect.py"
     db_file: Path = DEFAULT_DB_FILE
     backups_dir: Path = DEFAULT_BACKUPS_DIR
     state_dir: Path = DEFAULT_STATE_DIR
@@ -127,27 +133,32 @@ def calculate_max_runs(duration_hours: float, interval_seconds: int) -> int:
     return max(1, math.ceil(duration_hours * 3600 / interval_seconds))
 
 
-def build_daily_archive_command(config: LoopConfig) -> list[str]:
-    command = [
-        config.python,
-        str(PROJECT_ROOT / "scripts" / "daily_archive.py"),
-        "--execute",
-        "--limit",
-        str(config.limit),
-        "--list-url",
-        config.list_url,
-        "--browser-profile-dir",
-        str(config.browser_profile_dir),
+def build_archive_cycle_commands(config: LoopConfig) -> list[list[str]]:
+    return [
+        build_index_tail_command(config),
+        build_batch_recollect_command(config),
     ]
-    if config.headed:
-        command.append("--headed")
-    return command
 
 
-def collection_browser_mode(headed: bool) -> str:
-    if headed:
-        return "headed (--headed)"
-    return "headless (HEADLESS=true)" if HEADLESS else "headed (HEADLESS=false)"
+def build_index_tail_command(config: LoopConfig) -> list[str]:
+    return [
+        config.python,
+        str(PROJECT_ROOT / "scripts" / "index_tail.py"),
+        config.list_url,
+        "--collect-after-snapshot",
+    ]
+
+
+def build_batch_recollect_command(config: LoopConfig) -> list[str]:
+    return [
+        config.python,
+        str(PROJECT_ROOT / "scripts" / "batch_recollect.py"),
+    ]
+
+
+def build_daily_archive_command(config: LoopConfig) -> list[str]:
+    """Compatibility wrapper; the loop now uses the proven index_tail path."""
+    return build_index_tail_command(config)
 
 
 def summarize(text: str, *, max_chars: int = 1200) -> str:
@@ -200,7 +211,11 @@ def append_log(config: LoopConfig, result: RunResult, stop_reason: str | None = 
         f"started_at: {result.started_at.isoformat()}",
         f"finished_at: {result.finished_at.isoformat()}",
         f"returncode: {result.returncode}",
-        "command: " + " ".join(result.command),
+        "commands:",
+        *("  " + " ".join(command) for command in result.commands),
+        f"archive_db_before_count: {display_status_value(result.before_article_count)}",
+        f"archive_db_after_count: {display_status_value(result.after_article_count)}",
+        f"latest_article_id: {display_status_value(result.latest_article_id)}",
         f"stdout_summary: {summarize(result.stdout)}",
         f"stderr_summary: {summarize(result.stderr)}",
     ]
@@ -230,6 +245,8 @@ def base_status(config: LoopConfig, started_at: datetime, max_runs: int) -> dict
         "last_saved": None,
         "last_duplicates": None,
         "last_failed": None,
+        "last_latest_article_id": None,
+        "last_run_warning": None,
         "last_report_path": None,
         "stop_reason": None,
         "is_running": True,
@@ -374,11 +391,17 @@ def update_status_for_run_finish(
     status["last_run_started_at"] = result.started_at.isoformat()
     status["last_run_finished_at"] = result.finished_at.isoformat()
     status["last_return_code"] = result.returncode
-    status["last_saved"] = parse_summary_value(result.stdout, "saved")
+    saved = parse_summary_value(result.stdout, "saved")
+    if saved is None and result.before_article_count is not None and result.after_article_count is not None:
+        saved = max(0, result.after_article_count - result.before_article_count)
+    status["last_saved"] = saved
     status["last_duplicates"] = parse_summary_value(result.stdout, "duplicates")
     status["last_failed"] = parse_summary_value(result.stdout, "failed")
+    if status["last_failed"] is None and result.returncode != 0:
+        status["last_failed"] = 1
+    status["last_latest_article_id"] = result.latest_article_id
+    status["last_run_warning"] = stop_reason
     status["last_report_path"] = parse_report_path(result.stdout)
-    status["stop_reason"] = stop_reason
     write_status(config, status)
 
 
@@ -404,6 +427,8 @@ def format_status_summary(data: dict[str, object]) -> str:
         ("last_saved", "last_saved"),
         ("last_duplicates", "last_duplicates"),
         ("last_failed", "last_failed"),
+        ("last_latest_article_id", "last_latest_article_id"),
+        ("last_run_warning", "last_run_warning"),
         ("last_report_path", "last_report_path"),
         ("stop_reason", "stop_reason"),
     ]
@@ -441,6 +466,26 @@ def readonly_article_count(db_file: Path) -> int:
     with sqlite3.connect(uri, uri=True) as conn:
         row = conn.execute("SELECT COUNT(*) FROM articles").fetchone()
     return int(row[0])
+
+
+def readonly_archive_summary(db_file: Path = DEFAULT_DB_FILE) -> dict[str, int | None]:
+    summary: dict[str, int | None] = {
+        "article_count": None,
+        "latest_article_id": None,
+    }
+    if not db_file.exists():
+        return summary
+    uri = f"file:{db_file.resolve().as_posix()}?mode=ro"
+    try:
+        with sqlite3.connect(uri, uri=True) as conn:
+            summary["article_count"] = int(conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0])
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(articles)").fetchall()}
+            if "article_id" in columns:
+                row = conn.execute("SELECT MAX(article_id) FROM articles").fetchone()
+                summary["latest_article_id"] = int(row[0]) if row and row[0] is not None else None
+    except sqlite3.Error:
+        return summary
+    return summary
 
 
 def check_creatable_dir(path: Path) -> tuple[str, str]:
@@ -523,10 +568,15 @@ def run_preflight(config: PreflightConfig | None = None) -> int:
     else:
         levels.append(print_preflight_result("WARN", "working directory", f"{cwd} (expected {project_root})"))
 
-    if config.daily_archive_path.exists():
-        levels.append(print_preflight_result("OK", "daily_archive.py", str(config.daily_archive_path)))
+    if config.index_tail_path.exists():
+        levels.append(print_preflight_result("OK", "index_tail.py", str(config.index_tail_path)))
     else:
-        levels.append(print_preflight_result("FAIL", "daily_archive.py", f"missing: {config.daily_archive_path}"))
+        levels.append(print_preflight_result("FAIL", "index_tail.py", f"missing: {config.index_tail_path}"))
+
+    if config.batch_recollect_path.exists():
+        levels.append(print_preflight_result("OK", "batch_recollect.py", str(config.batch_recollect_path)))
+    else:
+        levels.append(print_preflight_result("FAIL", "batch_recollect.py", f"missing: {config.batch_recollect_path}"))
 
     if not config.db_file.exists():
         levels.append(print_preflight_result("FAIL", "archive.db", f"missing: {config.db_file}"))
@@ -563,8 +613,8 @@ def run_preflight(config: PreflightConfig | None = None) -> int:
     level, detail = browser_profile_summary_for_preflight(config.browser_profile_dir)
     levels.append(print_preflight_result(level, "browser profile", detail))
 
-    levels.append(print_preflight_result("OK", "collection browser mode", collection_browser_mode(config.headed)))
-    print("[WARN] browser mode: if login_required repeats in headless mode, retry once with --headed")
+    print("[OK] proven collection path: index_tail.py --collect-after-snapshot, then batch_recollect.py")
+    print("[WARN] browser/session mode: this loop preserves the existing script behavior; it does not add login or marker logic")
     levels.extend(["OK", "WARN"])
 
     print("[OK] list-url: not required for preflight")
@@ -583,18 +633,36 @@ def run_once(
     run_number: int,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> RunResult:
-    command = build_daily_archive_command(config)
+    commands = build_archive_cycle_commands(config)
+    before_summary = readonly_archive_summary(config.db_file)
     started_at = datetime.now()
-    completed = runner(command, text=True, capture_output=True, check=False)
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    returncode = 0
+    for command in commands:
+        completed = runner(command, text=True, capture_output=True, check=False)
+        stdout_parts.append("$ " + " ".join(command))
+        if completed.stdout:
+            stdout_parts.append(completed.stdout)
+        if completed.stderr:
+            stderr_parts.append("$ " + " ".join(command))
+            stderr_parts.append(completed.stderr)
+        if completed.returncode != 0:
+            returncode = completed.returncode
+            break
+    after_summary = readonly_archive_summary(config.db_file)
     finished_at = datetime.now()
     return RunResult(
         run_number=run_number,
         started_at=started_at,
         finished_at=finished_at,
-        returncode=completed.returncode,
-        stdout=completed.stdout or "",
-        stderr=completed.stderr or "",
-        command=command,
+        returncode=returncode,
+        stdout="\n".join(stdout_parts),
+        stderr="\n".join(stderr_parts),
+        commands=commands,
+        before_article_count=before_summary["article_count"],
+        after_article_count=after_summary["article_count"],
+        latest_article_id=after_summary["latest_article_id"],
     )
 
 
@@ -603,6 +671,9 @@ def print_run_summary(result: RunResult, log_path: Path) -> None:
     print(f"[archive_loop] started_at : {result.started_at.isoformat()}")
     print(f"[archive_loop] finished_at: {result.finished_at.isoformat()}")
     print(f"[archive_loop] returncode : {result.returncode}")
+    if result.before_article_count is not None and result.after_article_count is not None:
+        print(f"[archive_loop] saved_delta: {max(0, result.after_article_count - result.before_article_count)}")
+    print(f"[archive_loop] latest_id : {display_status_value(result.latest_article_id)}")
     print(f"[archive_loop] stdout    : {summarize(result.stdout)}")
     print(f"[archive_loop] stderr    : {summarize(result.stderr)}")
     print(f"[archive_loop] log       : {log_path}")
@@ -648,9 +719,7 @@ def run_loop(
             print_run_summary(result, path)
 
             if stop_reason:
-                print(f"[archive_loop] stopping: {stop_reason}")
-                finalize_status(config, status, stop_reason)
-                return 1 if result.returncode != 0 else 0
+                print(f"[archive_loop] warning: {stop_reason}; retrying on the next scheduled run")
 
             if run_number < max_runs:
                 sleeper(config.interval_seconds)
@@ -667,7 +736,7 @@ def run_loop(
 
 def stop_reason_for(config: LoopConfig, result: RunResult) -> str | None:
     if result.returncode != 0:
-        return f"daily_archive returned non-zero exit code {result.returncode}"
+        return f"archive cycle returned non-zero exit code {result.returncode}"
     block_signal = contains_block_signal(result.stdout, result.stderr)
     if block_signal:
         return f"block signal detected: {block_signal}"
@@ -679,10 +748,10 @@ def stop_reason_for(config: LoopConfig, result: RunResult) -> str | None:
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run daily_archive.py execute mode on a bounded interval.",
+        description="Repeat the proven index_tail.py and batch_recollect.py archive path on a bounded interval.",
     )
     parser.add_argument("--list-url", help="Naver Cafe list URL")
-    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="retained for status compatibility; dedupe is handled by archive.db")
     parser.add_argument("--interval-seconds", type=int, default=DEFAULT_INTERVAL_SECONDS)
     parser.add_argument("--duration-hours", type=float, default=DEFAULT_DURATION_HOURS)
     parser.add_argument("--max-runs", type=int, default=None)
@@ -691,7 +760,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_FILE)
     parser.add_argument("--browser-profile-dir", type=Path, default=DEFAULT_BROWSER_PROFILE_DIR)
-    parser.add_argument("--headed", action="store_true", help="pass --headed to daily_archive.py execute runs")
+    parser.add_argument("--headed", action="store_true", help="retained for compatibility; proven scripts keep their existing browser behavior")
     parser.add_argument("--status", action="store_true", help="print loop status and exit")
     parser.add_argument("--preflight", action="store_true", help="run read-only operational safety checks and exit")
     parser.add_argument(

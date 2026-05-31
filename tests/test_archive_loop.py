@@ -31,6 +31,7 @@ def make_config(tmp_path, **overrides):
         "log_dir": tmp_path / "logs",
         "status_file": tmp_path / "state" / "archive_loop_status.json",
         "lock_file": tmp_path / "state" / "archive_loop.lock",
+        "db_file": tmp_path / "data" / "archive.db",
         "lock_stale_minutes": 30,
         "browser_profile_dir": tmp_path / "state" / "browser_profile",
         "headed": False,
@@ -61,23 +62,29 @@ def write_lock(path, *, updated_at=None, pid=99999):
 def create_archive_db(path, *, article_count=1):
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as conn:
-        conn.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY)")
-        conn.executemany("INSERT INTO articles DEFAULT VALUES", [() for _ in range(article_count)])
+        conn.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, article_id INTEGER)")
+        conn.executemany(
+            "INSERT INTO articles (article_id) VALUES (?)",
+            [(1000 + i,) for i in range(article_count)],
+        )
 
 
 def make_preflight_config(tmp_path, **overrides):
     project_root = tmp_path / "project"
     scripts_dir = project_root / "scripts"
     scripts_dir.mkdir(parents=True)
-    daily_archive_path = scripts_dir / "daily_archive.py"
-    daily_archive_path.write_text("# test daily archive\n", encoding="utf-8")
+    index_tail_path = scripts_dir / "index_tail.py"
+    batch_recollect_path = scripts_dir / "batch_recollect.py"
+    index_tail_path.write_text("# test index tail\n", encoding="utf-8")
+    batch_recollect_path.write_text("# test batch recollect\n", encoding="utf-8")
     db_file = project_root / "data" / "archive.db"
     create_archive_db(db_file, article_count=1)
     backups_dir = project_root / "backups"
     backups_dir.mkdir()
     values = {
         "project_root": project_root,
-        "daily_archive_path": daily_archive_path,
+        "index_tail_path": index_tail_path,
+        "batch_recollect_path": batch_recollect_path,
         "db_file": db_file,
         "backups_dir": backups_dir,
         "state_dir": project_root / "state",
@@ -93,31 +100,31 @@ def make_preflight_config(tmp_path, **overrides):
     return archive_loop.PreflightConfig(**values)
 
 
-def test_builds_daily_archive_execute_command_with_url_and_limit(tmp_path):
+def test_builds_proven_archive_cycle_commands(tmp_path):
     config = make_config(tmp_path, limit=7)
 
-    command = archive_loop.build_daily_archive_command(config)
+    commands = archive_loop.build_archive_cycle_commands(config)
 
-    assert command[0] == "python-test"
-    assert command[1].endswith(str(Path("scripts") / "daily_archive.py"))
-    assert command[2:] == [
-        "--execute",
-        "--limit",
-        "7",
-        "--list-url",
+    assert commands[0] == [
+        "python-test",
+        str(archive_loop.PROJECT_ROOT / "scripts" / "index_tail.py"),
         "https://cafe.naver.com/example?boardType=L",
-        "--browser-profile-dir",
-        str(tmp_path / "state" / "browser_profile"),
+        "--collect-after-snapshot",
+    ]
+    assert commands[1] == [
+        "python-test",
+        str(archive_loop.PROJECT_ROOT / "scripts" / "batch_recollect.py"),
     ]
 
 
-def test_builds_daily_archive_execute_command_with_headed(tmp_path):
+def test_proven_archive_cycle_preserves_existing_script_browser_behavior(tmp_path):
     config = make_config(tmp_path, headed=True)
 
-    command = archive_loop.build_daily_archive_command(config)
+    commands = archive_loop.build_archive_cycle_commands(config)
+    flattened = [part for command in commands for part in command]
 
-    assert command[-1] == "--headed"
-    assert "--browser-profile-dir" in command
+    assert "--headed" not in flattened
+    assert "--browser-profile-dir" not in flattened
 
 
 def test_default_max_runs_is_calculated_from_duration_and_interval():
@@ -138,7 +145,7 @@ def test_loop_runs_max_runs_and_writes_log(tmp_path):
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=slept.append)
 
     assert rc == 0
-    assert len(calls) == 2
+    assert len(calls) == 4
     assert slept == [5]
     log_files = list((tmp_path / "logs").glob("*.log"))
     assert len(log_files) == 1
@@ -166,7 +173,7 @@ def test_loop_starts_when_lock_file_is_missing(tmp_path):
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
 
     assert rc == 0
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert not config.lock_file.exists()
 
 
@@ -202,7 +209,7 @@ def test_stale_lock_file_can_be_taken_over(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert rc == 0
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert "taking over stale lock file" in captured.out
     assert not config.lock_file.exists()
 
@@ -222,12 +229,12 @@ def test_corrupt_lock_file_can_be_taken_over(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert rc == 0
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert "taking over corrupt lock file" in captured.out
     assert not config.lock_file.exists()
 
 
-def test_nonzero_return_code_stops_loop(tmp_path):
+def test_nonzero_return_code_logs_warning_and_retries_next_cycle(tmp_path):
     calls = []
 
     def fake_runner(command, **_kwargs):
@@ -238,17 +245,18 @@ def test_nonzero_return_code_stops_loop(tmp_path):
 
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
 
-    assert rc == 1
-    assert len(calls) == 1
+    assert rc == 0
+    assert len(calls) == 3
     log_text = next((tmp_path / "logs").glob("*.log")).read_text(encoding="utf-8")
     assert "non-zero exit code 3" in log_text
     status = json.loads(config.status_file.read_text(encoding="utf-8"))
     assert status["is_running"] is False
-    assert status["stop_reason"] == "daily_archive returned non-zero exit code 3"
+    assert status["stop_reason"] == "max runs completed"
+    assert status["last_run_warning"] == "archive cycle returned non-zero exit code 3"
     assert status["last_return_code"] == 3
 
 
-def test_block_signal_in_stdout_stops_loop(tmp_path):
+def test_block_signal_in_stdout_logs_warning_and_retries_next_cycle(tmp_path):
     calls = []
 
     def fake_runner(command, **_kwargs):
@@ -260,15 +268,16 @@ def test_block_signal_in_stdout_stops_loop(tmp_path):
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
 
     assert rc == 0
-    assert len(calls) == 1
+    assert len(calls) == 6
     log_text = next((tmp_path / "logs").glob("*.log")).read_text(encoding="utf-8")
     assert "block signal detected: login" in log_text
     status = json.loads(config.status_file.read_text(encoding="utf-8"))
     assert status["is_running"] is False
-    assert status["stop_reason"] == "block signal detected: login"
+    assert status["stop_reason"] == "max runs completed"
+    assert status["last_run_warning"] == "block signal detected: login"
 
 
-def test_block_signal_in_stderr_stops_loop(tmp_path):
+def test_block_signal_in_stderr_logs_warning_and_retries_next_cycle(tmp_path):
     calls = []
 
     def fake_runner(command, **_kwargs):
@@ -280,12 +289,12 @@ def test_block_signal_in_stderr_stops_loop(tmp_path):
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
 
     assert rc == 0
-    assert len(calls) == 1
+    assert len(calls) == 6
     log_text = next((tmp_path / "logs").glob("*.log")).read_text(encoding="utf-8")
     assert "block signal detected: captcha" in log_text
 
 
-def test_failed_count_above_threshold_stops_loop(tmp_path):
+def test_failed_count_above_threshold_logs_warning_and_retries_next_cycle(tmp_path):
     calls = []
 
     def fake_runner(command, **_kwargs):
@@ -297,12 +306,13 @@ def test_failed_count_above_threshold_stops_loop(tmp_path):
     rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
 
     assert rc == 0
-    assert len(calls) == 1
+    assert len(calls) == 6
     log_text = next((tmp_path / "logs").glob("*.log")).read_text(encoding="utf-8")
     assert "failed count 1 exceeded threshold 0" in log_text
     status = json.loads(config.status_file.read_text(encoding="utf-8"))
     assert status["last_failed"] == 1
-    assert status["stop_reason"] == "failed count 1 exceeded threshold 0"
+    assert status["stop_reason"] == "max runs completed"
+    assert status["last_run_warning"] == "failed count 1 exceeded threshold 0"
 
 
 def test_status_file_tracks_summary_fields_and_redacts_url(tmp_path):
@@ -338,12 +348,31 @@ def test_status_file_tracks_summary_fields_and_redacts_url(tmp_path):
     assert status["last_saved"] == 2
     assert status["last_duplicates"] == 3
     assert status["last_failed"] == 0
+    assert status["last_run_warning"] is None
     assert status["last_report_path"] == "C:\\reports\\daily.md"
     assert status["is_running"] is False
     assert status["stop_reason"] == "max runs completed"
     assert status["list_url_hash"] == archive_loop.list_url_hash(full_url)
     assert status["list_url_preview"] != full_url
     assert full_url not in config.status_file.read_text(encoding="utf-8")
+
+
+def test_status_uses_archive_db_delta_and_latest_article_id_when_output_has_no_summary(tmp_path):
+    config = make_config(tmp_path, max_runs=1)
+    create_archive_db(config.db_file, article_count=2)
+
+    def fake_runner(command, **_kwargs):
+        if command[1].endswith(str(Path("scripts") / "index_tail.py")):
+            with sqlite3.connect(config.db_file) as conn:
+                conn.execute("INSERT INTO articles (article_id) VALUES (2000)")
+        return completed(stdout="ok\n")
+
+    rc = archive_loop.run_loop(config, runner=fake_runner, sleeper=lambda _seconds: None)
+
+    assert rc == 0
+    status = json.loads(config.status_file.read_text(encoding="utf-8"))
+    assert status["last_saved"] == 1
+    assert status["last_latest_article_id"] == 2000
 
 
 def test_placeholder_url_refuses_to_run(tmp_path):
@@ -401,6 +430,8 @@ def test_status_prints_existing_file_without_running_subprocess(tmp_path, monkey
                 "last_saved": 1,
                 "last_duplicates": 2,
                 "last_failed": 0,
+                "last_latest_article_id": 169913,
+                "last_run_warning": None,
                 "last_report_path": "reports/2026-05-30.md",
                 "stop_reason": None,
                 "is_running": False,
@@ -434,6 +465,8 @@ def test_status_prints_existing_file_without_running_subprocess(tmp_path, monkey
     assert "last_saved: 1" in captured.out
     assert "last_duplicates: 2" in captured.out
     assert "last_failed: 0" in captured.out
+    assert "last_latest_article_id: 169913" in captured.out
+    assert "last_run_warning: -" in captured.out
     assert "last_report_path: reports/2026-05-30.md" in captured.out
     assert "stop_reason: -" in captured.out
     assert '"is_running"' not in captured.out
@@ -472,6 +505,8 @@ def test_help_does_not_require_lock(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "--lock-stale-minutes" in captured.out
     assert "--headed" in captured.out
+    assert "index_tail.py" in captured.out
+    assert "batch_recollect.py" in captured.out
 
 
 def test_preflight_returns_zero_when_required_files_are_ready(tmp_path, monkeypatch, capsys):
@@ -484,12 +519,15 @@ def test_preflight_returns_zero_when_required_files_are_ready(tmp_path, monkeypa
     assert rc == 0
     assert "[OK] working directory:" in captured.out
     assert "[OK] archive.db articles: count=1" in captured.out
+    assert "[OK] index_tail.py:" in captured.out
+    assert "[OK] batch_recollect.py:" in captured.out
     assert "[WARN] list-url: real collection still requires" in captured.out
     assert "[WARN] browser profile:" in captured.out
     assert "--login-url" in captured.out
     assert "mentor teacher article-list URL" in captured.out
-    assert "[OK] collection browser mode:" in captured.out
-    assert "if login_required repeats in headless mode" in captured.out
+    assert "[OK] proven collection path:" in captured.out
+    assert "index_tail.py --collect-after-snapshot" in captured.out
+    assert "does not add login or marker logic" in captured.out
     assert "[archive_loop] summary:" in captured.out
     assert config.state_dir.exists()
     assert config.log_dir.exists()
@@ -588,14 +626,15 @@ def test_preflight_reports_existing_browser_profile_as_ok(tmp_path, monkeypatch,
     assert "If login_required repeats" in captured.out
 
 
-def test_loop_command_passes_browser_profile_dir(tmp_path):
+def test_loop_command_does_not_override_existing_browser_session_options(tmp_path):
     profile_dir = tmp_path / "profile"
     config = make_config(tmp_path, browser_profile_dir=profile_dir)
 
-    command = archive_loop.build_daily_archive_command(config)
+    commands = archive_loop.build_archive_cycle_commands(config)
+    flattened = [part for command in commands for part in command]
 
-    assert "--browser-profile-dir" in command
-    assert command[command.index("--browser-profile-dir") + 1] == str(profile_dir)
+    assert "--browser-profile-dir" not in flattened
+    assert str(profile_dir) not in flattened
 
 
 def test_preflight_does_not_call_execute_or_create_lock(tmp_path, monkeypatch):
