@@ -50,6 +50,30 @@ Use Codex's internal workspace sandbox only when the local Windows environment s
 .\scripts\run_rag_agent_once.ps1 -UseCodexSandbox
 ```
 
+## Review Pipeline
+
+Use the RAG pipeline wrapper when you want a one-task RAG run followed by the review step:
+
+```powershell
+.\scripts\run_rag_agent_pipeline.ps1
+```
+
+The default pipeline run does not commit or push, even when the reviewer returns `REVIEW_RESULT=PASS`. It runs `scripts/run_rag_agent_once.ps1 -NoPush`, runs `scripts/review_rag_agent_run.ps1`, reports the review result, and waits for user approval before publishing.
+
+Optional publishing remains pass-gated:
+
+- `-CommitOnPass` creates a commit only when `REVIEW_RESULT=PASS` and the publish safety gate passes.
+- `-PushOnPass` pushes only after a successful pass-gated commit. A push request without `-CommitOnPass` does not push.
+- `-CommitMessage` supplies the message for the pass-gated commit.
+
+Review outcomes control publishing:
+
+- `REVIEW_RESULT=PASS` allows optional pass-gated commit and push when requested.
+- `REVIEW_RESULT=FAIL` blocks commit and push.
+- `REVIEW_RESULT=NEEDS_HUMAN_REVIEW` blocks commit and push until a human decides the next step.
+
+The pipeline is still RAG-only. `agent_tasks/pending/001-real-daily-archive-wiring.md` is Archive-owned work and must not be implemented by the RAG Bot.
+
 ## Focused RAG Tests
 
 Use the focused RAG test runner for routine RAG Bot validation:
