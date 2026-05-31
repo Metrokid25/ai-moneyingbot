@@ -23,6 +23,27 @@ REQUIRED_METADATA_FIELDS = {
     "content_hash",
     "status",
 }
+REQUIRED_METADATA_TYPES = {
+    "article_id": int,
+    "source_id": str,
+    "source_path": str,
+    "chunk_id": str,
+    "chunk_index": int,
+    "posted_at": str,
+    "created_at": str,
+    "collected_at": str,
+    "year": (int, type(None)),
+    "month": (int, type(None)),
+    "title": str,
+    "body_len": int,
+    "author": str,
+    "source": str,
+    "url": str,
+    "source_url": str,
+    "content_hash": str,
+    "status": str,
+}
+NULLABLE_METADATA_FIELDS = {"year", "month"}
 
 _DATE_RE = re.compile(r"^(\d{4})\.(\d{1,2})\.(\d{1,2})\.$")
 
@@ -127,6 +148,7 @@ def build_chunk_records(
             "content_hash": content_hash,
             "status": status,
         }
+        validate_chunk_metadata(metadata, chunk_id=chunk_id)
         records.append(
             {
                 "chunk_id": chunk_id,
@@ -137,6 +159,48 @@ def build_chunk_records(
             }
         )
     return records
+
+
+def validate_chunk_metadata(metadata: dict[str, Any], chunk_id: str | None = None) -> None:
+    missing = sorted(REQUIRED_METADATA_FIELDS - set(metadata))
+    label = f"chunk {chunk_id}" if chunk_id is not None else "chunk metadata"
+    if missing:
+        raise ValueError(f"{label} metadata missing required fields: {', '.join(missing)}")
+
+    empty = [
+        field
+        for field in sorted(REQUIRED_METADATA_FIELDS - NULLABLE_METADATA_FIELDS)
+        if metadata.get(field) is None
+        or (isinstance(metadata.get(field), str) and not metadata[field].strip())
+    ]
+    if empty:
+        raise ValueError(f"{label} metadata empty required fields: {', '.join(empty)}")
+
+    type_mismatches = [
+        f"{field} expected {_type_name(expected_type)}, got {type(metadata[field]).__name__}"
+        for field, expected_type in sorted(REQUIRED_METADATA_TYPES.items())
+        if field in metadata and not isinstance(metadata[field], expected_type)
+    ]
+    if type_mismatches:
+        raise ValueError(f"{label} metadata type mismatches: {', '.join(type_mismatches)}")
+
+    if chunk_id is not None and metadata.get("chunk_id") != chunk_id:
+        raise ValueError(f"chunk {chunk_id} metadata chunk_id mismatch")
+
+    article_id = metadata.get("article_id")
+    chunk_index = metadata.get("chunk_index")
+    if isinstance(article_id, int) and isinstance(chunk_index, int):
+        expected_chunk_id = f"{article_id}:{chunk_index}"
+        if metadata.get("chunk_id") != expected_chunk_id:
+            raise ValueError(
+                f"{label} metadata chunk_id must be {expected_chunk_id}, got {metadata.get('chunk_id')}"
+            )
+
+
+def _type_name(expected_type: type | tuple[type, ...]) -> str:
+    if isinstance(expected_type, tuple):
+        return " or ".join(t.__name__ for t in expected_type)
+    return expected_type.__name__
 
 
 def _split_by_paragraphs(text: str, chunk_size: int) -> list[str] | None:

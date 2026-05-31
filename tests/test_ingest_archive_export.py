@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = ROOT / "scripts" / "ingest_archive_export.py"
 FIXTURE_PATH = ROOT / "tests" / "fixtures" / "sample_articles.jsonl"
 
+sys.path.insert(0, str(ROOT / "src"))
+from rag_chunking import REQUIRED_METADATA_FIELDS, validate_chunk_metadata
+
 spec = importlib.util.spec_from_file_location("ingest_archive_export", SCRIPT_PATH)
 ingest_archive_export = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -171,3 +174,7 @@ def test_normalized_output_can_feed_chunk_builder(tmp_path):
     assert chunks[0]["metadata"]["created_at"] == "2026.05.20."
     assert chunks[0]["metadata"]["collected_at"] == "2026-05-20T09:00:00+09:00"
     assert chunks[0]["metadata"]["source"] == "sample_archive_export"
+
+    for chunk in chunks:
+        assert REQUIRED_METADATA_FIELDS <= set(chunk["metadata"])
+        validate_chunk_metadata(chunk["metadata"], chunk_id=chunk["chunk_id"])
