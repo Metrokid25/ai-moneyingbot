@@ -76,6 +76,67 @@ def build_sources(items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     return [build_source(item) for item in items]
 
 
+def _normalized_text(value: Any) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _source_matches_context(source: dict[str, Any], context_item: dict[str, Any]) -> bool:
+    identity_keys = ("source_id", "chunk_id", "article_id", "content_hash", "url", "source_url")
+    for key in identity_keys:
+        source_value = source.get(key)
+        context_value = context_item.get(key)
+        if source_value is not None and context_value is not None and source_value == context_value:
+            return True
+    return False
+
+
+def evaluate_answer_grounding(
+    record: dict[str, Any],
+    context_items: Sequence[dict[str, Any]],
+    claim_terms: Sequence[str] = (),
+) -> list[str]:
+    errors: list[str] = []
+    sources = list(record.get("sources") or [])
+    citations = list(record.get("citations") or [])
+    context_list = list(context_items)
+
+    if sources and not citations:
+        errors.append("answer has sources but no citations")
+    if citations and not sources:
+        errors.append("answer has citations but no sources")
+    if context_list and not sources and not record.get("no_context"):
+        errors.append("answer has context evidence but no source citations")
+
+    for label, entries in (("source", sources), ("citation", citations)):
+        for entry in entries:
+            if not any(_source_matches_context(entry, item) for item in context_list):
+                errors.append(
+                    f"{label} does not match provided context: "
+                    f"chunk_id={entry.get('chunk_id')} source_id={entry.get('source_id')}"
+                )
+
+    answer_text = _normalized_text(record.get("answer"))
+    evidence_text = _normalized_text(
+        " ".join(str(item.get(key) or "") for item in context_list for key in ("title", "text"))
+    )
+    for term in claim_terms:
+        normalized_term = _normalized_text(term)
+        if normalized_term and normalized_term in answer_text and normalized_term not in evidence_text:
+            errors.append(f"unsupported answer claim term not found in evidence: {term}")
+
+    return errors
+
+
+def assert_answer_grounded(
+    record: dict[str, Any],
+    context_items: Sequence[dict[str, Any]],
+    claim_terms: Sequence[str] = (),
+) -> None:
+    errors = evaluate_answer_grounding(record, context_items, claim_terms=claim_terms)
+    if errors:
+        raise AssertionError("Answer is not grounded in provided context:\n- " + "\n- ".join(errors))
+
+
 def format_context_for_prompt(items: Sequence[dict[str, Any]]) -> str:
     lines = ["# Evidence Context"]
     for item in items:
