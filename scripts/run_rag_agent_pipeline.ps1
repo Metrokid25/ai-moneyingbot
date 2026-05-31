@@ -116,6 +116,16 @@ function Invoke-GitPublishCommand {
   return $exitCode
 }
 
+function New-PublishResult {
+  return @{
+    ExitCode = 0
+    CommitAttempted = $false
+    CommitSucceeded = $false
+    PushAttempted = $false
+    PushSucceeded = $false
+  }
+}
+
 function Invoke-PassGatedPublish {
   param(
     [string]$Message,
@@ -123,18 +133,21 @@ function Invoke-PassGatedPublish {
     [switch]$Push
   )
 
+  $result = New-PublishResult
+
   if (-not $Commit) {
     if ($Push) {
       Write-Host "PushOnPass requested without CommitOnPass. No push will run without a successful pass-gated commit."
     }
     Write-Host "Pipeline passed review. Waiting for user approval before any commit or push."
-    return 0
+    return $result
   }
 
   $changedPaths = @(Get-ChangedPaths)
   if ($changedPaths.Count -eq 0) {
     Write-Host "Publish gate failed: no changed files to commit."
-    return 1
+    $result.ExitCode = 1
+    return $result
   }
 
   $forbiddenPaths = @($changedPaths | Where-Object { Test-ForbiddenPublishPath $_ })
@@ -143,43 +156,122 @@ function Invoke-PassGatedPublish {
     foreach ($path in $forbiddenPaths) {
       Write-Host "Forbidden changed file: $path"
     }
-    return 1
+    $result.ExitCode = 1
+    return $result
   }
 
   Write-Host "Publish gate passed. Staging git status changed files only."
   foreach ($path in $changedPaths) {
     $addExit = Invoke-GitPublishCommand -FailureContext "git add for $path" -Arguments @("add", "--", $path)
     if ($addExit -ne 0) {
-      return $addExit
+      $result.ExitCode = $addExit
+      return $result
     }
   }
 
+  $result.CommitAttempted = $true
   $commitExit = Invoke-GitPublishCommand -FailureContext "git commit" -Arguments @("commit", "-m", $Message)
   if ($commitExit -ne 0) {
-    return $commitExit
+    $result.ExitCode = $commitExit
+    return $result
   }
+  $result.CommitSucceeded = $true
 
   if (-not $Push) {
     Write-Host "Pass-gated commit completed. PushOnPass not requested; push skipped."
-    return 0
+    return $result
   }
 
+  $result.PushAttempted = $true
   $pushExit = Invoke-GitPublishCommand -FailureContext "git push" -Arguments @("push")
   if ($pushExit -ne 0) {
-    return $pushExit
+    $result.ExitCode = $pushExit
+    return $result
   }
+  $result.PushSucceeded = $true
 
   Write-Host "Pass-gated push completed."
-  return 0
+  return $result
+}
+
+function Get-LatestCommitHash {
+  $hash = & git rev-parse --short HEAD 2>$null
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($hash)) {
+    return "(unavailable)"
+  }
+  return ([string]$hash).Trim()
+}
+
+function Get-GitStatusSummary {
+  $status = & git status -sb 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    return @("git status -sb failed")
+  }
+  return @($status)
+}
+
+function Get-RemainingPendingTaskSummary {
+  $taskOutput = & python scripts\agent_next_task.py --list 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    return @("agent_next_task.py --list failed")
+  }
+  return @($taskOutput)
+}
+
+function Format-BooleanResult {
+  param([bool]$Value)
+  if ($Value) { return "yes" }
+  return "no"
+}
+
+function Write-PipelineSummary {
+  param(
+    [string]$PipelineResult,
+    [string]$ReviewResult,
+    [string]$ReviewReport,
+    [hashtable]$PublishResult
+  )
+
+  Write-Host ""
+  Write-Host "RAG Pipeline Summary"
+  Write-Host "pipeline result: $PipelineResult"
+  Write-Host "review result: $ReviewResult"
+  if ([string]::IsNullOrWhiteSpace($ReviewReport)) {
+    Write-Host "review report path: (none)"
+  } else {
+    Write-Host "review report path: $ReviewReport"
+  }
+  Write-Host "commit attempted: $(Format-BooleanResult $PublishResult.CommitAttempted)"
+  Write-Host "commit succeeded: $(Format-BooleanResult $PublishResult.CommitSucceeded)"
+  Write-Host "push attempted: $(Format-BooleanResult $PublishResult.PushAttempted)"
+  Write-Host "push succeeded: $(Format-BooleanResult $PublishResult.PushSucceeded)"
+  Write-Host "latest commit hash: $(Get-LatestCommitHash)"
+  Write-Host "git status -sb:"
+  foreach ($line in @(Get-GitStatusSummary)) {
+    Write-Host "  $line"
+  }
+  Write-Host "remaining pending task summary:"
+  foreach ($line in @(Get-RemainingPendingTaskSummary)) {
+    Write-Host "  $line"
+  }
 }
 
 Write-Host "Starting RAG agent pipeline."
+$pipelineResult = "UNKNOWN"
+$reviewResult = "UNKNOWN"
+$reviewReport = ""
+$publishResult = New-PublishResult
+$pipelineExit = 0
+
 Write-Host "Step 1: run_rag_agent_once.ps1 -NoPush"
 & $OnceScript -NoPush
 $runExit = $LASTEXITCODE
 if ($runExit -ne 0) {
   Write-Host "RAG implementation step failed with exit code $runExit."
-  exit $runExit
+  $pipelineResult = "FAIL"
+  $pipelineExit = $runExit
+  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult
+  exit $pipelineExit
 }
 
 Write-Host "Step 2: review_rag_agent_run.ps1"
@@ -198,16 +290,27 @@ if (-not [string]::IsNullOrWhiteSpace($reviewReport)) {
 
 if ($reviewExit -ne 0 -or $reviewResult -eq "FAIL") {
   Write-Host "Pipeline stopped after review failure. Inspect the review report before continuing."
-  exit 1
+  $pipelineResult = "FAIL"
+  $pipelineExit = 1
+  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult
+  exit $pipelineExit
 }
 
 if ($reviewResult -eq "PASS") {
-  $publishExit = Invoke-PassGatedPublish -Message $CommitMessage -Commit:$CommitOnPass -Push:$PushOnPass
-  exit $publishExit
+  $publishResult = Invoke-PassGatedPublish -Message $CommitMessage -Commit:$CommitOnPass -Push:$PushOnPass
+  if ($publishResult.ExitCode -eq 0) {
+    $pipelineResult = "PASS"
+  } else {
+    $pipelineResult = "FAIL"
+  }
+  $pipelineExit = $publishResult.ExitCode
 } elseif ($reviewResult -eq "NO_ACTIONABLE_TASKS") {
   Write-Host "Pipeline found no actionable RAG task. No commit or push will run."
+  $pipelineResult = "NO_ACTIONABLE_TASKS"
 } else {
   Write-Host "Pipeline needs human review. Waiting for user approval before any commit or push."
+  $pipelineResult = "NEEDS_HUMAN_REVIEW"
 }
 
-exit 0
+Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult
+exit $pipelineExit

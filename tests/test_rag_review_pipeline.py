@@ -124,6 +124,37 @@ def test_pipeline_parses_review_result_and_report_lines():
     assert "Pipeline review report: $reviewReport" in script
 
 
+def test_pipeline_prints_final_human_readable_summary_contract():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Write-PipelineSummary" in script
+    assert "RAG Pipeline Summary" in script
+    assert "pipeline result: $PipelineResult" in script
+    assert "review result: $ReviewResult" in script
+    assert "review report path: $ReviewReport" in script
+    assert "commit attempted: $(Format-BooleanResult $PublishResult.CommitAttempted)" in script
+    assert "commit succeeded: $(Format-BooleanResult $PublishResult.CommitSucceeded)" in script
+    assert "push attempted: $(Format-BooleanResult $PublishResult.PushAttempted)" in script
+    assert "push succeeded: $(Format-BooleanResult $PublishResult.PushSucceeded)" in script
+    assert "latest commit hash: $(Get-LatestCommitHash)" in script
+    assert "git status -sb:" in script
+    assert "remaining pending task summary:" in script
+    assert "git rev-parse --short HEAD" in script
+    assert "git status -sb" in script
+    assert "python scripts\\agent_next_task.py --list" in script
+
+
+def test_pipeline_summary_is_written_for_all_review_outcomes_and_run_failure():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert 'if ($reviewResult -eq "PASS")' in script
+    assert '$pipelineResult = "PASS"' in script
+    assert '$pipelineResult = "NO_ACTIONABLE_TASKS"' in script
+    assert '$pipelineResult = "NEEDS_HUMAN_REVIEW"' in script
+    assert '$pipelineResult = "FAIL"' in script
+    assert "Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult" in script
+
+
 def test_once_runner_short_circuits_when_no_actionable_rag_task_exists():
     script = read_text("scripts/run_rag_agent_once.ps1")
 
