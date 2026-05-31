@@ -139,6 +139,24 @@ def test_interactive_login_is_passed_to_index_tail_only(tmp_path):
     assert "--interactive-login" not in commands[1]
 
 
+def test_startup_login_warmup_uses_existing_manual_login_command(tmp_path):
+    config = make_config(tmp_path, market_schedule=True, interactive_login=True)
+
+    command = archive_loop.build_startup_login_warmup_command(config)
+
+    assert command == [
+        "python-test",
+        str(archive_loop.PROJECT_ROOT / "scripts" / "daily_archive.py"),
+        "--login",
+        "--login-url",
+        "https://cafe.naver.com/example?boardType=L",
+        "--browser-profile-dir",
+        str(tmp_path / "state" / "browser_profile"),
+    ]
+    assert archive_loop.should_run_startup_login_warmup(config) is True
+    assert archive_loop.should_run_startup_login_warmup(make_config(tmp_path, market_schedule=True)) is False
+
+
 def test_default_max_runs_is_calculated_from_duration_and_interval():
     assert archive_loop.calculate_max_runs(24, 600) == 144
     assert archive_loop.calculate_max_runs(1, 700) == 6
@@ -219,6 +237,35 @@ def test_market_schedule_inactive_skips_collection_and_sleeps_until_active(tmp_p
     assert status["next_interval_seconds"] == 23400
     assert status["last_schedule_active"] is False
     assert status["last_schedule_label"] == "market-closed-23-06"
+
+
+def test_market_schedule_interactive_login_warms_up_before_inactive_wait(tmp_path):
+    calls = []
+    slept = []
+    config = make_config(tmp_path, market_schedule=True, interactive_login=True, max_runs=2)
+
+    def fake_runner(command, **kwargs):
+        calls.append((command, kwargs))
+        return completed(stdout="login preparation complete\n")
+
+    rc = archive_loop.run_loop(
+        config,
+        runner=fake_runner,
+        sleeper=slept.append,
+        clock=lambda: datetime(2026, 5, 31, 23, 30),
+    )
+
+    assert rc == 0
+    assert len(calls) == 1
+    warmup_command, warmup_kwargs = calls[0]
+    assert warmup_command[1].endswith(str(Path("scripts") / "daily_archive.py"))
+    assert "--login" in warmup_command
+    assert "--login-url" in warmup_command
+    assert warmup_kwargs == {"text": True, "check": False}
+    assert slept == [23400]
+    status = json.loads(config.status_file.read_text(encoding="utf-8"))
+    assert status["last_schedule_active"] is False
+    assert status["stop_reason"] == "max runs completed"
 
 
 def test_market_schedule_active_uses_time_window_interval_with_max_runs(tmp_path):

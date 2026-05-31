@@ -30,6 +30,12 @@ placeholder, then run:
 .\scripts\start_archive_loop.ps1
 ```
 
+When `--market-schedule --interactive-login` is used, the loop first runs the
+existing manual login preparation command for the article-list URL. After the
+user logs in manually and presses Enter, collection still follows the market
+schedule; if the current time is `23:00` ~ `06:00`, the loop waits instead of
+running `index_tail.py`.
+
 Market schedule:
 
 - `23:00` ~ `06:00`: stop collection.

@@ -19,8 +19,8 @@ def test_archive_powershell_scripts_exist_and_guard_url_value():
     once_text = run_once.read_text(encoding="utf-8")
 
     for text in (start_text, once_text):
-        assert "$ListUrl =" in text
-        assert "cafe.naver.com" in text or "<멘토선생님 작성글 목록 URL>" in text
+        assert '$ListUrl = "<멘토선생님 작성글 목록 URL>"' in text
+        assert "cafe.naver.com/f-e/cafes/" not in text
         assert "Refusing to start" in text
         assert "When the mentor teacher article list is visible" in text
         assert "No automatic login or CAPTCHA bypass is performed" in text
@@ -28,6 +28,7 @@ def test_archive_powershell_scripts_exist_and_guard_url_value():
         assert "--interactive-login" in text
 
     assert "--market-schedule" in start_text
+    assert "Login preparation runs before market-schedule waiting" in start_text
     assert "--max-runs 1" in once_text
 
 

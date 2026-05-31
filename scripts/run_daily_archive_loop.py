@@ -182,6 +182,22 @@ def build_archive_cycle_commands(config: LoopConfig) -> list[list[str]]:
     ]
 
 
+def build_startup_login_warmup_command(config: LoopConfig) -> list[str]:
+    return [
+        config.python,
+        str(PROJECT_ROOT / "scripts" / "daily_archive.py"),
+        "--login",
+        "--login-url",
+        config.list_url,
+        "--browser-profile-dir",
+        str(config.browser_profile_dir),
+    ]
+
+
+def should_run_startup_login_warmup(config: LoopConfig) -> bool:
+    return config.market_schedule and config.interactive_login
+
+
 def build_index_tail_command(config: LoopConfig) -> list[str]:
     command = [
         config.python,
@@ -789,6 +805,17 @@ def run_once(
     )
 
 
+def run_startup_login_warmup(
+    config: LoopConfig,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> subprocess.CompletedProcess[str]:
+    command = build_startup_login_warmup_command(config)
+    print("[archive_loop] startup login preparation")
+    print("[archive_loop] complete Naver login manually if prompted, then press Enter.")
+    print("[archive_loop] collection remains controlled by the market schedule.")
+    return runner(command, text=True, check=False)
+
+
 def print_run_summary(result: RunResult, log_path: Path) -> None:
     print(f"[archive_loop] run_number : {result.run_number}")
     print(f"[archive_loop] started_at : {result.started_at.isoformat()}")
@@ -828,6 +855,14 @@ def run_loop(
 
     try:
         write_status(config, status)
+        if should_run_startup_login_warmup(config):
+            warmup = run_startup_login_warmup(config, runner=runner)
+            if warmup.returncode != 0:
+                stop_reason = f"startup login preparation returned non-zero exit code {warmup.returncode}"
+                finalize_status(config, status, stop_reason)
+                print(f"[archive_loop] stopping: {stop_reason}")
+                return 1
+
         for run_number in range(1, max_runs + 1):
             now = clock()
             if now >= stop_at:
