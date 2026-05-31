@@ -56,11 +56,11 @@ for ($cycle = 1; $cycle -le $Cycles; $cycle += 1) {
   Write-Host ""
   Write-Host "RAG autonomous cycle $cycle of $Cycles started."
 
-  $pipelineArgs = @()
-  if ($CommitOnPass) { $pipelineArgs += "-CommitOnPass" }
-  if ($PushOnPass) { $pipelineArgs += "-PushOnPass" }
+  $pipelineArgs = @{}
+  if ($CommitOnPass) { $pipelineArgs.CommitOnPass = $true }
+  if ($PushOnPass) { $pipelineArgs.PushOnPass = $true }
   if ($CommitOnPass -and -not [string]::IsNullOrWhiteSpace($CommitMessage)) {
-    $pipelineArgs += @("-CommitMessage", $CommitMessage)
+    $pipelineArgs.CommitMessage = $CommitMessage
   }
 
   $previousErrorActionPreference = $ErrorActionPreference

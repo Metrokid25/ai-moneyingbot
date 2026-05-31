@@ -23,11 +23,24 @@ def test_autonomous_loop_forwards_publish_options_only_when_requested():
 
     assert "[switch]$CommitOnPass" in script
     assert "[switch]$PushOnPass" in script
-    assert 'if ($CommitOnPass) { $pipelineArgs += "-CommitOnPass" }' in script
-    assert 'if ($PushOnPass) { $pipelineArgs += "-PushOnPass" }' in script
+    assert "$pipelineArgs = @{}" in script
+    assert 'if ($CommitOnPass) { $pipelineArgs.CommitOnPass = $true }' in script
+    assert 'if ($PushOnPass) { $pipelineArgs.PushOnPass = $true }' in script
+    assert '$pipelineArgs.CommitMessage = $CommitMessage' in script
+    assert "& $PipelineScript @pipelineArgs *>&1" in script
     assert "git add ." not in script
     assert "git commit" not in script
     assert "git push" not in script
+
+
+def test_autonomous_loop_default_does_not_forward_publish_options():
+    script = read_loop_script()
+
+    assert "$pipelineArgs = @{}" in script
+    assert "CommitOnPass = $false" not in script
+    assert "PushOnPass = $false" not in script
+    assert 'if ($CommitOnPass)' in script
+    assert 'if ($PushOnPass)' in script
 
 
 def test_autonomous_loop_continues_only_on_allowed_success_states():
