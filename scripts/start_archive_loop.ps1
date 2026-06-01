@@ -22,7 +22,7 @@ if ([string]::IsNullOrWhiteSpace($ListUrl) -or $ListUrl.Contains("<") -or $ListU
 Write-Host "[archive] Market-schedule archive loop"
 Write-Host "[archive] If a Naver login window appears, log in manually in the browser."
 Write-Host "[archive] When the mentor teacher article list is visible, return here and press Enter if prompted."
-Write-Host "[archive] Login preparation runs before market-schedule waiting; collection still waits for active hours."
+Write-Host "[archive] Market schedule controls when the proven archive routine runs."
 Write-Host "[archive] No automatic login or CAPTCHA bypass is performed."
 
 & $Python "scripts\run_daily_archive_loop.py" `

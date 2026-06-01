@@ -28,8 +28,6 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from config import DEFAULT_BROWSER_PROFILE_DIR  # noqa: E402
-
 DEFAULT_INTERVAL_SECONDS = 600
 DEFAULT_DURATION_HOURS = 24.0
 DEFAULT_LIMIT = 10
@@ -72,11 +70,8 @@ class LoopConfig:
     lock_file: Path = DEFAULT_LOCK_FILE
     db_file: Path = DEFAULT_DB_FILE
     lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
-    browser_profile_dir: Path = DEFAULT_BROWSER_PROFILE_DIR
-    headed: bool = False
     market_schedule: bool = False
     interactive_login: bool = False
-    test_market_active_after_seconds: int | None = None
     argv_summary: str = ""
 
 
@@ -107,8 +102,6 @@ class PreflightConfig:
     lock_file: Path = DEFAULT_LOCK_FILE
     status_file: Path = DEFAULT_STATUS_FILE
     lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
-    browser_profile_dir: Path = DEFAULT_BROWSER_PROFILE_DIR
-    headed: bool = False
     market_schedule: bool = False
 
 
@@ -170,34 +163,11 @@ def market_schedule_decision(now: datetime) -> ScheduleDecision:
     return ScheduleDecision(active=True, interval_seconds=1800, label="market-18-23-30m")
 
 
-def test_market_schedule_decision(
-    config: LoopConfig,
-    now: datetime,
-    loop_started_at: datetime,
-) -> ScheduleDecision:
-    assert config.test_market_active_after_seconds is not None
-    elapsed_seconds = max(0, int((now - loop_started_at).total_seconds()))
-    if elapsed_seconds < config.test_market_active_after_seconds:
-        return ScheduleDecision(
-            active=False,
-            interval_seconds=max(1, config.test_market_active_after_seconds - elapsed_seconds),
-            label="market-schedule-test-wait",
-        )
-    return ScheduleDecision(
-        active=True,
-        interval_seconds=config.interval_seconds,
-        label="market-schedule-test-active",
-    )
-
-
 def schedule_decision_for(
     config: LoopConfig,
     now: datetime,
-    loop_started_at: datetime | None = None,
 ) -> ScheduleDecision:
     if config.market_schedule:
-        if config.test_market_active_after_seconds is not None and loop_started_at is not None:
-            return test_market_schedule_decision(config, now, loop_started_at)
         return market_schedule_decision(now)
     return ScheduleDecision(active=True, interval_seconds=config.interval_seconds, label="fixed-interval")
 
@@ -207,22 +177,6 @@ def build_archive_cycle_commands(config: LoopConfig) -> list[list[str]]:
         build_index_tail_command(config),
         build_batch_recollect_command(config),
     ]
-
-
-def build_startup_login_warmup_command(config: LoopConfig) -> list[str]:
-    return [
-        config.python,
-        str(PROJECT_ROOT / "scripts" / "daily_archive.py"),
-        "--login",
-        "--login-url",
-        config.list_url,
-        "--browser-profile-dir",
-        str(config.browser_profile_dir),
-    ]
-
-
-def should_run_startup_login_warmup(config: LoopConfig) -> bool:
-    return config.market_schedule and config.interactive_login
 
 
 def build_index_tail_command(config: LoopConfig) -> list[str]:
@@ -664,29 +618,6 @@ def status_summary_for_preflight(path: Path) -> tuple[str, str]:
     return "OK", f"running={running}, updated_at={updated_at}, stop_reason={stop_reason}"
 
 
-def browser_profile_summary_for_preflight(path: Path) -> tuple[str, str]:
-    if path.exists():
-        if path.is_dir():
-            return (
-                "OK",
-                (
-                    f"{path} exists; profile exists != login verified. "
-                    "If login_required repeats, rerun "
-                    "`python scripts/daily_archive.py --login --login-url \"<mentor teacher article-list URL>\"` "
-                    "and confirm the article-list page is accessible."
-                ),
-            )
-        return "FAIL", f"{path} exists but is not a directory"
-    return (
-        "WARN",
-        (
-            f"{path} not found; run "
-            "`python scripts/daily_archive.py --login --login-url \"<mentor teacher article-list URL>\"` "
-            "before collection"
-        ),
-    )
-
-
 def lock_summary_for_preflight(config: PreflightConfig) -> tuple[str, str]:
     if not config.lock_file.exists():
         return "OK", f"lock file not found: {config.lock_file}"
@@ -761,9 +692,6 @@ def run_preflight(config: PreflightConfig | None = None) -> int:
     level, detail = status_summary_for_preflight(config.status_file)
     levels.append(print_preflight_result(level, "archive_loop_status.json", detail))
 
-    level, detail = browser_profile_summary_for_preflight(config.browser_profile_dir)
-    levels.append(print_preflight_result(level, "browser profile", detail))
-
     print("[OK] proven collection path: index_tail.py --collect-after-snapshot, then batch_recollect.py")
     print("[WARN] browser/session mode: this loop preserves the existing script behavior; it does not add login or marker logic")
     levels.extend(["OK", "WARN"])
@@ -832,17 +760,6 @@ def run_once(
     )
 
 
-def run_startup_login_warmup(
-    config: LoopConfig,
-    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-) -> subprocess.CompletedProcess[str]:
-    command = build_startup_login_warmup_command(config)
-    print("[archive_loop] startup login preparation")
-    print("[archive_loop] complete Naver login manually if prompted, then press Enter.")
-    print("[archive_loop] collection remains controlled by the market schedule.")
-    return runner(command, text=True, check=False)
-
-
 def print_run_summary(result: RunResult, log_path: Path) -> None:
     print(f"[archive_loop] run_number : {result.run_number}")
     print(f"[archive_loop] started_at : {result.started_at.isoformat()}")
@@ -882,25 +799,6 @@ def run_loop(
 
     try:
         write_status(config, status)
-        if should_run_startup_login_warmup(config):
-            warmup = run_startup_login_warmup(config, runner=runner)
-            if warmup.returncode != 0:
-                stop_reason = f"startup login preparation returned non-zero exit code {warmup.returncode}"
-                finalize_status(config, status, stop_reason)
-                print(f"[archive_loop] stopping: {stop_reason}")
-                return 1
-
-        if config.market_schedule and config.test_market_active_after_seconds is not None:
-            now = clock()
-            decision = schedule_decision_for(config, now, loop_started_at)
-            if not decision.active:
-                update_status_for_schedule_decision(config, status, 0, decision, now)
-                path = append_schedule_skip_log(config, 0, now, decision)
-                print(f"[archive_loop] market schedule inactive: {decision.label}")
-                print(f"[archive_loop] next_interval_seconds: {decision.interval_seconds}")
-                print(f"[archive_loop] log       : {path}")
-                sleeper(decision.interval_seconds)
-
         for run_number in range(1, max_runs + 1):
             now = clock()
             if now >= stop_at:
@@ -908,7 +806,7 @@ def run_loop(
                 finalize_status(config, status, "duration reached before next run")
                 return 0
 
-            decision = schedule_decision_for(config, now, loop_started_at)
+            decision = schedule_decision_for(config, now)
             update_status_for_schedule_decision(config, status, run_number, decision, now)
             if not decision.active:
                 path = append_schedule_skip_log(config, run_number, now, decision)
@@ -971,8 +869,6 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_FILE)
-    parser.add_argument("--browser-profile-dir", type=Path, default=DEFAULT_BROWSER_PROFILE_DIR)
-    parser.add_argument("--headed", action="store_true", help="retained for compatibility; proven scripts keep their existing browser behavior")
     parser.add_argument(
         "--interactive-login",
         action="store_true",
@@ -982,12 +878,6 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         "--market-schedule",
         action="store_true",
         help="use local time windows: 23:00-06:00 stop, 06:00-07:00 30m, 07:00-08:00 10m, 08:00-16:00 5m, 16:00-18:00 10m, 18:00-23:00 30m",
-    )
-    parser.add_argument(
-        "--test-market-active-after-seconds",
-        type=int,
-        default=None,
-        help="test-only market schedule override: wait inactive for N seconds, then treat the schedule as active",
     )
     parser.add_argument("--status", action="store_true", help="print loop status and exit")
     parser.add_argument("--preflight", action="store_true", help="run read-only operational safety checks and exit")
@@ -1008,11 +898,6 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         parser.error("--stop-on-failed must be non-negative")
     if args.lock_stale_minutes < 0:
         parser.error("--lock-stale-minutes must be non-negative")
-    if args.test_market_active_after_seconds is not None:
-        if args.test_market_active_after_seconds < 1:
-            parser.error("--test-market-active-after-seconds must be positive")
-        if not args.market_schedule:
-            parser.error("--test-market-active-after-seconds requires --market-schedule")
     return args
 
 
@@ -1026,8 +911,6 @@ def main(argv: Iterable[str] | None = None) -> int:
                 log_dir=args.log_dir,
                 status_file=args.status_file,
                 lock_stale_minutes=args.lock_stale_minutes,
-                browser_profile_dir=args.browser_profile_dir,
-                headed=args.headed,
                 market_schedule=args.market_schedule,
             )
         )
@@ -1042,11 +925,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         log_dir=args.log_dir,
         status_file=args.status_file,
         lock_stale_minutes=args.lock_stale_minutes,
-        browser_profile_dir=args.browser_profile_dir,
-        headed=args.headed,
         market_schedule=args.market_schedule,
         interactive_login=args.interactive_login,
-        test_market_active_after_seconds=args.test_market_active_after_seconds,
         argv_summary=" ".join(argv if argv is not None else sys.argv[1:]),
     )
     return run_loop(config)

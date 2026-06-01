@@ -5,8 +5,6 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, "scripts")
 
 import run_daily_archive_loop as archive_loop
@@ -35,11 +33,8 @@ def make_config(tmp_path, **overrides):
         "lock_file": tmp_path / "state" / "archive_loop.lock",
         "db_file": tmp_path / "data" / "archive.db",
         "lock_stale_minutes": 30,
-        "browser_profile_dir": tmp_path / "state" / "browser_profile",
-        "headed": False,
         "market_schedule": False,
         "interactive_login": False,
-        "test_market_active_after_seconds": None,
         "argv_summary": "test argv",
     }
     values.update(overrides)
@@ -98,8 +93,6 @@ def make_preflight_config(tmp_path, **overrides):
         "lock_file": project_root / "state" / "archive_loop.lock",
         "status_file": project_root / "state" / "archive_loop_status.json",
         "lock_stale_minutes": 30,
-        "browser_profile_dir": project_root / "state" / "browser_profile",
-        "headed": False,
         "market_schedule": False,
     }
     values.update(overrides)
@@ -124,7 +117,7 @@ def test_builds_proven_archive_cycle_commands(tmp_path):
 
 
 def test_proven_archive_cycle_preserves_existing_script_browser_behavior(tmp_path):
-    config = make_config(tmp_path, headed=True)
+    config = make_config(tmp_path)
 
     commands = archive_loop.build_archive_cycle_commands(config)
     flattened = [part for command in commands for part in command]
@@ -140,24 +133,6 @@ def test_interactive_login_is_passed_to_index_tail_only(tmp_path):
 
     assert commands[0][-1] == "--interactive-login"
     assert "--interactive-login" not in commands[1]
-
-
-def test_startup_login_warmup_uses_existing_manual_login_command(tmp_path):
-    config = make_config(tmp_path, market_schedule=True, interactive_login=True)
-
-    command = archive_loop.build_startup_login_warmup_command(config)
-
-    assert command == [
-        "python-test",
-        str(archive_loop.PROJECT_ROOT / "scripts" / "daily_archive.py"),
-        "--login",
-        "--login-url",
-        "https://cafe.naver.com/example?boardType=L",
-        "--browser-profile-dir",
-        str(tmp_path / "state" / "browser_profile"),
-    ]
-    assert archive_loop.should_run_startup_login_warmup(config) is True
-    assert archive_loop.should_run_startup_login_warmup(make_config(tmp_path, market_schedule=True)) is False
 
 
 def test_default_max_runs_is_calculated_from_duration_and_interval():
@@ -242,24 +217,29 @@ def test_market_schedule_inactive_skips_collection_and_sleeps_until_active(tmp_p
     assert status["last_schedule_label"] == "market-closed-23-06"
 
 
-def test_market_schedule_test_after_seconds_waits_then_runs_once(tmp_path):
+def test_market_schedule_interactive_login_waits_without_startup_warmup_when_inactive(tmp_path):
     calls = []
     slept = []
-    config = make_config(
-        tmp_path,
-        market_schedule=True,
-        interactive_login=True,
-        max_runs=1,
-        test_market_active_after_seconds=60,
+    config = make_config(tmp_path, market_schedule=True, interactive_login=True, max_runs=2)
+
+    rc = archive_loop.run_loop(
+        config,
+        runner=lambda command, **_kwargs: calls.append(command),
+        sleeper=slept.append,
+        clock=lambda: datetime(2026, 5, 31, 23, 30),
     )
-    clock_values = iter(
-        [
-            datetime(2026, 5, 31, 23, 30),
-            datetime(2026, 5, 31, 23, 30),
-            datetime(2026, 5, 31, 23, 31),
-            datetime(2026, 5, 31, 23, 31),
-        ]
-    )
+
+    assert rc == 0
+    assert calls == []
+    assert slept == [23400]
+    status = json.loads(config.status_file.read_text(encoding="utf-8"))
+    assert status["last_schedule_active"] is False
+    assert status["stop_reason"] == "max runs completed"
+
+
+def test_market_schedule_active_interactive_login_runs_proven_cycle_without_warmup(tmp_path, capsys):
+    calls = []
+    config = make_config(tmp_path, market_schedule=True, interactive_login=True, max_runs=1)
 
     def fake_runner(command, **kwargs):
         calls.append((command, kwargs))
@@ -268,66 +248,21 @@ def test_market_schedule_test_after_seconds_waits_then_runs_once(tmp_path):
     rc = archive_loop.run_loop(
         config,
         runner=fake_runner,
-        sleeper=slept.append,
-        clock=lambda: next(clock_values),
+        sleeper=lambda _seconds: None,
+        clock=lambda: datetime(2026, 5, 31, 9, 12),
     )
 
+    captured = capsys.readouterr()
     assert rc == 0
-    assert slept == [60]
-    assert len(calls) == 3
-    assert calls[0][0][1].endswith(str(Path("scripts") / "daily_archive.py"))
-    assert calls[1][0][1].endswith(str(Path("scripts") / "index_tail.py"))
-    assert calls[2][0][1].endswith(str(Path("scripts") / "batch_recollect.py"))
+    assert len(calls) == 2
+    assert calls[0][0][1].endswith(str(Path("scripts") / "index_tail.py"))
+    assert calls[0][0][-1] == "--interactive-login"
+    assert calls[1][0][1].endswith(str(Path("scripts") / "batch_recollect.py"))
+    assert not any(command[1].endswith(str(Path("scripts") / "daily_archive.py")) for command, _ in calls)
+    assert "startup login preparation" not in captured.out
     status = json.loads(config.status_file.read_text(encoding="utf-8"))
-    assert status["current_run"] == 1
     assert status["last_schedule_active"] is True
-    assert status["last_schedule_label"] == "market-schedule-test-active"
-    assert status["stop_reason"] == "max runs completed"
-
-
-def test_market_schedule_test_after_seconds_is_rejected_without_market_schedule(tmp_path):
-    with pytest.raises(SystemExit) as exc:
-        archive_loop.main(
-            [
-                "--list-url",
-                "https://example.test/list",
-                "--test-market-active-after-seconds",
-                "60",
-                "--log-dir",
-                str(tmp_path / "logs"),
-            ]
-        )
-
-    assert exc.value.code == 2
-    assert not (tmp_path / "logs").exists()
-
-
-def test_market_schedule_interactive_login_warms_up_before_inactive_wait(tmp_path):
-    calls = []
-    slept = []
-    config = make_config(tmp_path, market_schedule=True, interactive_login=True, max_runs=2)
-
-    def fake_runner(command, **kwargs):
-        calls.append((command, kwargs))
-        return completed(stdout="login preparation complete\n")
-
-    rc = archive_loop.run_loop(
-        config,
-        runner=fake_runner,
-        sleeper=slept.append,
-        clock=lambda: datetime(2026, 5, 31, 23, 30),
-    )
-
-    assert rc == 0
-    assert len(calls) == 1
-    warmup_command, warmup_kwargs = calls[0]
-    assert warmup_command[1].endswith(str(Path("scripts") / "daily_archive.py"))
-    assert "--login" in warmup_command
-    assert "--login-url" in warmup_command
-    assert warmup_kwargs == {"text": True, "check": False}
-    assert slept == [23400]
-    status = json.loads(config.status_file.read_text(encoding="utf-8"))
-    assert status["last_schedule_active"] is False
+    assert status["last_schedule_label"] == "market-08-16-5m"
     assert status["stop_reason"] == "max runs completed"
 
 
@@ -793,7 +728,6 @@ def test_help_does_not_require_lock(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "--lock-stale-minutes" in captured.out
-    assert "--headed" in captured.out
     assert "--market-schedule" in captured.out
     assert "--interactive-login" in captured.out
     assert "index_tail.py" in captured.out
@@ -813,9 +747,6 @@ def test_preflight_returns_zero_when_required_files_are_ready(tmp_path, monkeypa
     assert "[OK] index_tail.py:" in captured.out
     assert "[OK] batch_recollect.py:" in captured.out
     assert "[WARN] list-url: real collection still requires" in captured.out
-    assert "[WARN] browser profile:" in captured.out
-    assert "--login-url" in captured.out
-    assert "mentor teacher article-list URL" in captured.out
     assert "[OK] proven collection path:" in captured.out
     assert "[OK] schedule mode: fixed" in captured.out
     assert "index_tail.py --collect-after-snapshot" in captured.out
@@ -917,31 +848,6 @@ def test_preflight_prints_status_summary_when_status_file_exists(tmp_path, monke
     assert "[OK] archive_loop_status.json: running=yes" in captured.out
     assert "updated_at=2026-05-30T12:00:00" in captured.out
     assert "stop_reason=testing" in captured.out
-
-
-def test_preflight_reports_existing_browser_profile_as_ok(tmp_path, monkeypatch, capsys):
-    config = make_preflight_config(tmp_path)
-    config.browser_profile_dir.mkdir(parents=True)
-    monkeypatch.chdir(config.project_root)
-
-    rc = archive_loop.run_preflight(config)
-
-    captured = capsys.readouterr()
-    assert rc == 0
-    assert "[OK] browser profile:" in captured.out
-    assert "profile exists != login verified" in captured.out
-    assert "If login_required repeats" in captured.out
-
-
-def test_loop_command_does_not_override_existing_browser_session_options(tmp_path):
-    profile_dir = tmp_path / "profile"
-    config = make_config(tmp_path, browser_profile_dir=profile_dir)
-
-    commands = archive_loop.build_archive_cycle_commands(config)
-    flattened = [part for command in commands for part in command]
-
-    assert "--browser-profile-dir" not in flattened
-    assert str(profile_dir) not in flattened
 
 
 def test_preflight_does_not_call_execute_or_create_lock(tmp_path, monkeypatch):

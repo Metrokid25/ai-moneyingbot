@@ -28,7 +28,7 @@ def test_archive_powershell_scripts_exist_and_guard_url_value():
         assert "--interactive-login" in text
 
     assert "--market-schedule" in start_text
-    assert "Login preparation runs before market-schedule waiting" in start_text
+    assert "Market schedule controls when the proven archive routine runs" in start_text
     assert "--max-runs 1" in once_text
 
 
