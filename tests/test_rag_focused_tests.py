@@ -21,6 +21,7 @@ def test_focused_runner_uses_only_explicit_rag_commands():
     assert displays == [
         "python scripts/answer_question_phase2.py --help",
         "python scripts/report_rag_chunk_quality.py --help",
+        "python scripts/generate_rag_research_questions.py --help",
         "pytest tests/test_rag_answering.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_answer_context.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_web.py --basetemp=.tmp/rag_focused_pytest",
@@ -46,6 +47,7 @@ def test_focused_runner_uses_only_explicit_rag_commands():
         "pytest tests/test_rag_autonomous_loop.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_planner.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_focused_tests.py --basetemp=.tmp/rag_focused_pytest",
+        "pytest tests/test_rag_research_questions.py --basetemp=.tmp/rag_focused_pytest",
     ]
     assert all(display != "pytest" for display in displays)
     assert all("pytest --basetemp" not in display for display in displays)
