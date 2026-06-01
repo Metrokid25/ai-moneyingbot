@@ -18,6 +18,7 @@ CAFE_MEMBERS_URL = (
     "https://cafe.naver.com/f-e/cafes/29082876/members/"
     "THEA7uBzD6uKXKno57_Bl7jItzRnvmuDMltnPsGI9BY"
 )
+CAFE_MEMBERS_LIST_URL = CAFE_MEMBERS_URL + "?page=1"
 
 SLEEP_MIN_S = 3.0
 SLEEP_MAX_S = 5.0
@@ -357,7 +358,7 @@ def main() -> int:
     cb = _CircuitBreaker(CIRCUIT_BREAKER_ENABLED, CIRCUIT_BREAKER_THRESHOLD, CIRCUIT_BREAKER_REASONS)
 
     try:
-        session.goto(CAFE_MEMBERS_URL)
+        session.goto(CAFE_MEMBERS_LIST_URL)
         wait_for_login(session.page)
 
         for i, aid in enumerate(indexed_ids, 1):
