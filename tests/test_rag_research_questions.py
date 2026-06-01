@@ -74,6 +74,41 @@ def test_build_research_questions_uses_only_internal_rows():
     assert any("existing_eval" in question["generated_from"] for question in questions)
     assert any("chunk_keyword" in question["generated_from"] for question in questions)
     assert any("1001:0" in ref for question in questions for ref in question["source_refs"])
+    assert questions[0]["question"] == "\uae08\ub9ac \uc0c1\uc2b9\uc740 \uc8fc\uc2dd\uc2dc\uc7a5\uc5d0 \uc5b4\ub5a4 \ubd80\ub2f4\uc73c\ub85c \uc791\uc6a9\ud558\ub294\uac00?"
+    assert questions[0]["topic"] == "\uae08\ub9ac/\uae34\ucd95/\uc8fc\uc2dd\uc2dc\uc7a5"
+    assert all("What investment context" not in question["question"] for question in questions)
+
+
+def test_generation_result_filters_mojibake_topics_and_reports_skips():
+    generator = load_generator()
+    eval_path = Path("internal_eval.jsonl")
+    eval_rows = [
+        {
+            "id": "eval-001",
+            "question": "\uae08\ub9ac \uc0c1\uc2b9\uc740 \uc8fc\uc2dd\uc2dc\uc7a5\uc5d0 \uc5b4\ub5a4 \uc601\ud5a5\uc744 \uc8fc\ub294\uac00?",
+            "category": "rates",
+            "expected_topics": ["\u6e72\ub358\u2501", "rates"],
+            "expected_keywords": ["\uae08\ub9ac", "discount rates"],
+        },
+        {
+            "id": "eval-002",
+            "question": "\ud658\uc728 \uae09\ub4f1\uc740 \uc678\uad6d\uc778 \uc218\uae09\uc5d0 \uc5b4\ub5a4 \uc601\ud5a5\uc744 \uc8fc\ub294\uac00?",
+            "category": "fx",
+            "expected_topics": ["?\uc12c\uac09\ud23c"],
+            "expected_keywords": ["stronger dollar", "foreign flows"],
+        },
+    ]
+
+    result = generator.build_generation_result({}, {eval_path: eval_rows}, 10)
+
+    assert len(result.questions) == 2
+    assert [question["topic"] for question in result.questions] == [
+        "\uae08\ub9ac/\uae34\ucd95/\uc8fc\uc2dd\uc2dc\uc7a5",
+        "\ud658\uc728/\uc678\uad6d\uc778 \uc218\uae09/\ud55c\uad6d \uc99d\uc2dc",
+    ]
+    assert result.skipped_topics
+    assert all("?" not in question["topic"] for question in result.questions)
+    assert all("\u6e72" not in question["question"] for question in result.questions)
 
 
 def test_cli_writes_markdown_and_jsonl_reports(tmp_path):
@@ -139,7 +174,12 @@ def test_cli_writes_markdown_and_jsonl_reports(tmp_path):
     assert rows[0]["question_id"] == "research_q_001"
     assert rows[0]["db_only"] is True
     assert {"question", "topic", "generated_from", "source_refs", "status"} <= set(rows[0])
-    assert "# RAG DB-only Research Question Candidates" in md_path.read_text(encoding="utf-8")
+    assert rows[0]["question"].startswith("\uae08\ub9ac \uc0c1\uc2b9")
+    assert "What investment context" not in rows[0]["question"]
+    markdown = md_path.read_text(encoding="utf-8")
+    assert "# RAG DB-only Research Question Candidates" in markdown
+    assert "## Filtered Topics" in markdown
+    assert "## Source Counts" in markdown
 
 
 def test_generator_fails_without_internal_material(tmp_path):
