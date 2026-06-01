@@ -872,7 +872,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--interactive-login",
         action="store_true",
-        help="pass --interactive-login to index_tail.py so manual browser login can continue in the same session",
+        help="pass --interactive-login to index_tail.py for the existing manual login flow",
     )
     parser.add_argument(
         "--market-schedule",

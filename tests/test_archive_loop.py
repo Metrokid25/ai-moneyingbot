@@ -217,7 +217,7 @@ def test_market_schedule_inactive_skips_collection_and_sleeps_until_active(tmp_p
     assert status["last_schedule_label"] == "market-closed-23-06"
 
 
-def test_market_schedule_interactive_login_waits_without_startup_warmup_when_inactive(tmp_path):
+def test_market_schedule_interactive_login_waits_without_extra_login_when_inactive(tmp_path):
     calls = []
     slept = []
     config = make_config(tmp_path, market_schedule=True, interactive_login=True, max_runs=2)
@@ -237,7 +237,7 @@ def test_market_schedule_interactive_login_waits_without_startup_warmup_when_ina
     assert status["stop_reason"] == "max runs completed"
 
 
-def test_market_schedule_active_interactive_login_runs_proven_cycle_without_warmup(tmp_path, capsys):
+def test_market_schedule_active_interactive_login_runs_proven_cycle_only(tmp_path, capsys):
     calls = []
     config = make_config(tmp_path, market_schedule=True, interactive_login=True, max_runs=1)
 
@@ -259,7 +259,7 @@ def test_market_schedule_active_interactive_login_runs_proven_cycle_without_warm
     assert calls[0][0][-1] == "--interactive-login"
     assert calls[1][0][1].endswith(str(Path("scripts") / "batch_recollect.py"))
     assert not any(command[1].endswith(str(Path("scripts") / "daily_archive.py")) for command, _ in calls)
-    assert "startup login preparation" not in captured.out
+    assert "daily_archive.py" not in captured.out
     status = json.loads(config.status_file.read_text(encoding="utf-8"))
     assert status["last_schedule_active"] is True
     assert status["last_schedule_label"] == "market-08-16-5m"
