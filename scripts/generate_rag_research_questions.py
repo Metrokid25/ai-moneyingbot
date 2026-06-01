@@ -21,6 +21,17 @@ DEFAULT_EVAL_PATHS = (
 DEFAULT_OUT_DIR = PROJECT_ROOT / "agent_reports"
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_\-./%+]+|[\uac00-\ud7a3]{2,}")
+MOJIBAKE_MARKERS = (
+    "\ufffd",
+    "\u6e72",
+    "\uf9dd",
+    "\u5bc3",
+    "\u907a",
+    "\u8acb",
+    "\u5a9b",
+    "\u91ab",
+)
+SAFE_SEED_SOURCE_REF = "internal_seed:db_only_research_category"
 STOPWORDS = {
     "a",
     "and",
@@ -161,11 +172,15 @@ def normalize_match_text(value: Any) -> str:
 
 def has_mojibake(value: str) -> bool:
     stripped = value.strip()
-    if "\ufffd" in stripped:
+    if any(marker in stripped for marker in MOJIBAKE_MARKERS):
         return True
     if "?" in stripped.rstrip("? "):
         return True
     return any("\u4e00" <= char <= "\u9fff" or "\uf900" <= char <= "\ufaff" for char in stripped)
+
+
+def is_safe_output_text(value: Any) -> bool:
+    return not has_mojibake(normalize_space(value))
 
 
 def tokenize(text: str) -> list[str]:
@@ -298,6 +313,30 @@ def build_question(
     }
 
 
+def build_seed_question(index: int, rule: TopicRule) -> dict[str, Any]:
+    return {
+        "question_id": f"research_q_{index:03d}",
+        "question": rule.question,
+        "topic": rule.topic,
+        "generated_from": ["db_only_seed"],
+        "source_refs": [SAFE_SEED_SOURCE_REF],
+        "db_only": True,
+        "status": "candidate",
+        "evidence_previews": [],
+    }
+
+
+def safe_question_record(question: dict[str, Any]) -> bool:
+    if not is_safe_output_text(question.get("question")):
+        return False
+    if not is_safe_output_text(question.get("topic")):
+        return False
+    previews = question.get("evidence_previews")
+    if isinstance(previews, list) and any(not is_safe_output_text(preview) for preview in previews):
+        return False
+    return True
+
+
 def build_generation_result(
     chunks_by_path: dict[Path, list[dict[str, Any]]],
     eval_rows_by_path: dict[Path, list[dict[str, Any]]],
@@ -315,12 +354,18 @@ def build_generation_result(
         evidence.extend(topic_evidence_from_eval(rows, path))
         source_counts[str(path)] += len(rows)
 
+    if not source_counts:
+        return GenerationResult([], {}, {})
+
     grouped = group_evidence(evidence)
     skipped_topics: Counter[str] = Counter()
     valid_grouped: dict[str, list[TopicEvidence]] = {}
+    redacted_index = 1
     for topic, items in grouped.items():
         if has_mojibake(topic):
-            skipped_topics[topic] += len(items)
+            label = f"redacted_mojibake_topic_{redacted_index:03d}"
+            skipped_topics[label] += len(items)
+            redacted_index += 1
             continue
         valid_grouped[topic] = items
 
@@ -330,10 +375,15 @@ def build_generation_result(
         for topic, items in valid_grouped.items():
             if evidence_matches_rule(topic, rule):
                 matched.extend(items)
-        if not matched:
+        if matched:
+            matched.sort(key=lambda item: (item.source_ref, item.generated_from, item.topic))
+            candidate = build_question(len(questions) + 1, rule, matched)
+        else:
+            candidate = build_seed_question(len(questions) + 1, rule)
+        if not safe_question_record(candidate):
+            skipped_topics[f"redacted_unsafe_candidate_{len(skipped_topics) + 1:03d}"] += 1
             continue
-        matched.sort(key=lambda item: (item.source_ref, item.generated_from, item.topic))
-        questions.append(build_question(len(questions) + 1, rule, matched))
+        questions.append(candidate)
         if len(questions) >= max_questions:
             break
 
@@ -357,7 +407,7 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="\n") as fh:
         for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+            fh.write(json.dumps(row, ensure_ascii=True, sort_keys=True) + "\n")
 
 
 def format_markdown_report(
@@ -462,7 +512,7 @@ def main(argv: list[str] | None = None) -> int:
     write_jsonl(jsonl_path, result.questions)
     md_path.write_text(
         format_markdown_report(result, chunks_paths, eval_paths, stamp),
-        encoding="utf-8",
+        encoding="utf-8-sig",
         newline="\n",
     )
 
