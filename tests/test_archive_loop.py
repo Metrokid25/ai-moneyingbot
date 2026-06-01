@@ -35,6 +35,8 @@ def make_config(tmp_path, **overrides):
         "lock_stale_minutes": 30,
         "market_schedule": False,
         "interactive_login": False,
+        "realtime_index": False,
+        "stop_after_empty_pages": 5,
         "argv_summary": "test argv",
     }
     values.update(overrides)
@@ -133,6 +135,52 @@ def test_interactive_login_is_passed_to_index_tail_only(tmp_path):
 
     assert commands[0][-1] == "--interactive-login"
     assert "--interactive-login" not in commands[1]
+
+
+def test_realtime_index_uses_realtime_script_for_title_indexing_only(tmp_path):
+    config = make_config(tmp_path, interactive_login=True, realtime_index=True, stop_after_empty_pages=5)
+
+    commands = archive_loop.build_archive_cycle_commands(config)
+
+    assert commands[0] == [
+        "python-test",
+        str(archive_loop.PROJECT_ROOT / "scripts" / "index_tail_realtime.py"),
+        "https://cafe.naver.com/example?boardType=L",
+        "--collect-after-snapshot",
+        "--interactive-login",
+        "--stop-after-empty-pages",
+        "5",
+    ]
+    assert commands[1] == [
+        "python-test",
+        str(archive_loop.PROJECT_ROOT / "scripts" / "batch_recollect.py"),
+    ]
+
+
+def test_realtime_index_cli_builds_realtime_command(monkeypatch):
+    captured = {}
+
+    def fake_run_loop(config):
+        captured["commands"] = archive_loop.build_archive_cycle_commands(config)
+        return 0
+
+    monkeypatch.setattr(archive_loop, "run_loop", fake_run_loop)
+
+    rc = archive_loop.main(
+        [
+            "--list-url",
+            "https://cafe.naver.com/example",
+            "--interactive-login",
+            "--realtime-index",
+            "--stop-after-empty-pages",
+            "5",
+        ]
+    )
+
+    assert rc == 0
+    assert captured["commands"][0][1].endswith(str(Path("scripts") / "index_tail_realtime.py"))
+    assert captured["commands"][0][-2:] == ["--stop-after-empty-pages", "5"]
+    assert captured["commands"][1][1].endswith(str(Path("scripts") / "batch_recollect.py"))
 
 
 def test_default_max_runs_is_calculated_from_duration_and_interval():

@@ -72,6 +72,8 @@ class LoopConfig:
     lock_stale_minutes: float = DEFAULT_LOCK_STALE_MINUTES
     market_schedule: bool = False
     interactive_login: bool = False
+    realtime_index: bool = False
+    stop_after_empty_pages: int = 5
     argv_summary: str = ""
 
 
@@ -180,14 +182,17 @@ def build_archive_cycle_commands(config: LoopConfig) -> list[list[str]]:
 
 
 def build_index_tail_command(config: LoopConfig) -> list[str]:
+    index_script = "index_tail_realtime.py" if config.realtime_index else "index_tail.py"
     command = [
         config.python,
-        str(PROJECT_ROOT / "scripts" / "index_tail.py"),
+        str(PROJECT_ROOT / "scripts" / index_script),
         config.list_url,
         "--collect-after-snapshot",
     ]
     if config.interactive_login:
         command.append("--interactive-login")
+    if config.realtime_index:
+        command.extend(["--stop-after-empty-pages", str(config.stop_after_empty_pages)])
     return command
 
 
@@ -199,7 +204,7 @@ def build_batch_recollect_command(config: LoopConfig) -> list[str]:
 
 
 def is_index_tail_command(command: list[str]) -> bool:
-    return len(command) >= 2 and Path(command[1]).name == "index_tail.py"
+    return len(command) >= 2 and Path(command[1]).name in {"index_tail.py", "index_tail_realtime.py"}
 
 
 def build_daily_archive_command(config: LoopConfig) -> list[str]:
@@ -875,6 +880,17 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         help="pass --interactive-login to index_tail.py for the existing manual login flow",
     )
     parser.add_argument(
+        "--realtime-index",
+        action="store_true",
+        help="use index_tail_realtime.py for the title indexing step",
+    )
+    parser.add_argument(
+        "--stop-after-empty-pages",
+        type=int,
+        default=5,
+        help="with --realtime-index, stop title indexing after N consecutive pages save 0 articles",
+    )
+    parser.add_argument(
         "--market-schedule",
         action="store_true",
         help="use local time windows: 23:00-06:00 stop, 06:00-07:00 30m, 07:00-08:00 10m, 08:00-16:00 5m, 16:00-18:00 10m, 18:00-23:00 30m",
@@ -898,6 +914,8 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         parser.error("--stop-on-failed must be non-negative")
     if args.lock_stale_minutes < 0:
         parser.error("--lock-stale-minutes must be non-negative")
+    if args.stop_after_empty_pages < 1:
+        parser.error("--stop-after-empty-pages must be positive")
     return args
 
 
@@ -927,6 +945,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         lock_stale_minutes=args.lock_stale_minutes,
         market_schedule=args.market_schedule,
         interactive_login=args.interactive_login,
+        realtime_index=args.realtime_index,
+        stop_after_empty_pages=args.stop_after_empty_pages,
         argv_summary=" ".join(argv if argv is not None else sys.argv[1:]),
     )
     return run_loop(config)
