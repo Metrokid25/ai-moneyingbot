@@ -8,6 +8,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import batch_recollect
+import index_tail_realtime
 import run_daily_archive_loop as archive_loop
 
 
@@ -113,6 +114,11 @@ def test_realtime_session_run_uses_one_session_for_index_and_batch(monkeypatch):
     assert seen[0][3]["stop_after_empty_pages"] == 7
     assert seen[1] == ("batch", session)
     assert session.closed is True
+    assert "[archive_loop] step 1/2: realtime title collection started" in result.stdout
+    assert "[archive_loop] title collection finished: saved_delta=0 latest_id=-" in result.stdout
+    assert "[archive_loop] step 2/2: body collection started" in result.stdout
+    assert "[archive_loop] body collection finished" in result.stdout
+    assert "[archive_loop] cycle 1 finished: returncode=0 saved_delta=0 latest_id=-" in result.stdout
     assert "index_tail_realtime.py" in result.stdout
     assert "batch_recollect.py" in result.stdout
 
@@ -145,3 +151,64 @@ def test_batch_recollect_accepts_existing_session(monkeypatch):
     assert collect_sessions == [session]
     assert session.closed is False
     assert session.goto_calls == [batch_recollect.CAFE_MEMBERS_LIST_URL]
+
+
+def test_batch_recollect_prints_login_wait_prompt_when_login_required(monkeypatch, capsys):
+    class LoginSession(FakeSession):
+        def goto(self, url):
+            self.goto_calls.append(url)
+            return url, "login_required"
+
+    session = LoginSession()
+
+    monkeypatch.setattr(batch_recollect, "get_articles_by_status", lambda _status: [FakeArticle()])
+    monkeypatch.setattr(batch_recollect, "get_conn", lambda: FakeConn())
+    monkeypatch.setattr(batch_recollect, "_open_logfile", lambda: (Path("test.log"), FakeLog()))
+    monkeypatch.setattr(batch_recollect, "_write_log_header", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(batch_recollect, "_write_final_report", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(batch_recollect, "_print_summary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(batch_recollect, "_print_error_reason_dist", lambda: None)
+    monkeypatch.setattr(batch_recollect, "wait_for_login", lambda _page: None)
+    monkeypatch.setattr(batch_recollect.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(batch_recollect, "get_article_by_id", lambda _aid: FakeCollectedArticle())
+    monkeypatch.setattr(
+        batch_recollect,
+        "collect_body",
+        lambda *_args, **_kwargs: (batch_recollect.Status.BODY_COLLECTED, None),
+    )
+
+    rc = batch_recollect.run_batch_recollect(session=session)
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "[LOGIN] 브라우저에서 로그인을 완료한 뒤, 이 PowerShell 창에서 엔터를 눌러주세요." in out
+    assert "[LOGIN] 엔터 입력 대기 중..." in out
+
+
+def test_realtime_index_prints_login_wait_prompt_when_login_required(monkeypatch, capsys):
+    class LoginSession(FakeSession):
+        def goto(self, url):
+            self.goto_calls.append(url)
+            return url, "login_required"
+
+    session = LoginSession()
+
+    monkeypatch.setattr(index_tail_realtime, "init_db", lambda: None)
+    monkeypatch.setattr(
+        index_tail_realtime,
+        "_load_latest_snapshot",
+        lambda: {"snapshot_max_id": 100},
+    )
+    monkeypatch.setattr(index_tail_realtime, "wait_for_login", lambda _page: None)
+    monkeypatch.setattr(index_tail_realtime, "_collect_after_snapshot", lambda *_args, **_kwargs: 0)
+
+    rc = index_tail_realtime.run_realtime_index(
+        "https://example.test/list",
+        session,
+        interactive_login=True,
+    )
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "[LOGIN] 브라우저에서 로그인을 완료한 뒤, 이 PowerShell 창에서 엔터를 눌러주세요." in out
+    assert "[LOGIN] 엔터 입력 대기 중..." in out

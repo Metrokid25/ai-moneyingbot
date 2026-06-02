@@ -722,11 +722,34 @@ def run_preflight(config: PreflightConfig | None = None) -> int:
     return 2 if fail_count else 0
 
 
+class _TeeTextIO:
+    def __init__(self, capture: io.StringIO, stream) -> None:
+        self.capture = capture
+        self.stream = stream
+
+    def write(self, text: str) -> int:
+        self.capture.write(text)
+        written = self.stream.write(text)
+        self.stream.flush()
+        return written
+
+    def flush(self) -> None:
+        self.capture.flush()
+        self.stream.flush()
+
+
+def _emit_realtime_stdout(stdout_parts: list[str], line: str) -> None:
+    print(line, flush=True)
+    stdout_parts.append(line)
+
+
 def _capture_function_call(func: Callable[..., int], *args, **kwargs) -> tuple[int, str, str]:
     stdout = io.StringIO()
     stderr = io.StringIO()
     returncode = 0
-    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+    tee_stdout = _TeeTextIO(stdout, sys.stdout)
+    tee_stderr = _TeeTextIO(stderr, sys.stderr)
+    with contextlib.redirect_stdout(tee_stdout), contextlib.redirect_stderr(tee_stderr):
         try:
             returncode = int(func(*args, **kwargs))
         except SystemExit as exc:
@@ -774,6 +797,10 @@ def run_once_realtime_session(
     session = browser_session_factory()
     try:
         index_command = commands[0]
+        _emit_realtime_stdout(
+            stdout_parts,
+            "[archive_loop] step 1/2: realtime title collection started",
+        )
         index_returncode, command_stdout, command_stderr = _capture_function_call(
             realtime_index_runner,
             config.list_url,
@@ -787,12 +814,26 @@ def run_once_realtime_session(
         if command_stderr:
             stderr_parts.append("$ " + " ".join(index_command))
             stderr_parts.append(command_stderr)
+        after_index_summary = readonly_archive_summary(config.db_file)
+        title_saved_delta = None
+        if before_summary["article_count"] is not None and after_index_summary["article_count"] is not None:
+            title_saved_delta = max(0, after_index_summary["article_count"] - before_summary["article_count"])
+        _emit_realtime_stdout(
+            stdout_parts,
+            "[archive_loop] title collection finished: "
+            f"saved_delta={display_status_value(title_saved_delta)} "
+            f"latest_id={display_status_value(after_index_summary['latest_article_id'])}",
+        )
         if index_returncode != 0:
             returncode = index_returncode
         elif contains_block_signal(command_stdout, command_stderr) and not index_tail_completed(command_stdout):
             returncode = 0
         else:
             batch_command = commands[1]
+            _emit_realtime_stdout(
+                stdout_parts,
+                "[archive_loop] step 2/2: body collection started",
+            )
             batch_returncode, command_stdout, command_stderr = _capture_function_call(
                 batch_recollect_runner,
                 session=session,
@@ -805,6 +846,10 @@ def run_once_realtime_session(
                 stderr_parts.append(command_stderr)
             if batch_returncode != 0:
                 returncode = batch_returncode
+            _emit_realtime_stdout(
+                stdout_parts,
+                "[archive_loop] body collection finished",
+            )
     finally:
         try:
             session.close()
@@ -813,6 +858,16 @@ def run_once_realtime_session(
 
     after_summary = readonly_archive_summary(config.db_file)
     finished_at = datetime.now()
+    cycle_saved_delta = None
+    if before_summary["article_count"] is not None and after_summary["article_count"] is not None:
+        cycle_saved_delta = max(0, after_summary["article_count"] - before_summary["article_count"])
+    _emit_realtime_stdout(
+        stdout_parts,
+        f"[archive_loop] cycle {run_number} finished: "
+        f"returncode={returncode} "
+        f"saved_delta={display_status_value(cycle_saved_delta)} "
+        f"latest_id={display_status_value(after_summary['latest_article_id'])}",
+    )
     return RunResult(
         run_number=run_number,
         started_at=started_at,

@@ -386,8 +386,11 @@ def run_realtime_index(
 
     trigger_url = build_page_url(list_url, 1)
     print(f"\n[index_tail] browser entry: {trigger_url}")
-    session.goto(trigger_url)
+    _final_url, entry_err = session.goto(trigger_url)
     if interactive_login:
+        if entry_err == "login_required":
+            print("[LOGIN] 브라우저에서 로그인을 완료한 뒤, 이 PowerShell 창에서 엔터를 눌러주세요.", flush=True)
+            print("[LOGIN] 엔터 입력 대기 중...", flush=True)
         wait_for_login(session.page)
 
     total = _collect_after_snapshot(
