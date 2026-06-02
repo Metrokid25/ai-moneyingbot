@@ -1,5 +1,6 @@
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 
@@ -16,6 +17,7 @@ class FakeSession:
     def __init__(self):
         self.page = object()
         self.closed = False
+        self.close_count = 0
         self.goto_calls = []
 
     def goto(self, url):
@@ -24,6 +26,7 @@ class FakeSession:
 
     def close(self):
         self.closed = True
+        self.close_count += 1
 
 
 class FakeLog:
@@ -56,6 +59,23 @@ class FakeConn:
 
 def _archive_summary(_db_file):
     return {"article_count": 0, "latest_article_id": None}
+
+
+def _loop_config(tmp_path, **overrides):
+    values = {
+        "list_url": "https://example.test/list",
+        "max_runs": 1,
+        "duration_hours": 24,
+        "interval_seconds": 1,
+        "market_schedule": False,
+        "realtime_index": True,
+        "log_dir": tmp_path / "logs",
+        "status_file": tmp_path / "state" / "archive_loop_status.json",
+        "lock_file": tmp_path / "state" / "archive_loop.lock",
+        "db_file": tmp_path / "data" / "archive.db",
+    }
+    values.update(overrides)
+    return archive_loop.LoopConfig(**values)
 
 
 def test_default_run_once_keeps_subprocess_command_path(monkeypatch):
@@ -121,6 +141,84 @@ def test_realtime_session_run_uses_one_session_for_index_and_batch(monkeypatch):
     assert "[archive_loop] cycle 1 finished: returncode=0 saved_delta=0 latest_id=-" in result.stdout
     assert "index_tail_realtime.py" in result.stdout
     assert "batch_recollect.py" in result.stdout
+
+
+def test_market_realtime_loop_reuses_one_session_across_cycles(monkeypatch, tmp_path):
+    session = FakeSession()
+    seen = []
+    slept = []
+    monkeypatch.setattr(archive_loop, "readonly_archive_summary", _archive_summary)
+
+    def fake_index(_list_url, passed_session, **_kwargs):
+        seen.append(("index", passed_session, passed_session.closed))
+        print("[index_tail] complete")
+        return 0
+
+    def fake_batch(*, session):
+        seen.append(("batch", session, session.closed))
+        print("[batch] complete")
+        return 0
+
+    config = _loop_config(
+        tmp_path,
+        market_schedule=True,
+        realtime_index=True,
+        max_runs=2,
+    )
+
+    rc = archive_loop.run_loop(
+        config,
+        sleeper=slept.append,
+        clock=lambda: datetime(2026, 6, 2, 9, 0, 0),
+        realtime_browser_session_factory=lambda: session,
+        realtime_index_runner=fake_index,
+        batch_recollect_runner=fake_batch,
+    )
+
+    assert rc == 0
+    assert slept == [300]
+    assert seen == [
+        ("index", session, False),
+        ("batch", session, False),
+        ("index", session, False),
+        ("batch", session, False),
+    ]
+    assert session.closed is True
+    assert session.close_count == 1
+
+
+def test_single_realtime_run_closes_session_after_cycle(monkeypatch, tmp_path):
+    session = FakeSession()
+    seen = []
+    monkeypatch.setattr(archive_loop, "readonly_archive_summary", _archive_summary)
+
+    def fake_index(_list_url, passed_session, **_kwargs):
+        seen.append(("index", passed_session, passed_session.closed))
+        print("[index_tail] complete")
+        return 0
+
+    def fake_batch(*, session):
+        seen.append(("batch", session, session.closed))
+        print("[batch] complete")
+        return 0
+
+    config = _loop_config(tmp_path, realtime_index=True, max_runs=1)
+
+    result = archive_loop.run_once_realtime_session(
+        config,
+        1,
+        browser_session_factory=lambda: session,
+        realtime_index_runner=fake_index,
+        batch_recollect_runner=fake_batch,
+    )
+
+    assert result.returncode == 0
+    assert seen == [
+        ("index", session, False),
+        ("batch", session, False),
+    ]
+    assert session.closed is True
+    assert session.close_count == 1
 
 
 def test_batch_recollect_accepts_existing_session(monkeypatch):
@@ -212,3 +310,50 @@ def test_realtime_index_prints_login_wait_prompt_when_login_required(monkeypatch
     assert rc == 0
     assert "[LOGIN] 브라우저에서 로그인을 완료한 뒤, 이 PowerShell 창에서 엔터를 눌러주세요." in out
     assert "[LOGIN] 엔터 입력 대기 중..." in out
+
+
+def test_print_run_summary_does_not_replay_stdout(capsys):
+    result = archive_loop.RunResult(
+        run_number=1,
+        started_at=datetime(2026, 6, 2, 9, 0, 0),
+        finished_at=datetime(2026, 6, 2, 9, 1, 0),
+        returncode=0,
+        stdout="[LOGIN] 엔터 입력 대기 중...\n[batch] complete",
+        stderr="",
+        commands=[],
+        before_article_count=10,
+        after_article_count=12,
+        latest_article_id=123,
+    )
+
+    archive_loop.print_run_summary(result, Path("logs/archive_loop/test.log"))
+
+    out = capsys.readouterr().out
+    assert "[archive_loop] run_number : 1" in out
+    assert "[archive_loop] saved_delta: 2" in out
+    assert "[archive_loop] latest_id : 123" in out
+    assert "[archive_loop] log       : logs" in out
+    assert "[archive_loop] stdout" not in out
+    assert "[LOGIN] 엔터 입력 대기 중..." not in out
+    assert "[archive_loop] stderr" not in out
+
+
+def test_print_run_summary_prints_stderr_only_when_present(capsys):
+    result = archive_loop.RunResult(
+        run_number=1,
+        started_at=datetime(2026, 6, 2, 9, 0, 0),
+        finished_at=datetime(2026, 6, 2, 9, 1, 0),
+        returncode=1,
+        stdout="normal output",
+        stderr="error output",
+        commands=[],
+        before_article_count=10,
+        after_article_count=10,
+        latest_article_id=123,
+    )
+
+    archive_loop.print_run_summary(result, Path("logs/archive_loop/test.log"))
+
+    out = capsys.readouterr().out
+    assert "[archive_loop] stdout" not in out
+    assert "[archive_loop] stderr    : error output" in out

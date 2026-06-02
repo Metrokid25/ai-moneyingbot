@@ -770,6 +770,8 @@ def run_once_realtime_session(
     config: LoopConfig,
     run_number: int,
     *,
+    session: object | None = None,
+    close_session: bool = True,
     browser_session_factory: Callable[[], object] | None = None,
     realtime_index_runner: Callable[..., int] | None = None,
     batch_recollect_runner: Callable[..., int] | None = None,
@@ -794,7 +796,11 @@ def run_once_realtime_session(
 
         batch_recollect_runner = run_batch_recollect
 
-    session = browser_session_factory()
+    if session is None:
+        session = browser_session_factory()
+        owns_session = True
+    else:
+        owns_session = False
     try:
         index_command = commands[0]
         _emit_realtime_stdout(
@@ -851,10 +857,11 @@ def run_once_realtime_session(
                 "[archive_loop] body collection finished",
             )
     finally:
-        try:
-            session.close()
-        except Exception:
-            pass
+        if owns_session or close_session:
+            try:
+                session.close()
+            except Exception:
+                pass
 
     after_summary = readonly_archive_summary(config.db_file)
     finished_at = datetime.now()
@@ -939,8 +946,8 @@ def print_run_summary(result: RunResult, log_path: Path) -> None:
     if result.before_article_count is not None and result.after_article_count is not None:
         print(f"[archive_loop] saved_delta: {max(0, result.after_article_count - result.before_article_count)}")
     print(f"[archive_loop] latest_id : {display_status_value(result.latest_article_id)}")
-    print(f"[archive_loop] stdout    : {summarize(result.stdout)}")
-    print(f"[archive_loop] stderr    : {summarize(result.stderr)}")
+    if result.stderr.strip():
+        print(f"[archive_loop] stderr    : {summarize(result.stderr)}")
     print(f"[archive_loop] log       : {log_path}")
 
 
@@ -949,6 +956,9 @@ def run_loop(
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     sleeper: Callable[[float], None] = time.sleep,
     clock: Callable[[], datetime] = datetime.now,
+    realtime_browser_session_factory: Callable[[], object] | None = None,
+    realtime_index_runner: Callable[..., int] | None = None,
+    batch_recollect_runner: Callable[..., int] | None = None,
 ) -> int:
     if is_placeholder_url(config.list_url):
         print("[archive_loop] ERROR: --list-url looks like a placeholder; refusing to run.")
@@ -967,8 +977,16 @@ def run_loop(
 
     status = base_status(config, loop_started_at, max_runs)
     stop_at = loop_started_at + timedelta(hours=config.duration_hours)
+    loop_realtime_session = None
 
     try:
+        if config.market_schedule and config.realtime_index:
+            if realtime_browser_session_factory is None:
+                from browser import BrowserSession
+
+                realtime_browser_session_factory = BrowserSession
+            loop_realtime_session = realtime_browser_session_factory()
+
         write_status(config, status)
         for run_number in range(1, max_runs + 1):
             now = clock()
@@ -990,7 +1008,17 @@ def run_loop(
 
             run_started_at = clock()
             update_status_for_run_start(config, status, run_number, run_started_at)
-            result = run_once(config, run_number, runner=runner)
+            if loop_realtime_session is not None:
+                result = run_once_realtime_session(
+                    config,
+                    run_number,
+                    session=loop_realtime_session,
+                    close_session=False,
+                    realtime_index_runner=realtime_index_runner,
+                    batch_recollect_runner=batch_recollect_runner,
+                )
+            else:
+                result = run_once(config, run_number, runner=runner)
             stop_reason = stop_reason_for(config, result)
             update_status_for_run_finish(config, status, result, stop_reason)
             path = append_log(config, result, stop_reason=stop_reason)
@@ -1011,6 +1039,11 @@ def run_loop(
         print("[archive_loop] stopping: keyboard interrupt")
         return 130
     finally:
+        if loop_realtime_session is not None:
+            try:
+                loop_realtime_session.close()
+            except Exception:
+                pass
         release_lock(config)
 
 
