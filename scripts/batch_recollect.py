@@ -36,13 +36,18 @@ CIRCUIT_BREAKER_REASONS = {
 _SIM_PLAN = [("timeout", 10), ("navigation", 5), ("empty", 3)]
 
 
+class CircuitBreakerTripped(Exception):
+    pass
+
+
 class _CircuitBreaker:
     """연속 block 신호 임계값 도달 시 양산을 즉시 중단한다."""
 
-    def __init__(self, enabled: bool, threshold: int, reasons: set) -> None:
+    def __init__(self, enabled: bool, threshold: int, reasons: set, *, use_sys_exit: bool = True) -> None:
         self.enabled = enabled
         self.threshold = threshold
         self.reasons = reasons
+        self.use_sys_exit = use_sys_exit
         self._signal: Optional[str] = None
         self._count: int = 0
 
@@ -74,7 +79,9 @@ class _CircuitBreaker:
             print(msg)
             if log_fh:
                 _log(log_fh, msg)
-            sys.exit(2)
+            if self.use_sys_exit:
+                sys.exit(2)
+            raise CircuitBreakerTripped(msg)
 
 
 def _build_sim_map(indexed_ids: list[int]) -> dict[int, str]:
@@ -291,8 +298,18 @@ def _parse_args():
     return p.parse_args()
 
 
-def main() -> int:
-    args = _parse_args()
+def run_batch_recollect(
+    session: Optional[BrowserSession] = None,
+    *,
+    simulate_fail: Optional[str] = None,
+    simulate_rate: float = 1.0,
+    inject_sim: bool = False,
+) -> int:
+    args = argparse.Namespace(
+        simulate_fail=simulate_fail,
+        simulate_rate=simulate_rate,
+        inject_sim=inject_sim,
+    )
 
     if args.inject_sim and args.simulate_fail:
         print("[ERROR] --inject-sim and --simulate-fail are mutually exclusive")
@@ -345,7 +362,9 @@ def main() -> int:
     print(f"[batch] 예상 소요 시간: 약 {total * (8 + avg_sleep) / 60:.1f}분")
     print()
     print("[batch] 브라우저 세션 시작...")
-    session = BrowserSession()
+    owns_session = session is None
+    if session is None:
+        session = BrowserSession()
 
     status_counts: dict[str, int] = {}
     body_lens: list[int] = []
@@ -354,8 +373,14 @@ def main() -> int:
     retry_stats = {"new": 0, "retry": 0, "success": 0, "kept_indexed": 0, "demoted": 0}
     sim_stats = {"injected": 0, "success": 0}
     processed = 0
+    returncode = 0
     start_ts = time.time()
-    cb = _CircuitBreaker(CIRCUIT_BREAKER_ENABLED, CIRCUIT_BREAKER_THRESHOLD, CIRCUIT_BREAKER_REASONS)
+    cb = _CircuitBreaker(
+        CIRCUIT_BREAKER_ENABLED,
+        CIRCUIT_BREAKER_THRESHOLD,
+        CIRCUIT_BREAKER_REASONS,
+        use_sys_exit=False,
+    )
 
     try:
         session.goto(CAFE_MEMBERS_LIST_URL)
@@ -433,6 +458,9 @@ def main() -> int:
             if i < total:
                 time.sleep(random.uniform(SLEEP_MIN_S, SLEEP_MAX_S))
 
+    except CircuitBreakerTripped:
+        returncode = 2
+
     except KeyboardInterrupt:
         print(f"\n[batch] 사용자 중단. 처리 완료: {processed}/{total}")
 
@@ -445,12 +473,24 @@ def main() -> int:
             log_fh.close()
         except Exception:
             pass
-        try:
-            session.close()
-        except Exception:
-            pass
+        if owns_session:
+            try:
+                session.close()
+            except Exception:
+                pass
 
+    if returncode:
+        return returncode
     return 0 if not failed_ids else 1
+
+
+def main() -> int:
+    args = _parse_args()
+    return run_batch_recollect(
+        simulate_fail=args.simulate_fail,
+        simulate_rate=args.simulate_rate,
+        inject_sim=args.inject_sim,
+    )
 
 
 if __name__ == "__main__":

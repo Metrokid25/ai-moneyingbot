@@ -8,7 +8,9 @@ perform collection directly.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import math
 import os
@@ -17,6 +19,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, time as datetime_time, timedelta
 from pathlib import Path
@@ -719,11 +722,119 @@ def run_preflight(config: PreflightConfig | None = None) -> int:
     return 2 if fail_count else 0
 
 
+def _capture_function_call(func: Callable[..., int], *args, **kwargs) -> tuple[int, str, str]:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    returncode = 0
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        try:
+            returncode = int(func(*args, **kwargs))
+        except SystemExit as exc:
+            if isinstance(exc.code, int):
+                returncode = exc.code
+            elif exc.code is None:
+                returncode = 0
+            else:
+                print(exc.code, file=sys.stderr)
+                returncode = 1
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+            returncode = 1
+    return returncode, stdout.getvalue(), stderr.getvalue()
+
+
+def run_once_realtime_session(
+    config: LoopConfig,
+    run_number: int,
+    *,
+    browser_session_factory: Callable[[], object] | None = None,
+    realtime_index_runner: Callable[..., int] | None = None,
+    batch_recollect_runner: Callable[..., int] | None = None,
+) -> RunResult:
+    commands = build_archive_cycle_commands(config)
+    before_summary = readonly_archive_summary(config.db_file)
+    started_at = datetime.now()
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    returncode = 0
+
+    if browser_session_factory is None:
+        from browser import BrowserSession
+
+        browser_session_factory = BrowserSession
+    if realtime_index_runner is None:
+        from index_tail_realtime import run_realtime_index
+
+        realtime_index_runner = run_realtime_index
+    if batch_recollect_runner is None:
+        from batch_recollect import run_batch_recollect
+
+        batch_recollect_runner = run_batch_recollect
+
+    session = browser_session_factory()
+    try:
+        index_command = commands[0]
+        index_returncode, command_stdout, command_stderr = _capture_function_call(
+            realtime_index_runner,
+            config.list_url,
+            session,
+            interactive_login=config.interactive_login,
+            stop_after_empty_pages=config.stop_after_empty_pages,
+        )
+        stdout_parts.append("$ " + " ".join(index_command))
+        if command_stdout:
+            stdout_parts.append(command_stdout)
+        if command_stderr:
+            stderr_parts.append("$ " + " ".join(index_command))
+            stderr_parts.append(command_stderr)
+        if index_returncode != 0:
+            returncode = index_returncode
+        elif contains_block_signal(command_stdout, command_stderr) and not index_tail_completed(command_stdout):
+            returncode = 0
+        else:
+            batch_command = commands[1]
+            batch_returncode, command_stdout, command_stderr = _capture_function_call(
+                batch_recollect_runner,
+                session=session,
+            )
+            stdout_parts.append("$ " + " ".join(batch_command))
+            if command_stdout:
+                stdout_parts.append(command_stdout)
+            if command_stderr:
+                stderr_parts.append("$ " + " ".join(batch_command))
+                stderr_parts.append(command_stderr)
+            if batch_returncode != 0:
+                returncode = batch_returncode
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+    after_summary = readonly_archive_summary(config.db_file)
+    finished_at = datetime.now()
+    return RunResult(
+        run_number=run_number,
+        started_at=started_at,
+        finished_at=finished_at,
+        returncode=returncode,
+        stdout="\n".join(stdout_parts),
+        stderr="\n".join(stderr_parts),
+        commands=commands,
+        before_article_count=before_summary["article_count"],
+        after_article_count=after_summary["article_count"],
+        latest_article_id=after_summary["latest_article_id"],
+    )
+
+
 def run_once(
     config: LoopConfig,
     run_number: int,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> RunResult:
+    if config.realtime_index:
+        return run_once_realtime_session(config, run_number)
+
     commands = build_archive_cycle_commands(config)
     before_summary = readonly_archive_summary(config.db_file)
     started_at = datetime.now()

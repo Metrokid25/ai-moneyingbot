@@ -364,6 +364,43 @@ def index_pages(
     return total
 
 
+def run_realtime_index(
+    list_url: str,
+    session: BrowserSession,
+    *,
+    interactive_login: bool = False,
+    stop_after_empty_pages: Optional[int] = None,
+) -> int:
+    """Run the realtime collect-after-snapshot path using an existing session."""
+    print(f"[index_tail] url     : {list_url}")
+
+    init_db()
+
+    snapshot = _load_latest_snapshot()
+    if snapshot is None:
+        print("[index_tail] ERROR: data/snapshot_*.json not found.")
+        return 1
+
+    min_id = snapshot["snapshot_max_id"] + 1
+    print(f"[index_tail] --collect-after-snapshot: article_id >= {min_id}")
+
+    trigger_url = build_page_url(list_url, 1)
+    print(f"\n[index_tail] browser entry: {trigger_url}")
+    session.goto(trigger_url)
+    if interactive_login:
+        wait_for_login(session.page)
+
+    total = _collect_after_snapshot(
+        session,
+        list_url,
+        min_id,
+        interactive_login=interactive_login,
+        stop_after_empty_pages=stop_after_empty_pages,
+    )
+    print(f"\n[index_tail] complete. saved={total}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="끝페이지 자동 감지 후 tail N 페이지 인덱싱"
@@ -403,6 +440,12 @@ def main() -> int:
     try:
         # ── --collect-after-snapshot 모드 ─────────────────────────────────
         if args.collect_after_snapshot:
+            return run_realtime_index(
+                args.url,
+                session,
+                interactive_login=args.interactive_login,
+                stop_after_empty_pages=args.stop_after_empty_pages,
+            )
             snapshot = _load_latest_snapshot()
             if snapshot is None:
                 print(f"[index_tail] ERROR: data/snapshot_*.json 없음. 양산 먼저 실행 필요.")
