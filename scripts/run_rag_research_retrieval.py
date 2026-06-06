@@ -5,7 +5,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, NamedTuple, Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -30,10 +30,24 @@ from rag_retrieval import (  # noqa: E402
 DEFAULT_REPORTS_DIR = PROJECT_ROOT / "agent_reports"
 QUESTION_GLOB = "rag-research-questions-*.jsonl"
 PREVIEW_CHARS = 220
+BACKEND_STATUS_OK = "ok"
+BACKEND_STATUS_UNAVAILABLE = "unavailable"
+BACKEND_STATUS_EMPTY = "empty_collection"
+RETRIEVAL_STATUS_BACKEND_UNAVAILABLE = "backend_unavailable"
 
 
 SearchFn = Callable[..., Any]
 EmbedFn = Callable[..., Sequence[float]]
+
+
+class BackendAvailability(NamedTuple):
+    backend_status: str
+    backend_reason: str
+    collection_summary: dict[str, Any]
+
+    @property
+    def can_search(self) -> bool:
+        return self.backend_status == BACKEND_STATUS_OK
 
 
 def configure_output_encoding() -> None:
@@ -128,9 +142,15 @@ def build_retrieval_record(
     question: dict[str, Any],
     formatted_results: Sequence[dict[str, Any]],
     top_k: int,
-    retrieval_error: str | None = None,
+    backend_status: str = BACKEND_STATUS_OK,
+    backend_reason: str | None = None,
 ) -> dict[str, Any]:
     results = [structure_result(row) for row in formatted_results]
+    if backend_status == BACKEND_STATUS_OK:
+        retrieval_status = "ok" if results else "no_results"
+    else:
+        retrieval_status = RETRIEVAL_STATUS_BACKEND_UNAVAILABLE
+
     record = {
         "question_id": question["question_id"],
         "question": question["question"],
@@ -140,24 +160,62 @@ def build_retrieval_record(
         "db_only": question.get("db_only") is True,
         "top_k": top_k,
         "results": results,
-        "retrieval_status": "ok" if results else "no_results",
+        "retrieval_status": retrieval_status,
+        "backend_status": backend_status,
     }
-    if retrieval_error:
-        record["retrieval_error"] = retrieval_error
+    if backend_reason:
+        record["backend_reason"] = backend_reason
     return record
 
 
-def build_no_results_records(
+def build_backend_unavailable_records(
     questions: Sequence[dict[str, Any]],
     *,
     top_k: int,
-    retrieval_error: str | None = None,
+    backend_status: str,
+    backend_reason: str,
 ) -> list[dict[str, Any]]:
     validate_top_k(top_k)
+    if backend_status == BACKEND_STATUS_OK:
+        raise ValueError("backend_status must not be ok for unavailable records")
     return [
-        build_retrieval_record(question, [], top_k, retrieval_error=retrieval_error)
+        build_retrieval_record(
+            question,
+            [],
+            top_k,
+            backend_status=backend_status,
+            backend_reason=backend_reason,
+        )
         for question in questions
     ]
+
+
+def check_backend_availability(
+    collection_summary: dict[str, Any],
+    *,
+    qdrant_path: Path,
+    collection: str,
+) -> BackendAvailability:
+    if not collection_summary.get("collection_exists"):
+        return BackendAvailability(
+            BACKEND_STATUS_UNAVAILABLE,
+            f"collection_missing: {collection}",
+            collection_summary,
+        )
+
+    points_count = collection_summary.get("points_count")
+    if points_count in (None, 0):
+        return BackendAvailability(
+            BACKEND_STATUS_EMPTY,
+            f"empty_collection: {collection} has {points_count or 0} points at {qdrant_path}",
+            collection_summary,
+        )
+
+    return BackendAvailability(
+        BACKEND_STATUS_OK,
+        "collection_available",
+        collection_summary,
+    )
 
 
 def run_retrieval(
@@ -206,20 +264,28 @@ def format_markdown_report(
     qdrant_path: Path,
     collection: str,
     model: str,
-    collection_summary: dict[str, Any],
+    availability: BackendAvailability,
 ) -> str:
     ok_count = sum(1 for record in records if record["retrieval_status"] == "ok")
     no_results_count = sum(1 for record in records if record["retrieval_status"] == "no_results")
+    backend_unavailable_count = sum(
+        1
+        for record in records
+        if record["retrieval_status"] == RETRIEVAL_STATUS_BACKEND_UNAVAILABLE
+    )
     lines = [
         "# RAG Research Question Retrieval Report",
         "",
         f"- generated_at: {generated_at}",
         "- db_only: true",
+        f"- backend_status: {availability.backend_status}",
+        f"- backend_reason: {availability.backend_reason}",
         f"- questions_file: {questions_file}",
         f"- question_count: {len(records)}",
         f"- top_k: {records[0]['top_k'] if records else DEFAULT_TOP_K}",
         f"- retrieval_ok: {ok_count}",
         f"- retrieval_no_results: {no_results_count}",
+        f"- retrieval_backend_unavailable: {backend_unavailable_count}",
         f"- qdrant_path: {qdrant_path}",
         f"- collection: {collection}",
         f"- model: {model}",
@@ -227,8 +293,20 @@ def format_markdown_report(
         "## Collection",
         "",
     ]
-    for key, value in collection_summary.items():
+    for key, value in availability.collection_summary.items():
         lines.append(f"- {key}: {value}")
+
+    lines.extend(
+        [
+            "",
+            "## Settings Alignment",
+            "",
+            "- search_qdrant_phase2.py: uses rag_retrieval DEFAULT_QDRANT_PATH and DEFAULT_COLLECTION",
+            "- run_rag_research_retrieval.py: uses the same rag_retrieval defaults unless CLI overrides are passed",
+            "- evaluate_rag_retrieval_set.py: mock/dry-run evaluator; it does not open Qdrant",
+            "- run_rag_focused_tests.py: includes runner help and test coverage; it does not execute live retrieval",
+        ]
+    )
 
     lines.extend(["", "## Questions", ""])
     for record in records:
@@ -237,6 +315,7 @@ def format_markdown_report(
                 f"### {record['question_id']}",
                 "",
                 f"- status: {record['retrieval_status']}",
+                f"- backend_status: {record.get('backend_status')}",
                 f"- topic: {record.get('topic')}",
                 f"- question: {record['question']}",
                 f"- source_refs: {', '.join(record.get('source_refs') or [])}",
@@ -244,7 +323,11 @@ def format_markdown_report(
             ]
         )
         if not record["results"]:
-            lines.extend(["No retrieval results.", ""])
+            if record["retrieval_status"] == RETRIEVAL_STATUS_BACKEND_UNAVAILABLE:
+                reason = record.get("backend_reason") or availability.backend_reason
+                lines.extend([f"Retrieval backend unavailable: {reason}", ""])
+            else:
+                lines.extend(["No retrieval results.", ""])
             continue
         lines.extend(["| rank | score | article_id | chunk_id | title | preview |", "| --- | --- | --- | --- | --- | --- |"])
         for result in record["results"]:
@@ -302,11 +385,17 @@ def main(argv: list[str] | None = None) -> int:
         questions = load_questions(questions_file)
         client = open_qdrant_client(args.qdrant_path)
         collection_summary = get_collection_summary(client, args.collection)
-        if not collection_summary["collection_exists"]:
-            records = build_no_results_records(
+        availability = check_backend_availability(
+            collection_summary,
+            qdrant_path=args.qdrant_path,
+            collection=args.collection,
+        )
+        if not availability.can_search:
+            records = build_backend_unavailable_records(
                 questions,
                 top_k=args.top_k,
-                retrieval_error=f"collection_missing: {args.collection}",
+                backend_status=availability.backend_status,
+                backend_reason=availability.backend_reason,
             )
         else:
             records = run_retrieval(
@@ -332,15 +421,16 @@ def main(argv: list[str] | None = None) -> int:
             qdrant_path=args.qdrant_path,
             collection=args.collection,
             model=args.model,
-            collection_summary=collection_summary,
+            availability=availability,
         ),
         encoding="utf-8-sig",
         newline="\n",
     )
 
     print(f"Retrieved evidence for {len(records)} DB-only research questions")
-    if records and all(record.get("retrieval_error") for record in records):
-        print(f"Retrieval warning: {records[0]['retrieval_error']}")
+    print(f"Backend status: {availability.backend_status}")
+    if not availability.can_search:
+        print(f"Backend reason: {availability.backend_reason}")
     print(f"JSONL: {jsonl_path}")
     print(f"Markdown: {md_path}")
     return 0
