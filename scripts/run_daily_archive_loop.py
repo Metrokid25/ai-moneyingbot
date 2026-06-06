@@ -766,6 +766,35 @@ def _capture_function_call(func: Callable[..., int], *args, **kwargs) -> tuple[i
     return returncode, stdout.getvalue(), stderr.getvalue()
 
 
+def _wait_for_interactive_login_enter() -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                break
+    else:
+        sys.stdin.readline()
+
+
+def prepare_interactive_login_session(
+    config: LoopConfig,
+    session: object,
+    *,
+    enter_waiter: Callable[[], None] | None = None,
+) -> None:
+    print("[archive_loop] interactive login preparation started", flush=True)
+    print("[archive_loop] opening login/check page", flush=True)
+    session.goto(config.list_url)
+    print("[LOGIN] 브라우저에서 네이버 로그인을 완료한 뒤, 이 PowerShell 창에서 엔터를 눌러주세요.", flush=True)
+    print("[LOGIN] 엔터 입력 대기 중...", flush=True)
+    if enter_waiter is None:
+        enter_waiter = _wait_for_interactive_login_enter
+    enter_waiter()
+    print("[archive_loop] interactive login preparation finished", flush=True)
+
+
 def run_once_realtime_session(
     config: LoopConfig,
     run_number: int,
@@ -959,6 +988,7 @@ def run_loop(
     realtime_browser_session_factory: Callable[[], object] | None = None,
     realtime_index_runner: Callable[..., int] | None = None,
     batch_recollect_runner: Callable[..., int] | None = None,
+    interactive_login_enter_waiter: Callable[[], None] | None = None,
 ) -> int:
     if is_placeholder_url(config.list_url):
         print("[archive_loop] ERROR: --list-url looks like a placeholder; refusing to run.")
@@ -988,6 +1018,12 @@ def run_loop(
             loop_realtime_session = realtime_browser_session_factory()
 
         write_status(config, status)
+        if config.interactive_login and loop_realtime_session is not None:
+            prepare_interactive_login_session(
+                config,
+                loop_realtime_session,
+                enter_waiter=interactive_login_enter_waiter,
+            )
         for run_number in range(1, max_runs + 1):
             now = clock()
             if now >= stop_at:

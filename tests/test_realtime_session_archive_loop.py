@@ -187,6 +187,91 @@ def test_market_realtime_loop_reuses_one_session_across_cycles(monkeypatch, tmp_
     assert session.close_count == 1
 
 
+def test_market_realtime_interactive_login_prepares_before_inactive_skip(monkeypatch, tmp_path, capsys):
+    session = FakeSession()
+    enter_waits = []
+    monkeypatch.setattr(archive_loop, "readonly_archive_summary", _archive_summary)
+
+    config = _loop_config(
+        tmp_path,
+        market_schedule=True,
+        realtime_index=True,
+        interactive_login=True,
+        max_runs=1,
+    )
+
+    rc = archive_loop.run_loop(
+        config,
+        sleeper=lambda _seconds: None,
+        clock=lambda: datetime(2026, 6, 2, 23, 30, 0),
+        realtime_browser_session_factory=lambda: session,
+        realtime_index_runner=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("title collection should not run while market schedule is inactive")
+        ),
+        batch_recollect_runner=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("body collection should not run while market schedule is inactive")
+        ),
+        interactive_login_enter_waiter=lambda: enter_waits.append("enter"),
+    )
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert session.goto_calls == ["https://example.test/list"]
+    assert enter_waits == ["enter"]
+    assert out.index("[archive_loop] interactive login preparation started") < out.index(
+        "[archive_loop] market schedule inactive: market-closed-23-06"
+    )
+    assert "[archive_loop] opening login/check page" in out
+    assert "[LOGIN] 브라우저에서 네이버 로그인을 완료한 뒤, 이 PowerShell 창에서 엔터를 눌러주세요." in out
+    assert "[LOGIN] 엔터 입력 대기 중..." in out
+    assert "[archive_loop] interactive login preparation finished" in out
+    assert session.closed is True
+    assert session.close_count == 1
+
+
+def test_market_realtime_interactive_login_reuses_prepared_session_when_active(monkeypatch, tmp_path):
+    session = FakeSession()
+    seen = []
+    monkeypatch.setattr(archive_loop, "readonly_archive_summary", _archive_summary)
+
+    def fake_index(_list_url, passed_session, **_kwargs):
+        seen.append(("index", passed_session, list(passed_session.goto_calls), passed_session.closed))
+        print("[index_tail] complete")
+        return 0
+
+    def fake_batch(*, session):
+        seen.append(("batch", session, list(session.goto_calls), session.closed))
+        print("[batch] complete")
+        return 0
+
+    config = _loop_config(
+        tmp_path,
+        market_schedule=True,
+        realtime_index=True,
+        interactive_login=True,
+        max_runs=1,
+    )
+
+    rc = archive_loop.run_loop(
+        config,
+        sleeper=lambda _seconds: None,
+        clock=lambda: datetime(2026, 6, 2, 9, 0, 0),
+        realtime_browser_session_factory=lambda: session,
+        realtime_index_runner=fake_index,
+        batch_recollect_runner=fake_batch,
+        interactive_login_enter_waiter=lambda: None,
+    )
+
+    assert rc == 0
+    assert session.goto_calls == ["https://example.test/list"]
+    assert seen == [
+        ("index", session, ["https://example.test/list"], False),
+        ("batch", session, ["https://example.test/list"], False),
+    ]
+    assert session.closed is True
+    assert session.close_count == 1
+
+
 def test_single_realtime_run_closes_session_after_cycle(monkeypatch, tmp_path):
     session = FakeSession()
     seen = []
