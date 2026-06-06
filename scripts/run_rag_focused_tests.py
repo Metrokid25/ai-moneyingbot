@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from datetime import datetime
+from os import getpid
 from pathlib import Path
 from typing import Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PYTEST_BASETEMP = ".tmp/rag_focused_pytest"
+PYTEST_RUNTIME_BASETEMP_ROOT = ".tmp/rag_focused_pytest_runs"
+
+
+def focused_pytest_basetemp() -> str:
+    run_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    return f"{PYTEST_RUNTIME_BASETEMP_ROOT}/run-{run_id}-{getpid()}"
 
 FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
@@ -147,13 +155,36 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 def run_command(display: str, argv: Sequence[str]) -> int:
     print(f"$ {display}", flush=True)
+    prepare_pytest_basetemp_parent(argv)
     result = subprocess.run(argv, cwd=PROJECT_ROOT, check=False)
     return int(result.returncode)
 
 
-def main() -> int:
-    (PROJECT_ROOT / ".tmp").mkdir(exist_ok=True)
+def prepare_pytest_basetemp_parent(argv: Sequence[str]) -> None:
+    for arg in argv:
+        if arg.startswith("--basetemp="):
+            basetemp = Path(arg.removeprefix("--basetemp="))
+            (PROJECT_ROOT / basetemp).parent.mkdir(parents=True, exist_ok=True)
+            return
+
+
+def runtime_focused_commands(pytest_basetemp: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    commands: list[tuple[str, tuple[str, ...]]] = []
+    pytest_index = 0
     for display, argv in FOCUSED_COMMANDS:
+        command_basetemp = pytest_basetemp
+        if argv and argv[0] == "pytest":
+            pytest_index += 1
+            command_basetemp = f"{pytest_basetemp}/cmd-{pytest_index:02d}"
+        runtime_display = display.replace(PYTEST_BASETEMP, command_basetemp)
+        runtime_argv = tuple(arg.replace(PYTEST_BASETEMP, command_basetemp) for arg in argv)
+        commands.append((runtime_display, runtime_argv))
+    return tuple(commands)
+
+
+def main() -> int:
+    (PROJECT_ROOT / PYTEST_RUNTIME_BASETEMP_ROOT).mkdir(parents=True, exist_ok=True)
+    for display, argv in runtime_focused_commands(focused_pytest_basetemp()):
         exit_code = run_command(display, argv)
         if exit_code != 0:
             print(f"FAILED: {display} exited with {exit_code}", file=sys.stderr)

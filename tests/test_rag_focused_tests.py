@@ -74,6 +74,25 @@ def test_focused_runner_includes_current_rag_test_files():
     assert "tests/test_retrieval_eval.py" in command_tests
 
 
+def test_focused_runner_uses_run_scoped_pytest_basetemp():
+    runner = load_runner()
+    basetemp = runner.focused_pytest_basetemp()
+
+    assert basetemp.startswith(".tmp/rag_focused_pytest_runs/run-")
+
+    runtime_commands = runner.runtime_focused_commands(basetemp)
+    pytest_commands = [
+        (display, argv)
+        for display, argv in runtime_commands
+        if argv and argv[0] == "pytest"
+    ]
+
+    assert pytest_commands
+    assert all(f"--basetemp={basetemp}/cmd-" in display for display, _argv in pytest_commands)
+    assert all(any(arg.startswith(f"--basetemp={basetemp}/cmd-") for arg in argv) for _display, argv in pytest_commands)
+    assert len({argv[-1] for _display, argv in pytest_commands}) == len(pytest_commands)
+
+
 def test_focused_runner_stops_on_first_failure(monkeypatch):
     runner = load_runner()
     calls = []
