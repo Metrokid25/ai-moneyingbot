@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 import subprocess
 
 
@@ -56,15 +57,110 @@ def test_review_report_records_latest_commit_summary_read_only():
 def test_pipeline_runs_no_push_then_review_with_publish_options_defaulting_off():
     script = read_text("scripts/run_rag_agent_pipeline.ps1")
 
+    assert "[CmdletBinding()]" in script
+    assert "[switch]$Help" in script
     assert "[switch]$CommitOnPass" in script
     assert "[switch]$PushOnPass" in script
     assert '[string]$CommitMessage = ""' in script
+    assert '[string]$ManualTaskRef = ""' in script
+    assert '[string]$ManualTaskTitle = ""' in script
+    assert '[string]$ManualReviewOutDir = "agent_reports"' in script
     assert "& $OnceScript -NoPush" in script
     assert "& $ReviewScript" in script
     assert "Test-NoActionableRagTask" in script
     assert "Waiting for user approval before any commit or push." in script
     assert 'if (-not $Commit)' in script
     assert "Pipeline passed review. Waiting for user approval before any commit or push." in script
+
+
+def test_pipeline_help_exits_before_any_runner_or_planner_side_effect():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "if ($Help)" in script
+    assert "exit 0" in script
+    assert "run_rag_agent_pipeline.ps1" in script
+    assert "ManualTaskRef" in script
+    assert "ManualTaskTitle" in script
+    assert "ManualReviewOutDir" in script
+    assert "CommitOnPass" in script
+    assert "PushOnPass" in script
+    assert "Push is forbidden before REVIEW_RESULT=PASS." in script
+    assert "Archive-owned 001-real-daily-archive-wiring.md tasks are BLOCKED FOR RAG IMPLEMENTATION." in script
+
+    help_index = script.index("if ($Help)")
+    exit_index = script.index("exit 0", help_index)
+    once_index = script.index("& $OnceScript -NoPush")
+    review_index = script.index("& $ReviewScript *>&1")
+    planner_index = script.index("function Invoke-RagPlanner")
+    manual_gate_index = script.index("function Invoke-ManualReviewGate")
+    commit_index = script.index('Invoke-GitPublishCommand -FailureContext "git commit"')
+    push_index = script.index('Invoke-GitPublishCommand -FailureContext "git push"')
+
+    assert help_index < exit_index < planner_index
+    assert exit_index < once_index
+    assert exit_index < review_index
+    assert exit_index < manual_gate_index
+    assert exit_index < commit_index
+    assert exit_index < push_index
+
+
+def test_pipeline_help_execution_does_not_create_pending_tasks():
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    assert powershell is not None
+    pending_dir = ROOT / "agent_tasks" / "pending"
+    before = sorted(path.name for path in pending_dir.glob("*.md"))
+
+    result = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "scripts\\run_rag_agent_pipeline.ps1",
+            "-Help",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    after = sorted(path.name for path in pending_dir.glob("*.md"))
+    assert result.returncode == 0, result.stderr
+    assert before == after
+    assert "run_rag_agent_pipeline.ps1" in result.stdout
+    assert "ManualTaskRef" in result.stdout
+    assert "Push is forbidden before REVIEW_RESULT=PASS." in result.stdout
+    assert "BLOCKED FOR RAG IMPLEMENTATION" in result.stdout
+    assert "Starting RAG agent pipeline." not in result.stdout
+
+
+def test_pipeline_wires_manual_review_gate_as_optional_helper():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert '$ManualReviewScript = Join-Path $ScriptDir "prepare_manual_task_review.py"' in script
+    assert "function Invoke-ManualReviewGate" in script
+    assert "function Test-ManualReviewGateBlocked" in script
+    assert '"scripts\\prepare_manual_task_review.py"' in script
+    assert "$manualReviewResult = Invoke-ManualReviewGate -TaskRef $ManualTaskRef -TaskTitle $ManualTaskTitle -OutDir $ManualReviewOutDir" in script
+    assert "manual review prompt path:" in script
+    assert "manual review gate enabled:" in script
+    assert "manual review gate blocked:" in script
+
+
+def test_pipeline_blocks_archive_owned_manual_task_before_publish():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert 'return (($output | Out-String) -match "BLOCKED FOR RAG IMPLEMENTATION")' in script
+    assert "if (Test-ManualReviewGateBlocked -TaskRef $ManualTaskRef -TaskTitle $ManualTaskTitle)" in script
+    assert "manual task review gate returned BLOCKED FOR RAG IMPLEMENTATION" in script
+    assert '$manualReviewResult.Blocked = $true' in script
+    assert "Pipeline stopped after manual review gate failure. Commit and push are forbidden." in script
+    blocked_index = script.index("if (Test-ManualReviewGateBlocked -TaskRef $ManualTaskRef -TaskTitle $ManualTaskTitle)")
+    no_action_index = script.index("if (Test-NoActionableRagTask)")
+    publish_index = script.index("function Invoke-PassGatedPublish")
+    assert publish_index < blocked_index < no_action_index
 
 
 def test_pipeline_commits_and_pushes_only_through_pass_gated_options():
@@ -147,6 +243,9 @@ def test_pipeline_prints_final_human_readable_summary_contract():
     assert "pipeline result: $PipelineResult" in script
     assert "review result: $ReviewResult" in script
     assert "review report path: $ReviewReport" in script
+    assert "manual review gate enabled:" in script
+    assert "manual review prompt path:" in script
+    assert "manual review gate blocked:" in script
     assert "commit attempted: $(Format-BooleanResult $PublishResult.CommitAttempted)" in script
     assert "commit succeeded: $(Format-BooleanResult $PublishResult.CommitSucceeded)" in script
     assert "push attempted: $(Format-BooleanResult $PublishResult.PushAttempted)" in script
@@ -173,7 +272,7 @@ def test_pipeline_summary_is_written_for_all_review_outcomes_and_run_failure():
     assert '$pipelineResult = "PLANNER_CREATED_TASK"' in script
     assert '$pipelineResult = "NEEDS_HUMAN_REVIEW"' in script
     assert '$pipelineResult = "FAIL"' in script
-    assert "Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult -PlannerResult $plannerResult" in script
+    assert "Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -ManualReviewResult $manualReviewResult -PublishResult $publishResult -PlannerResult $plannerResult" in script
 
 
 def test_pipeline_generates_task_specific_commit_messages_without_archive_owned_task():

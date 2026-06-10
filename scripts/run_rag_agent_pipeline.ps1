@@ -1,11 +1,47 @@
+[CmdletBinding()]
 param(
+  [switch]$Help,
   [switch]$CommitOnPass,
   [switch]$PushOnPass,
-  [string]$CommitMessage = ""
+  [string]$CommitMessage = "",
+  [string]$ManualTaskRef = "",
+  [string]$ManualTaskTitle = "",
+  [string]$ManualReviewOutDir = "agent_reports"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($Help) {
+  Write-Host @"
+run_rag_agent_pipeline.ps1
+
+Purpose:
+  Run the guarded RAG task pipeline: implementation, focused verification,
+  read-only review, and optional PASS-gated publishing.
+
+Usage:
+  .\scripts\run_rag_agent_pipeline.ps1
+  .\scripts\run_rag_agent_pipeline.ps1 -ManualTaskRef "059-rag-manual-review-gate-pipeline-integration" -ManualTaskTitle "Manual review gate pipeline integration"
+  .\scripts\run_rag_agent_pipeline.ps1 -CommitOnPass -PushOnPass -CommitMessage "Complete RAG task"
+
+Manual task options:
+  -ManualTaskRef <string>       Manual RAG task id, filename, or short reference.
+  -ManualTaskTitle <string>     Optional human-readable title. Defaults to ManualTaskRef.
+  -ManualReviewOutDir <string>  Directory for generated manual review prompt. Default: agent_reports.
+
+Publish options:
+  -CommitOnPass  Commit only after REVIEW_RESULT=PASS and the publish safety gate passes.
+  -PushOnPass    Push only after a successful pass-gated commit. It has no effect without -CommitOnPass.
+
+Safety:
+  Push is forbidden before REVIEW_RESULT=PASS.
+  Archive-owned 001-real-daily-archive-wiring.md tasks are BLOCKED FOR RAG IMPLEMENTATION.
+  -Help prints this text only and does not run task selection, planner, implementation,
+  review, manual review prompt generation, commit, or push.
+"@
+  exit 0
+}
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Resolve-Path (Join-Path $ScriptDir "..")
@@ -14,6 +50,7 @@ $OnceScript = Join-Path $ScriptDir "run_rag_agent_once.ps1"
 $ReviewScript = Join-Path $ScriptDir "review_rag_agent_run.ps1"
 $PlannerScript = Join-Path $ScriptDir "plan_next_rag_task.py"
 $TaskScript = Join-Path $ScriptDir "agent_next_task.py"
+$ManualReviewScript = Join-Path $ScriptDir "prepare_manual_task_review.py"
 
 if (-not (Test-Path $OnceScript)) {
   throw "Missing runner: $OnceScript"
@@ -26,6 +63,9 @@ if (-not (Test-Path $PlannerScript)) {
 }
 if (-not (Test-Path $TaskScript)) {
   throw "Missing task helper: $TaskScript"
+}
+if (-not (Test-Path $ManualReviewScript)) {
+  throw "Missing manual review helper: $ManualReviewScript"
 }
 
 function Get-ReviewMetadata {
@@ -252,6 +292,112 @@ function Invoke-RagPlanner {
   return $result
 }
 
+function New-ManualReviewResult {
+  return @{
+    Enabled = $false
+    ExitCode = 0
+    ReportPath = ""
+    Blocked = $false
+  }
+}
+
+function Invoke-ManualReviewGate {
+  param(
+    [string]$TaskRef,
+    [string]$TaskTitle,
+    [string]$OutDir
+  )
+
+  $result = New-ManualReviewResult
+  if ([string]::IsNullOrWhiteSpace($TaskRef)) {
+    return $result
+  }
+
+  $result.Enabled = $true
+  $resolvedTitle = if ([string]::IsNullOrWhiteSpace($TaskTitle)) { $TaskRef } else { $TaskTitle }
+  $manualArgs = @(
+    "scripts\prepare_manual_task_review.py",
+    $TaskRef,
+    "--task-title",
+    $resolvedTitle,
+    "--out-dir",
+    $OutDir
+  )
+
+  Write-Host "Step 2: prepare_manual_task_review.py"
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $output = & python @manualArgs *>&1
+    $exitCode = $LASTEXITCODE
+  } catch {
+    $output = @($_.Exception.Message)
+    $exitCode = 1
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  $result.ExitCode = $exitCode
+  $output | ForEach-Object { Write-Host $_ }
+  foreach ($line in $output) {
+    $text = ([string]$line).Trim()
+    if ($text -match "^Wrote manual RAG task review prompt:\s*(.+)$") {
+      $result.ReportPath = $Matches[1].Trim()
+    }
+  }
+
+  if ($exitCode -ne 0) {
+    $result.Blocked = $true
+    return $result
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($result.ReportPath) -and (Test-Path $result.ReportPath)) {
+    $content = Get-Content -Path $result.ReportPath -Raw -Encoding UTF8
+    if ($content -match "BLOCKED FOR RAG IMPLEMENTATION") {
+      $result.Blocked = $true
+    }
+  }
+
+  return $result
+}
+
+function Test-ManualReviewGateBlocked {
+  param(
+    [string]$TaskRef,
+    [string]$TaskTitle
+  )
+
+  if ([string]::IsNullOrWhiteSpace($TaskRef)) {
+    return $false
+  }
+
+  $resolvedTitle = if ([string]::IsNullOrWhiteSpace($TaskTitle)) { $TaskRef } else { $TaskTitle }
+  $manualArgs = @(
+    "scripts\prepare_manual_task_review.py",
+    $TaskRef,
+    "--task-title",
+    $resolvedTitle
+  )
+
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $output = & python @manualArgs *>&1
+    $exitCode = $LASTEXITCODE
+  } catch {
+    $output = @($_.Exception.Message)
+    $exitCode = 1
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  if ($exitCode -ne 0) {
+    return $true
+  }
+
+  return (($output | Out-String) -match "BLOCKED FOR RAG IMPLEMENTATION")
+}
+
 function Invoke-PassGatedPublish {
   param(
     [string]$Message,
@@ -367,6 +513,7 @@ function Write-PipelineSummary {
     [string]$PipelineResult,
     [string]$ReviewResult,
     [string]$ReviewReport,
+    [hashtable]$ManualReviewResult,
     [hashtable]$PublishResult,
     [hashtable]$PlannerResult
   )
@@ -380,6 +527,13 @@ function Write-PipelineSummary {
   } else {
     Write-Host "review report path: $ReviewReport"
   }
+  Write-Host "manual review gate enabled: $(Format-BooleanResult $ManualReviewResult.Enabled)"
+  if ([string]::IsNullOrWhiteSpace($ManualReviewResult.ReportPath)) {
+    Write-Host "manual review prompt path: (none)"
+  } else {
+    Write-Host "manual review prompt path: $($ManualReviewResult.ReportPath)"
+  }
+  Write-Host "manual review gate blocked: $(Format-BooleanResult $ManualReviewResult.Blocked)"
   Write-Host "commit attempted: $(Format-BooleanResult $PublishResult.CommitAttempted)"
   Write-Host "commit succeeded: $(Format-BooleanResult $PublishResult.CommitSucceeded)"
   Write-Host "push attempted: $(Format-BooleanResult $PublishResult.PushAttempted)"
@@ -414,9 +568,20 @@ Write-Host "Starting RAG agent pipeline."
 $pipelineResult = "UNKNOWN"
 $reviewResult = "UNKNOWN"
 $reviewReport = ""
+$manualReviewResult = New-ManualReviewResult
 $publishResult = New-PublishResult
 $plannerResult = New-PlannerResult
 $pipelineExit = 0
+
+if (Test-ManualReviewGateBlocked -TaskRef $ManualTaskRef -TaskTitle $ManualTaskTitle) {
+  Write-Host "Pipeline stopped before implementation: manual task review gate returned BLOCKED FOR RAG IMPLEMENTATION."
+  $pipelineResult = "FAIL"
+  $pipelineExit = 1
+  $manualReviewResult.Enabled = $true
+  $manualReviewResult.Blocked = $true
+  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -ManualReviewResult $manualReviewResult -PublishResult $publishResult -PlannerResult $plannerResult
+  exit $pipelineExit
+}
 
 if (Test-NoActionableRagTask) {
   Write-Host "No actionable RAG task found. Running one-shot RAG planner."
@@ -437,7 +602,7 @@ if (Test-NoActionableRagTask) {
     Write-Host "Planner did not create a task. No commit or push will run."
     $pipelineResult = "NO_ACTIONABLE_TASKS"
   }
-  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult -PlannerResult $plannerResult
+  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -ManualReviewResult $manualReviewResult -PublishResult $publishResult -PlannerResult $plannerResult
   exit $pipelineExit
 }
 
@@ -448,11 +613,20 @@ if ($runExit -ne 0) {
   Write-Host "RAG implementation step failed with exit code $runExit."
   $pipelineResult = "FAIL"
   $pipelineExit = $runExit
-  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult -PlannerResult $plannerResult
+  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -ManualReviewResult $manualReviewResult -PublishResult $publishResult -PlannerResult $plannerResult
   exit $pipelineExit
 }
 
-Write-Host "Step 2: review_rag_agent_run.ps1"
+$manualReviewResult = Invoke-ManualReviewGate -TaskRef $ManualTaskRef -TaskTitle $ManualTaskTitle -OutDir $ManualReviewOutDir
+if ($manualReviewResult.ExitCode -ne 0 -or $manualReviewResult.Blocked) {
+  Write-Host "Pipeline stopped after manual review gate failure. Commit and push are forbidden."
+  $pipelineResult = "FAIL"
+  $pipelineExit = 1
+  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -ManualReviewResult $manualReviewResult -PublishResult $publishResult -PlannerResult $plannerResult
+  exit $pipelineExit
+}
+
+Write-Host "Step 3: review_rag_agent_run.ps1"
 $reviewOutput = & $ReviewScript *>&1
 $reviewExit = $LASTEXITCODE
 $reviewOutput | ForEach-Object { Write-Host $_ }
@@ -470,7 +644,7 @@ if ($reviewExit -ne 0 -or $reviewResult -eq "FAIL") {
   Write-Host "Pipeline stopped after review failure. Inspect the review report before continuing."
   $pipelineResult = "FAIL"
   $pipelineExit = 1
-  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult -PlannerResult $plannerResult
+  Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -ManualReviewResult $manualReviewResult -PublishResult $publishResult -PlannerResult $plannerResult
   exit $pipelineExit
 }
 
@@ -490,5 +664,5 @@ if ($reviewResult -eq "PASS") {
   $pipelineResult = "NEEDS_HUMAN_REVIEW"
 }
 
-Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -PublishResult $publishResult -PlannerResult $plannerResult
+Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -ManualReviewResult $manualReviewResult -PublishResult $publishResult -PlannerResult $plannerResult
 exit $pipelineExit

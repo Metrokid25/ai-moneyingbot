@@ -30,6 +30,21 @@ def test_docs_describe_reports_and_commit_flags():
     assert "-NoPush" in docs
 
 
+def test_docs_describe_manual_task_pipeline_review_gate():
+    docs = read_text("docs/rag_autorunner.md")
+
+    assert ".\\scripts\\run_rag_agent_pipeline.ps1 -Help" in docs
+    assert "does not select tasks, run the planner, run Codex, run review, generate manual review prompts, commit, or push" in docs
+    assert '-ManualTaskRef "059-rag-manual-review-gate-pipeline-integration"' in docs
+    assert '-ManualTaskTitle "Manual review gate pipeline integration"' in docs
+    assert "scripts/prepare_manual_task_review.py" in docs
+    assert "generated prompt path in the pipeline summary" in docs
+    assert "does not replace the pending task runner" in docs
+    assert "BLOCKED FOR RAG IMPLEMENTATION" in docs
+    assert "commit/push are forbidden" in docs
+    assert "do not weaken the PASS gate" in docs
+
+
 def test_once_script_has_allowlist_validation_without_bulk_stage():
     script = read_text("scripts/run_rag_agent_once.ps1")
 

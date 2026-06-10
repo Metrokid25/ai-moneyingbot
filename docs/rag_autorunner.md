@@ -58,13 +58,32 @@ Use the RAG pipeline wrapper when you want a one-task RAG run followed by the re
 .\scripts\run_rag_agent_pipeline.ps1
 ```
 
+Show pipeline help without side effects:
+
+```powershell
+.\scripts\run_rag_agent_pipeline.ps1 -Help
+```
+
+`-Help` prints usage only. It does not select tasks, run the planner, run Codex, run review, generate manual review prompts, commit, or push.
+
 The default pipeline run does not commit or push, even when the reviewer returns `REVIEW_RESULT=PASS`. It runs `scripts/run_rag_agent_once.ps1 -NoPush`, runs `scripts/review_rag_agent_run.ps1`, reports the review result, and waits for user approval before publishing.
+
+For a manually requested RAG task, pass the task reference and optional title:
+
+```powershell
+.\scripts\run_rag_agent_pipeline.ps1 -ManualTaskRef "059-rag-manual-review-gate-pipeline-integration" -ManualTaskTitle "Manual review gate pipeline integration"
+```
+
+Manual task mode is an optional review-gate attachment to the existing pipeline. It does not replace the pending task runner, the focused RAG tests, or the independent reviewer. When `-ManualTaskRef` is present, the pipeline runs `scripts/prepare_manual_task_review.py` after the implementation step and records the generated prompt path in the pipeline summary.
+
+If the manual task reference is Archive-owned, such as `001-real-daily-archive-wiring` or `agent_tasks/pending/001-real-daily-archive-wiring.md`, the manual gate emits `BLOCKED FOR RAG IMPLEMENTATION`; the pipeline stops and commit/push are forbidden.
 
 Optional publishing remains pass-gated:
 
 - `-CommitOnPass` creates a commit only when `REVIEW_RESULT=PASS` and the publish safety gate passes.
 - `-PushOnPass` pushes only after a successful pass-gated commit. A push request without `-CommitOnPass` does not push.
 - `-CommitMessage` supplies the message for the pass-gated commit.
+- `-ManualTaskRef` and `-ManualTaskTitle` generate the manual review prompt/checklist but do not weaken the PASS gate.
 
 Review outcomes control publishing:
 
