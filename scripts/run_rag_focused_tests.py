@@ -39,6 +39,10 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (sys.executable, "scripts/run_rag_research_answers.py", "--help"),
     ),
     (
+        "python scripts/prepare_manual_task_review.py --help",
+        (sys.executable, "scripts/prepare_manual_task_review.py", "--help"),
+    ),
+    (
         f"pytest tests/test_rag_answering.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_answering.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
@@ -149,6 +153,10 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         f"pytest tests/test_rag_research_answers.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_research_answers.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_rag_manual_task_review_gate.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_manual_task_review_gate.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
 )
 
