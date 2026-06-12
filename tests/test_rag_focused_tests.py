@@ -26,6 +26,8 @@ def test_focused_runner_uses_only_explicit_rag_commands():
         "python scripts/run_rag_research_answers.py --help",
         "python scripts/run_rag_research_learning_loop.py --help",
         "python scripts/update_rag_research_memory_store.py --help",
+        "python scripts/prepare_rag_memory_promotion_review.py --help",
+        "python scripts/update_rag_memory_promotion_status.py --help",
         "python scripts/prepare_manual_task_review.py --help",
         "pytest tests/test_rag_answering.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_answer_context.py --basetemp=.tmp/rag_focused_pytest",
@@ -57,6 +59,7 @@ def test_focused_runner_uses_only_explicit_rag_commands():
         "pytest tests/test_rag_research_answers.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_research_learning_loop.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_research_memory_store.py --basetemp=.tmp/rag_focused_pytest",
+        "pytest tests/test_rag_memory_promotion_gate.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_manual_task_review_gate.py --basetemp=.tmp/rag_focused_pytest",
     ]
     assert all(display != "pytest" for display in displays)
