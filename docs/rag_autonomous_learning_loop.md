@@ -87,6 +87,16 @@ The reports include:
 - `answer_ok` answers become `candidate_for_memory_store`.
 - backend unavailable records become `fix_retrieval_backend_before_learning`.
 
+## Optional Memory Store Update
+
+The loop does not write the research memory store by default. To append `answer_ok` or `candidate_for_memory_store` results into the idempotent JSONL memory store, opt in explicitly:
+
+```powershell
+python scripts\run_rag_research_learning_loop.py --retrieval-file agent_reports\rag-research-retrieval-YYYYMMDD-HHMMSS.jsonl --update-memory-store
+```
+
+The default store path is `agent_reports/rag_research_memory_store.jsonl`. Use `--memory-store-file` to override it. When the loop is run with `--dry-run`, the memory store is not written.
+
 ## Not In Scope
 
 - No external news or web enrichment.

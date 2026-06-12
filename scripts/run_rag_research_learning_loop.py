@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from typing import Any, NamedTuple, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REPORTS_DIR = PROJECT_ROOT / "agent_reports"
+DEFAULT_MEMORY_STORE = DEFAULT_REPORTS_DIR / "rag_research_memory_store.jsonl"
 DEFAULT_COLLECTION = "goodmorning_chunks"
 DEFAULT_TOP_K = 5
 JSONL_LABEL = "JSONL:"
@@ -269,6 +271,16 @@ def write_reports(out_dir: Path, stamp: str, summary: dict[str, Any]) -> tuple[P
     return json_path, md_path
 
 
+def load_memory_store_updater():
+    script = PROJECT_ROOT / "scripts" / "update_rag_research_memory_store.py"
+    spec = importlib.util.spec_from_file_location("update_rag_research_memory_store", script)
+    module = importlib.util.module_from_spec(spec)
+    if spec.loader is None:
+        raise RuntimeError("could not load update_rag_research_memory_store.py")
+    spec.loader.exec_module(module)
+    return module.update_memory_store
+
+
 def print_plan(plan: LearningPlan) -> None:
     print(DB_ONLY_NOTICE)
     print("Dry run: planned commands only; no reports are generated.")
@@ -280,6 +292,7 @@ def print_plan(plan: LearningPlan) -> None:
     print("Answer step:")
     print("  " + " ".join(plan.answer_command))
     print("Learning summary step: read retrieval/answer JSONL and write rag-learning-loop reports")
+    print("Memory store step: skipped during dry-run; no memory store writes")
 
 
 def run_learning_loop(args: argparse.Namespace) -> tuple[dict[str, Any], Path, Path]:
@@ -328,6 +341,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_REPORTS_DIR)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--timestamp", default=None)
+    parser.add_argument("--update-memory-store", action="store_true")
+    parser.add_argument("--memory-store-file", type=Path, default=DEFAULT_MEMORY_STORE)
     args = parser.parse_args(argv)
     if args.retrieval_file is None and args.questions_file is None:
         parser.error("--questions-file is required unless --retrieval-file is supplied")
@@ -344,6 +359,18 @@ def main(argv: list[str] | None = None) -> int:
             print_plan(plan)
             return 0
         summary, json_path, md_path = run_learning_loop(args)
+        memory_summary = None
+        memory_json_path = None
+        memory_md_path = None
+        if args.update_memory_store:
+            update_memory_store = load_memory_store_updater()
+            memory_summary, memory_json_path, memory_md_path = update_memory_store(
+                learning_loop_file=json_path,
+                answer_file=Path(str(summary["answer_file"])),
+                out_file=args.memory_store_file,
+                dry_run=False,
+                timestamp=stamp,
+            )
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -356,6 +383,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Backend unavailable: {summary.get('backend_unavailable')}")
     print(f"JSON: {json_path}")
     print(f"Markdown: {md_path}")
+    if memory_summary is not None:
+        print(f"Memory added: {memory_summary.get('added_count')}")
+        print(f"Memory skipped duplicates: {memory_summary.get('skipped_duplicate_count')}")
+        print(f"Memory JSON: {memory_json_path}")
+        print(f"Memory Markdown: {memory_md_path}")
     return 0
 
 

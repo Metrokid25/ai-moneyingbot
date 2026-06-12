@@ -240,6 +240,58 @@ def test_cli_with_retrieval_file_writes_learning_reports(tmp_path):
     assert "RAG DB-only research learning loop completed" in result.stdout
 
 
+def test_cli_update_memory_store_is_opt_in(tmp_path):
+    retrieval_path = tmp_path / "retrieval.jsonl"
+    write_jsonl(retrieval_path, [retrieval_row("research_q_001", "ok")])
+    store_path = tmp_path / "memory.jsonl"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--retrieval-file",
+            str(retrieval_path),
+            "--out-dir",
+            str(tmp_path),
+            "--memory-store-file",
+            str(store_path),
+            "--timestamp",
+            "20260610-010203",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not store_path.exists()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--retrieval-file",
+            str(retrieval_path),
+            "--out-dir",
+            str(tmp_path),
+            "--update-memory-store",
+            "--memory-store-file",
+            str(store_path),
+            "--timestamp",
+            "20260610-010204",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert store_path.exists()
+    assert "Memory added: 1" in result.stdout
+
+
 def test_help_and_docs_include_db_only_safety_language():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--help"],
@@ -252,6 +304,8 @@ def test_help_and_docs_include_db_only_safety_language():
     assert result.returncode == 0
     help_text = result.stdout
     doc_text = DOC.read_text(encoding="utf-8")
+    assert "--update-memory-store" in help_text
+    assert "--memory-store-file" in help_text
     for text in (help_text, doc_text):
         assert "DB-only" in text
         assert "external web" in text
