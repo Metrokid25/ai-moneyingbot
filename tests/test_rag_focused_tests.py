@@ -33,6 +33,7 @@ def test_focused_runner_uses_only_explicit_rag_commands():
         "python scripts/validate_rag_rule_candidate_drafts.py --help",
         "python scripts/update_rag_rule_candidate_registry.py --help",
         "python scripts/preview_rag_trading_rule_export.py --help",
+        "python scripts/run_rag_end_to_end_runtime_smoke.py --help",
         "python scripts/prepare_manual_task_review.py --help",
         "pytest tests/test_rag_answering.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_answer_context.py --basetemp=.tmp/rag_focused_pytest",
@@ -70,6 +71,7 @@ def test_focused_runner_uses_only_explicit_rag_commands():
         "pytest tests/test_rag_rule_candidate_schema.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_rule_candidate_registry.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_trading_export_preview.py --basetemp=.tmp/rag_focused_pytest",
+        "pytest tests/test_rag_end_to_end_runtime_smoke.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_manual_task_review_gate.py --basetemp=.tmp/rag_focused_pytest",
     ]
     assert all(display != "pytest" for display in displays)

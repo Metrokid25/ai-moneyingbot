@@ -75,6 +75,10 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (sys.executable, "scripts/preview_rag_trading_rule_export.py", "--help"),
     ),
     (
+        "python scripts/run_rag_end_to_end_runtime_smoke.py --help",
+        (sys.executable, "scripts/run_rag_end_to_end_runtime_smoke.py", "--help"),
+    ),
+    (
         "python scripts/prepare_manual_task_review.py --help",
         (sys.executable, "scripts/prepare_manual_task_review.py", "--help"),
     ),
@@ -221,6 +225,10 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         f"pytest tests/test_rag_trading_export_preview.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_trading_export_preview.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_rag_end_to_end_runtime_smoke.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_end_to_end_runtime_smoke.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
     (
         f"pytest tests/test_rag_manual_task_review_gate.py --basetemp={PYTEST_BASETEMP}",
