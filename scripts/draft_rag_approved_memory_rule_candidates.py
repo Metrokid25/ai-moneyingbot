@@ -11,7 +11,10 @@ from typing import Any, Sequence
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REPORTS_DIR = PROJECT_ROOT / "agent_reports"
 PREVIEW_GLOB = "rag-approved-memory-export-preview-*.json"
+SCHEMA_NAME = "rag_rule_candidate_draft"
+SCHEMA_VERSION = 1
 ALLOWED_CATEGORIES = {"principle", "pattern", "risk_control", "watch_condition", "unresolved"}
+ALLOWED_DRAFT_STATUSES = {"draft_needs_human_review", "rejected", "approved_for_registry"}
 DB_ONLY_NOTICE = (
     "DB-only RAG rule candidate draft: use only internal approved memory export "
     "preview reports and the DB-grounded memory text already present in those reports. "
@@ -114,11 +117,15 @@ def draft_from_preview_candidate(candidate: dict[str, Any], index: int) -> dict[
     memory_id = normalize_space(candidate.get("memory_id"))
     draft_id = f"rag_rule_candidate_draft_{index:04d}"
     return {
+        "candidate_id": draft_id,
+        "rule_candidate_id": draft_id,
         "draft_id": draft_id,
         "draft_status": DRAFT_STATUS,
         "source_memory_id": memory_id,
         "question_id": normalize_space(candidate.get("question_id")),
+        "source_question": normalize_space(candidate.get("question")),
         "question": normalize_space(candidate.get("question")),
+        "source_answer": normalize_space(candidate.get("answer")),
         "answer": normalize_space(candidate.get("answer")),
         "evidence_strength": normalize_space(candidate.get("evidence_strength")),
         "source_refs": coerce_list(candidate.get("source_refs")),
@@ -128,9 +135,13 @@ def draft_from_preview_candidate(candidate: dict[str, Any], index: int) -> dict[
         "source_promotion_review": candidate.get("promotion_review")
         if isinstance(candidate.get("promotion_review"), dict)
         else {},
+        "rule_candidate_category": category,
         "suggested_export_category": category,
+        "rule_candidate_summary": draft_summary(candidate),
+        "draft_summary": draft_summary(candidate),
         "draft_rule_candidate_summary": draft_summary(candidate),
         "draft_review_note": draft_review_note(candidate),
+        "boundary_notice": f"{TRADING_BOUNDARY_NOTICE} {DRAFT_ONLY_NOTICE}",
         "draft_only_notice": DRAFT_ONLY_NOTICE,
     }
 
@@ -167,10 +178,13 @@ def build_draft_report(
     category_filters: Sequence[str],
 ) -> dict[str, Any]:
     return {
+        "schema_name": SCHEMA_NAME,
+        "schema_version": SCHEMA_VERSION,
         "preview_file": str(preview_file),
         "source_memory_store_file": normalize_space(preview_report.get("memory_store_file")),
         "source_preview_generated_at": normalize_space(preview_report.get("generated_at")),
         "generated_at": generated_at,
+        "candidate_count": len(drafts),
         "draft_count": len(drafts),
         "dry_run": dry_run,
         "tag_filters": [tag for tag in tag_filters],
@@ -179,6 +193,8 @@ def build_draft_report(
         "trading_boundary_notice": TRADING_BOUNDARY_NOTICE,
         "draft_only_notice": DRAFT_ONLY_NOTICE,
         "allowed_categories": sorted(ALLOWED_CATEGORIES),
+        "allowed_draft_statuses": sorted(ALLOWED_DRAFT_STATUSES),
+        "candidates": list(drafts),
         "draft_candidates": list(drafts),
     }
 
@@ -187,6 +203,8 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     lines = [
         "# RAG Approved Memory Rule Candidate Draft",
         "",
+        f"- schema_name: {report['schema_name']}",
+        f"- schema_version: {report['schema_version']}",
         f"- preview_file: {report['preview_file']}",
         f"- source_memory_store_file: {report['source_memory_store_file']}",
         f"- source_preview_generated_at: {report['source_preview_generated_at']}",
@@ -220,6 +238,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
             [
                 f"### {index}. {draft['draft_id']}",
                 "",
+                f"- candidate_id: {draft['candidate_id']}",
                 f"- draft_status: {draft['draft_status']}",
                 f"- source_memory_id: {draft['source_memory_id']}",
                 f"- question_id: {draft['question_id']}",
