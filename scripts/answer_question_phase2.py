@@ -86,7 +86,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     client = open_qdrant_client(args.qdrant_path)
-    collection_summary = get_collection_summary(client, args.collection)
+    try:
+        collection_summary = get_collection_summary(client, args.collection)
+    finally:
+        # Release the local/embedded Qdrant storage lock before run_rag_answer
+        # opens its own client; embedded Qdrant allows one client per process.
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
     try:
         ensure_collection_ready(collection_summary, args.collection)
     except Exception as exc:

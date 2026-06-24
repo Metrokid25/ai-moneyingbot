@@ -242,6 +242,10 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         f"pytest tests/test_rag_verify_runner.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_verify_runner.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
+    (
+        f"pytest tests/test_rag_archive_export.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_archive_export.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
 )
 
 

@@ -29,6 +29,15 @@ RAG Bot is the consumer of source articles.
 RAG must not write to archive.db.
 RAG may read archive data through a read-only adapter or JSONL export.
 
+## Activation (2026-06-25)
+
+Read-only consumption of the Archive Bot DB is now ACTIVATED by operator decision.
+
+- RAG indexing reads the Archive Bot database at `C:\projects\naver_cafe_archive\data\archive.db` in read-only mode (`sqlite ?mode=ro`).
+- Derived artifacts (chunks, embeddings, qdrant) are written only under this project's `data/` (gitignored).
+- Still forbidden: writing to / mutating archive.db, modifying Archive Bot files, and committing `data/`.
+- The JSONL export contract below remains the preferred long-term boundary; the direct read-only DB read is the current interim method until the export pipeline exists.
+
 ## Preferred Data Contract
 
 Long-term preferred boundary:

@@ -25,6 +25,7 @@ scripts/diag_dom_structure.py
 .tmp/
 reports/
 state/
+exports/
 
 # Agent runtime reports
 agent_reports/*

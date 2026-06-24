@@ -75,6 +75,7 @@ def test_focused_runner_uses_only_explicit_rag_commands():
         "pytest tests/test_rag_manual_task_review_gate.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_operator_runbook_docs.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_verify_runner.py --basetemp=.tmp/rag_focused_pytest",
+        "pytest tests/test_rag_archive_export.py --basetemp=.tmp/rag_focused_pytest",
     ]
     assert all(display != "pytest" for display in displays)
     assert all("pytest --basetemp" not in display for display in displays)
