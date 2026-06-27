@@ -17,11 +17,16 @@ returned list is a reordered copy of the inputs with `rerank_score` added and
 """
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
 DEFAULT_RERANK_MODEL = "rerank-2"
+# NOTE: candidates must carry the FULL chunk text here. rag_retrieval rows currently
+# expose only a 250-char `snippet` (see rag_retrieval.format_search_result); wiring
+# reranking in requires retrieval to retain full `text`. Do NOT pass text_key="snippet"
+# as a shortcut — reranking truncated snippets defeats the purpose.
 DEFAULT_TEXT_KEY = "text"
 DEFAULT_SCORE_KEY = "rerank_score"
 MAX_CANDIDATES = 1000
@@ -78,8 +83,12 @@ def rerank_candidates(
             raise ValueError(f"rerank returned duplicate index {idx}")
         seen.add(idx)
 
+        score_value = float(score)
+        if not math.isfinite(score_value):
+            raise ValueError(f"rerank returned non-finite score for index {idx}")
+
         item = dict(candidates[idx])  # copy — never mutate the caller's dicts
-        item[score_key] = float(score)
+        item[score_key] = score_value
         item["rank"] = new_rank
         reranked.append(item)
         if len(reranked) >= top_k:

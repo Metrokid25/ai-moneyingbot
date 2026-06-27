@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -122,3 +123,67 @@ def test_too_many_candidates_rejected():
     big = [{"text": "x"} for _ in range(rag_rerank.MAX_CANDIDATES + 1)]
     with pytest.raises(ValueError):
         rag_rerank.rerank_candidates("q", big, top_k=5, rerank_fn=_fake_by_length)
+
+
+def test_non_finite_score_rejected():
+    def fn(query, documents, top_k):
+        return [(0, float("nan"))]
+
+    with pytest.raises(ValueError):
+        rag_rerank.rerank_candidates("q", _candidates(), top_k=1, rerank_fn=fn)
+
+
+def test_reranker_returning_fewer_than_top_k():
+    def fn(query, documents, top_k):
+        return [(1, 0.5)]  # only one result though top_k=3
+
+    out = rag_rerank.rerank_candidates("q", _candidates(), top_k=3, rerank_fn=fn)
+    assert [c["chunk_id"] for c in out] == ["b"]
+    assert out[0]["rank"] == 1
+
+
+def test_voyage_rerank_fn_maps_sdk_results(monkeypatch):
+    # Exercise the real _voyage_rerank_fn: fake the voyageai SDK and assert the
+    # client.rerank kwargs + result.results[i].index/.relevance_score mapping.
+    import collections
+
+    import voyageai
+
+    RerankingResult = collections.namedtuple(
+        "RerankingResult", ["index", "document", "relevance_score"]
+    )
+
+    class FakeResponse:
+        results = [RerankingResult(2, "c", 0.91), RerankingResult(0, "a", 0.42)]
+
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def rerank(self, query, documents, model, top_k=None):
+            seen.update(query=query, documents=list(documents), model=model, top_k=top_k)
+            return FakeResponse()
+
+    monkeypatch.setenv("VOYAGE_API_KEY", "test-key")
+    monkeypatch.setattr(voyageai, "Client", FakeClient)
+
+    fn = rag_rerank._voyage_rerank_fn(model="rerank-2")
+    out = fn("금리 인상", ["a", "b", "c"], 2)
+
+    assert out == [(2, 0.91), (0, 0.42)]
+    assert seen == {
+        "query": "금리 인상",
+        "documents": ["a", "b", "c"],
+        "model": "rerank-2",
+        "top_k": 2,
+    }
+
+
+def test_voyage_rerank_fn_requires_api_key(monkeypatch):
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
+    # point project_root at a dir with no .env so load_dotenv finds nothing
+    fn = rag_rerank._voyage_rerank_fn(project_root=Path("C:/nonexistent-dir-xyz"))
+    with pytest.raises(RuntimeError):
+        fn("q", ["a"], 1)
