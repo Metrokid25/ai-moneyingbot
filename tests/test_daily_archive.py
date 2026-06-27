@@ -164,7 +164,7 @@ def test_main_refuses_real_run_without_execute():
 def test_execute_uses_injected_discovery_without_touching_db(tmp_path, monkeypatch):
     captured: dict = {}
 
-    def fake_discover(*, list_url, tail, estimate):
+    def fake_discover(*, list_url, tail, estimate, on_page_error=None):
         captured.update(list_url=list_url, tail=tail, estimate=estimate)
         return [
             {"article_id": 10, "url": "https://cafe/10", "title": "a"},
@@ -204,6 +204,120 @@ def test_execute_uses_injected_discovery_without_touching_db(tmp_path, monkeypat
     # real mode writes non-dry-run state/report artifacts
     assert (tmp_path / "state" / "crawl_state.json").exists()
     assert report_path == tmp_path / "reports" / "2026-05-28.md"
+
+
+def test_discover_via_index_tail_maps_rows_and_records_page_errors(monkeypatch):
+    # Exercise the real _discover_via_index_tail by faking the browser + index_tail
+    # primitives it calls — no network. Verifies row mapping, that a per-page fetch
+    # error is surfaced via on_page_error (not silently dropped), and that the
+    # delay runs on every iteration including the failing one.
+    import index_tail
+    import browser as browser_mod
+
+    class FakePage:
+        pass
+
+    class FakeSession:
+        def __init__(self):
+            self.page = FakePage()
+            self.closed = False
+
+        def goto(self, url):
+            return url, None
+
+        def close(self):
+            self.closed = True
+
+    sleeps: list[int] = []
+    monkeypatch.setattr(browser_mod, "BrowserSession", FakeSession)
+    monkeypatch.setattr(browser_mod, "wait_for_login", lambda page: None)
+    monkeypatch.setattr(index_tail, "find_tail", lambda session, list_url, estimate: 100)
+    monkeypatch.setattr(index_tail, "_sleep", lambda: sleeps.append(1))
+
+    def fake_fetch(session, list_url, page):
+        if page == 99:
+            return None, "blocked"
+        return (
+            [{"article_id": page * 10, "url": f"https://c/{page}", "title": f"t{page}", "posted_at": "2026"}],
+            None,
+        )
+
+    monkeypatch.setattr(index_tail, "_fetch_rows", fake_fetch)
+
+    errors: list[tuple[int, str]] = []
+    rows = daily_archive._discover_via_index_tail(
+        list_url="https://cafe/list",
+        tail=3,
+        estimate=100,
+        on_page_error=lambda page, url, reason: errors.append((page, reason)),
+    )
+
+    # pages walked = [100, 99, 98]; page 99 errors, 100 and 98 yield rows
+    assert [r["article_id"] for r in rows] == [1000, 980]
+    assert [r["source_page"] for r in rows] == [100, 98]
+    assert [r["author"] for r in rows] == ["굿머닝", "굿머닝"]
+    # the blocked page is reported, not dropped
+    assert errors == [(99, "blocked")]
+    # delay applied once per page, including the failing one
+    assert len(sleeps) == 3
+
+
+def test_discover_via_index_tail_returns_empty_when_tail_not_found(monkeypatch):
+    import index_tail
+    import browser as browser_mod
+
+    class FakeSession:
+        page = object()
+
+        def goto(self, url):
+            return url, None
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(browser_mod, "BrowserSession", FakeSession)
+    monkeypatch.setattr(browser_mod, "wait_for_login", lambda page: None)
+    monkeypatch.setattr(index_tail, "find_tail", lambda session, list_url, estimate: None)
+
+    rows = daily_archive._discover_via_index_tail(
+        list_url="https://cafe/list", tail=3, estimate=100
+    )
+    assert rows == []
+
+
+def test_discover_via_index_tail_rejects_non_positive_tail():
+    with pytest.raises(daily_archive.DailyArchiveGuard):
+        daily_archive._discover_via_index_tail(
+            list_url="https://cafe/list", tail=0, estimate=100
+        )
+
+
+def test_execute_records_page_fetch_failures_to_failed_queue(tmp_path, monkeypatch):
+    # End-to-end through run_daily_archive: a discovery that reports a page error
+    # must land in the failed queue and bump stats.failed.
+    def fake_discover(*, list_url, tail, estimate, on_page_error=None):
+        on_page_error(42, "https://cafe/list?page=42", "captcha")
+        return [{"article_id": 7, "url": "https://cafe/7", "title": "ok"}]
+
+    monkeypatch.setattr(daily_archive, "init_db", lambda: None)
+    monkeypatch.setattr(
+        daily_archive, "is_duplicate", lambda article_id, seen_ids, *, dry_run: False
+    )
+    monkeypatch.setattr(daily_archive, "save_article", lambda row, *, dry_run: None)
+
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        list_url="https://cafe/list",
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+        discover_fn=fake_discover,
+    )
+
+    assert stats.saved == 1
+    assert stats.failed == 1
+    assert any("page_fetch_failed" in item["reason"] for item in stats.failed_items)
 
 
 def test_write_daily_report_without_failed_items(tmp_path):

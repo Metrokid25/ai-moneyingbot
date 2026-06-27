@@ -189,12 +189,14 @@ def collect_new_articles(
     tail: int = DEFAULT_TAIL_PAGES,
     estimate: int = DEFAULT_ESTIMATE,
     discover_fn=None,
+    on_page_error=None,
 ) -> list[dict[str, Any]]:
     """Return candidate article rows (list metadata only).
 
     - dry_run: mock data, no network.
     - execute: real bounded discovery via index_tail (`discover_fn` is injectable for
       tests). Persistence/dedup happens in run_daily_archive, not here.
+    `on_page_error` is forwarded to discovery so per-page fetch failures get recorded.
     Real collection is refused unless --execute is set.
     """
     if dry_run:
@@ -206,7 +208,7 @@ def collect_new_articles(
     if not list_url:
         raise DailyArchiveGuard("--execute requires --list-url")
     fn = discover_fn or _discover_via_index_tail
-    return fn(list_url=list_url, tail=tail, estimate=estimate)
+    return fn(list_url=list_url, tail=tail, estimate=estimate, on_page_error=on_page_error)
 
 
 def _discover_via_index_tail(
@@ -214,12 +216,17 @@ def _discover_via_index_tail(
     list_url: str,
     tail: int,
     estimate: int,
+    on_page_error=None,
 ) -> list[dict[str, Any]]:
     """Discover newly-listed articles via index_tail primitives (list metadata only).
 
     Bounded to `tail` pages from the detected tail page, with index_tail's randomized
-    delay between each page fetch. Returns row dicts; the caller persists/dedups them.
-    Browser imports are loaded lazily so the rest of the module stays import-light.
+    delay after every page fetch (success OR failure) so blocked pages are never
+    requested back-to-back. Returns row dicts; the caller persists/dedups them.
+
+    `on_page_error(page, page_url, reason)` is invoked for each page whose fetch
+    returns an error so the caller can record it (a blocked/expired page must not be
+    silently dropped). Browser imports are loaded lazily to keep the module light.
     """
     if tail < 1:
         raise DailyArchiveGuard(f"--tail must be >= 1 (got {tail})")
@@ -242,19 +249,23 @@ def _discover_via_index_tail(
         pages = [p for p in range(tail_page, tail_page - tail, -1) if p >= 1]
         for page in pages:
             page_rows, err = index_tail._fetch_rows(session, list_url, page)
-            if err or not page_rows:
-                continue
-            for r in page_rows:
-                rows.append(
-                    {
-                        "article_id": r["article_id"],
-                        "url": r["url"],
-                        "title": r.get("title"),
-                        "author": "굿머닝",
-                        "posted_at": r.get("posted_at"),
-                        "source_page": page,
-                    }
-                )
+            if err:
+                # blocked / login-expired / frame-load failure on this page —
+                # surface it instead of dropping it, then keep the delay.
+                if on_page_error is not None:
+                    on_page_error(page, build_page_url(list_url, page), err)
+            elif page_rows:
+                for r in page_rows:
+                    rows.append(
+                        {
+                            "article_id": r["article_id"],
+                            "url": r["url"],
+                            "title": r.get("title"),
+                            "author": "굿머닝",
+                            "posted_at": r.get("posted_at"),
+                            "source_page": page,
+                        }
+                    )
             index_tail._sleep()
     finally:
         session.close()
@@ -308,6 +319,8 @@ def run_daily_archive(
         )
     if execute and not list_url:
         raise DailyArchiveGuard("--execute requires --list-url")
+    if execute and tail < 1:
+        raise DailyArchiveGuard(f"--tail must be >= 1 (got {tail})")
 
     run_at = today or now_kst()
     state_path = state_dir / ("crawl_state.dry-run.json" if dry_run else "crawl_state.json")
@@ -324,6 +337,17 @@ def run_daily_archive(
     if not dry_run:
         init_db()
 
+    def _record_page_error(page: int, url: str | None, reason: str) -> None:
+        add_failed_item(
+            failed_queue,
+            article_id=None,
+            url=url,
+            reason=f"page_fetch_failed: page={page} {reason}",
+            failed_at=run_at.isoformat(),
+        )
+        stats.failed += 1
+        stats.failed_items.append(failed_queue["items"][-1])
+
     try:
         rows = collect_new_articles(
             dry_run=dry_run,
@@ -332,6 +356,7 @@ def run_daily_archive(
             tail=tail,
             estimate=estimate,
             discover_fn=discover_fn,
+            on_page_error=_record_page_error,
         )
     except DailyArchiveGuard:
         raise
