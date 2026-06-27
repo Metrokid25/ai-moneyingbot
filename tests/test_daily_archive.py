@@ -3,6 +3,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, "scripts")
 
 import daily_archive
@@ -81,7 +83,7 @@ def test_duplicate_article_is_not_saved_in_dry_run(tmp_path, monkeypatch):
     ]
     saved: list[int] = []
 
-    monkeypatch.setattr(daily_archive, "collect_new_articles", lambda *, dry_run: rows)
+    monkeypatch.setattr(daily_archive, "collect_new_articles", lambda **kwargs: rows)
     monkeypatch.setattr(
         daily_archive,
         "save_article",
@@ -121,6 +123,87 @@ def test_dry_run_creates_report_and_state_files(tmp_path):
     state = json.loads((tmp_path / "state" / "crawl_state.dry-run.json").read_text())
     assert state["total_runs"] == 1
     assert state["last_article_id"] == 900003
+
+
+def test_refuses_without_dry_run_or_execute(tmp_path):
+    with pytest.raises(daily_archive.DailyArchiveGuard):
+        daily_archive.run_daily_archive(
+            dry_run=False,
+            execute=False,
+            state_dir=tmp_path / "state",
+            reports_dir=tmp_path / "reports",
+        )
+
+
+def test_dry_run_and_execute_are_mutually_exclusive(tmp_path):
+    with pytest.raises(daily_archive.DailyArchiveGuard):
+        daily_archive.run_daily_archive(
+            dry_run=True,
+            execute=True,
+            state_dir=tmp_path / "state",
+            reports_dir=tmp_path / "reports",
+        )
+
+
+def test_execute_requires_list_url(tmp_path):
+    with pytest.raises(daily_archive.DailyArchiveGuard):
+        daily_archive.run_daily_archive(
+            dry_run=False,
+            execute=True,
+            list_url=None,
+            state_dir=tmp_path / "state",
+            reports_dir=tmp_path / "reports",
+        )
+
+
+def test_main_refuses_real_run_without_execute():
+    # No --dry-run and no --execute → blocked before any DB/file write, exit code 2.
+    assert daily_archive.main([]) == 2
+
+
+def test_execute_uses_injected_discovery_without_touching_db(tmp_path, monkeypatch):
+    captured: dict = {}
+
+    def fake_discover(*, list_url, tail, estimate):
+        captured.update(list_url=list_url, tail=tail, estimate=estimate)
+        return [
+            {"article_id": 10, "url": "https://cafe/10", "title": "a"},
+            {"article_id": 11, "url": "https://cafe/11", "title": "b"},
+        ]
+
+    saved: list[int] = []
+    monkeypatch.setattr(daily_archive, "init_db", lambda: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "is_duplicate",
+        lambda article_id, seen_ids, *, dry_run: article_id in seen_ids,
+    )
+    monkeypatch.setattr(
+        daily_archive,
+        "save_article",
+        lambda row, *, dry_run: saved.append(int(row["article_id"])),
+    )
+
+    stats, report_path = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        list_url="https://cafe/list",
+        tail=2,
+        estimate=1500,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+        discover_fn=fake_discover,
+    )
+
+    # discovery received the bounded params verbatim
+    assert captured == {"list_url": "https://cafe/list", "tail": 2, "estimate": 1500}
+    assert stats.discovered == 2
+    assert stats.saved == 2
+    assert saved == [10, 11]
+    # real mode writes non-dry-run state/report artifacts
+    assert (tmp_path / "state" / "crawl_state.json").exists()
+    assert report_path == tmp_path / "reports" / "2026-05-28.md"
 
 
 def test_write_daily_report_without_failed_items(tmp_path):

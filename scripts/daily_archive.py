@@ -27,6 +27,18 @@ KST = timezone(timedelta(hours=9))
 DEFAULT_STATE_DIR = PROJECT_ROOT / "state"
 DEFAULT_REPORTS_DIR = PROJECT_ROOT / "reports" / "daily"
 
+# --- real (--execute) collection bounds / safety ---
+# Real collection is gated behind --execute and bounded so it can never run as an
+# unbounded crawl. Discovery walks at most `tail` pages from the detected tail page,
+# with a delay between each page fetch (index_tail._sleep). Body collection is out of
+# scope for the daily entry point; use scripts/batch_recollect.py for that.
+DEFAULT_TAIL_PAGES = 3
+DEFAULT_ESTIMATE = 2828
+
+
+class DailyArchiveGuard(RuntimeError):
+    """Raised to block an unsafe/misconfigured invocation before any collection runs."""
+
 
 @dataclass
 class DailyStats:
@@ -169,12 +181,84 @@ def mock_articles() -> list[dict[str, Any]]:
     ]
 
 
-def collect_new_articles(*, dry_run: bool) -> list[dict[str, Any]]:
+def collect_new_articles(
+    *,
+    dry_run: bool,
+    execute: bool = False,
+    list_url: str | None = None,
+    tail: int = DEFAULT_TAIL_PAGES,
+    estimate: int = DEFAULT_ESTIMATE,
+    discover_fn=None,
+) -> list[dict[str, Any]]:
+    """Return candidate article rows (list metadata only).
+
+    - dry_run: mock data, no network.
+    - execute: real bounded discovery via index_tail (`discover_fn` is injectable for
+      tests). Persistence/dedup happens in run_daily_archive, not here.
+    Real collection is refused unless --execute is set.
+    """
     if dry_run:
         return mock_articles()
-    raise NotImplementedError(
-        "real daily collection is not wired yet; run with --dry-run in this phase"
-    )
+    if not execute:
+        raise DailyArchiveGuard(
+            "real collection requires --execute (use --dry-run for safe local validation)"
+        )
+    if not list_url:
+        raise DailyArchiveGuard("--execute requires --list-url")
+    fn = discover_fn or _discover_via_index_tail
+    return fn(list_url=list_url, tail=tail, estimate=estimate)
+
+
+def _discover_via_index_tail(
+    *,
+    list_url: str,
+    tail: int,
+    estimate: int,
+) -> list[dict[str, Any]]:
+    """Discover newly-listed articles via index_tail primitives (list metadata only).
+
+    Bounded to `tail` pages from the detected tail page, with index_tail's randomized
+    delay between each page fetch. Returns row dicts; the caller persists/dedups them.
+    Browser imports are loaded lazily so the rest of the module stays import-light.
+    """
+    if tail < 1:
+        raise DailyArchiveGuard(f"--tail must be >= 1 (got {tail})")
+
+    import index_tail
+    from browser import BrowserSession, wait_for_login
+    from indexer import build_page_url
+
+    session = BrowserSession()
+    rows: list[dict[str, Any]] = []
+    try:
+        # login trigger — land on the estimate page so the operator can log in
+        session.goto(build_page_url(list_url, estimate))
+        wait_for_login(session.page)
+
+        tail_page = index_tail.find_tail(session, list_url, estimate)
+        if tail_page is None:
+            return []
+
+        pages = [p for p in range(tail_page, tail_page - tail, -1) if p >= 1]
+        for page in pages:
+            page_rows, err = index_tail._fetch_rows(session, list_url, page)
+            if err or not page_rows:
+                continue
+            for r in page_rows:
+                rows.append(
+                    {
+                        "article_id": r["article_id"],
+                        "url": r["url"],
+                        "title": r.get("title"),
+                        "author": "굿머닝",
+                        "posted_at": r.get("posted_at"),
+                        "source_page": page,
+                    }
+                )
+            index_tail._sleep()
+    finally:
+        session.close()
+    return rows
 
 
 def is_duplicate(article_id: int, seen_ids: set[int], *, dry_run: bool) -> bool:
@@ -206,10 +290,25 @@ def save_article(row: dict[str, Any], *, dry_run: bool) -> None:
 def run_daily_archive(
     *,
     dry_run: bool,
+    execute: bool = False,
+    list_url: str | None = None,
+    tail: int = DEFAULT_TAIL_PAGES,
+    estimate: int = DEFAULT_ESTIMATE,
     state_dir: Path = DEFAULT_STATE_DIR,
     reports_dir: Path = DEFAULT_REPORTS_DIR,
     today: datetime | None = None,
+    discover_fn=None,
 ) -> tuple[DailyStats, Path]:
+    if dry_run and execute:
+        raise DailyArchiveGuard("--dry-run and --execute are mutually exclusive")
+    if not dry_run and not execute:
+        raise DailyArchiveGuard(
+            "refusing to run: pass --dry-run for safe local validation, "
+            "or --execute to perform real bounded collection"
+        )
+    if execute and not list_url:
+        raise DailyArchiveGuard("--execute requires --list-url")
+
     run_at = today or now_kst()
     state_path = state_dir / ("crawl_state.dry-run.json" if dry_run else "crawl_state.json")
     failed_queue_path = state_dir / (
@@ -226,7 +325,16 @@ def run_daily_archive(
         init_db()
 
     try:
-        rows = collect_new_articles(dry_run=dry_run)
+        rows = collect_new_articles(
+            dry_run=dry_run,
+            execute=execute,
+            list_url=list_url,
+            tail=tail,
+            estimate=estimate,
+            discover_fn=discover_fn,
+        )
+    except DailyArchiveGuard:
+        raise
     except Exception as exc:
         failed_at = run_at.isoformat()
         add_failed_item(
@@ -277,7 +385,10 @@ def run_daily_archive(
     if dry_run:
         stats.notes.append("dry-run: mock data only; data/archive.db was not modified.")
     else:
-        stats.notes.append("real collection is a later phase; this run used DB duplicate checks.")
+        stats.notes.append(
+            f"execute: bounded discovery via index_tail (tail={tail} pages, estimate={estimate}); "
+            "bodies are collected separately via scripts/batch_recollect.py."
+        )
 
     save_crawl_state(state_path, state)
     save_failed_queue(failed_queue_path, failed_queue)
@@ -330,6 +441,29 @@ def write_daily_report(reports_dir: Path, run_at: datetime, stats: DailyStats) -
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the daily archive pipeline")
     parser.add_argument("--dry-run", action="store_true", help="use mock data and avoid data/")
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="perform REAL bounded discovery (requires --list-url; mutually exclusive with --dry-run)",
+    )
+    parser.add_argument(
+        "--list-url",
+        type=str,
+        default=None,
+        help="굿머닝 작성글 목록 URL (page=N 파라미터 포함 형태). --execute 시 필수",
+    )
+    parser.add_argument(
+        "--tail",
+        type=int,
+        default=DEFAULT_TAIL_PAGES,
+        help=f"끝페이지에서 인덱싱할 tail 페이지 수 (기본 {DEFAULT_TAIL_PAGES})",
+    )
+    parser.add_argument(
+        "--estimate",
+        type=int,
+        default=DEFAULT_ESTIMATE,
+        help=f"끝페이지 추정값 (기본 {DEFAULT_ESTIMATE})",
+    )
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
     parser.add_argument("--reports-dir", type=Path, default=DEFAULT_REPORTS_DIR)
     return parser.parse_args(argv)
@@ -340,10 +474,14 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         stats, report_path = run_daily_archive(
             dry_run=args.dry_run,
+            execute=args.execute,
+            list_url=args.list_url,
+            tail=args.tail,
+            estimate=args.estimate,
             state_dir=args.state_dir,
             reports_dir=args.reports_dir,
         )
-    except NotImplementedError as exc:
+    except (NotImplementedError, DailyArchiveGuard) as exc:
         print(f"[daily_archive] {exc}", file=sys.stderr)
         return 2
     except Exception as exc:
@@ -352,6 +490,7 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print("[daily_archive] done")
     print(f"  dry_run    : {stats.dry_run}")
+    print(f"  execute    : {args.execute}")
     print(f"  discovered : {stats.discovered}")
     print(f"  duplicates : {stats.duplicates}")
     print(f"  saved      : {stats.saved}")
