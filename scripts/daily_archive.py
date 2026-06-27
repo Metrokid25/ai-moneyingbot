@@ -1,8 +1,9 @@
 """Daily archive pipeline entry point.
 
-This script is intentionally safe by default for local validation:
-`--dry-run` uses mock articles, never logs in, never sends requests to Naver
-Cafe, and does not write to the production `data/` directory.
+Safety defaults:
+- `--dry-run` uses mock articles and never touches production `data/`.
+- `--execute` is required for bounded real collection.
+- Running with no mode prints guidance and exits without collecting.
 """
 from __future__ import annotations
 
@@ -26,18 +27,11 @@ from models import Article, Status  # noqa: E402
 KST = timezone(timedelta(hours=9))
 DEFAULT_STATE_DIR = PROJECT_ROOT / "state"
 DEFAULT_REPORTS_DIR = PROJECT_ROOT / "reports" / "daily"
-
-# --- real (--execute) collection bounds / safety ---
-# Real collection is gated behind --execute and bounded so it can never run as an
-# unbounded crawl. Discovery walks at most `tail` pages from the detected tail page,
-# with a delay between each page fetch (index_tail._sleep). Body collection is out of
-# scope for the daily entry point; use scripts/batch_recollect.py for that.
-DEFAULT_TAIL_PAGES = 3
-DEFAULT_ESTIMATE = 2828
-
-
-class DailyArchiveGuard(RuntimeError):
-    """Raised to block an unsafe/misconfigured invocation before any collection runs."""
+DEFAULT_LIMIT = 10
+DEFAULT_PAGE_LIMIT = 1
+MAX_LIMIT = 100
+MAX_PAGE_LIMIT = 10
+DEFAULT_DELAY_SECONDS = 3.0
 
 
 @dataclass
@@ -47,6 +41,9 @@ class DailyStats:
     saved: int = 0
     failed: int = 0
     dry_run: bool = False
+    mode: str = "dry-run"
+    limit: int = DEFAULT_LIMIT
+    page_limit: int | None = DEFAULT_PAGE_LIMIT
     failed_items: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -181,95 +178,58 @@ def mock_articles() -> list[dict[str, Any]]:
     ]
 
 
-def collect_new_articles(
-    *,
-    dry_run: bool,
-    execute: bool = False,
-    list_url: str | None = None,
-    tail: int = DEFAULT_TAIL_PAGES,
-    estimate: int = DEFAULT_ESTIMATE,
-    discover_fn=None,
-    on_page_error=None,
-) -> list[dict[str, Any]]:
-    """Return candidate article rows (list metadata only).
-
-    - dry_run: mock data, no network.
-    - execute: real bounded discovery via index_tail (`discover_fn` is injectable for
-      tests). Persistence/dedup happens in run_daily_archive, not here.
-    `on_page_error` is forwarded to discovery so per-page fetch failures get recorded.
-    Real collection is refused unless --execute is set.
-    """
+def collect_new_articles(*, dry_run: bool) -> list[dict[str, Any]]:
     if dry_run:
         return mock_articles()
-    if not execute:
-        raise DailyArchiveGuard(
-            "real collection requires --execute (use --dry-run for safe local validation)"
-        )
-    if not list_url:
-        raise DailyArchiveGuard("--execute requires --list-url")
-    fn = discover_fn or _discover_via_index_tail
-    return fn(list_url=list_url, tail=tail, estimate=estimate, on_page_error=on_page_error)
+    raise RuntimeError("collect_new_articles only supports dry-run")
 
 
-def _discover_via_index_tail(
+def collect_execute_articles(
     *,
-    list_url: str,
-    tail: int,
-    estimate: int,
-    on_page_error=None,
-) -> list[dict[str, Any]]:
-    """Discover newly-listed articles via index_tail primitives (list metadata only).
+    list_url: str | None,
+    limit: int,
+    page_limit: int | None,
+    delay_seconds: float = DEFAULT_DELAY_SECONDS,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Collect article list rows in execute mode with strict bounds.
 
-    Bounded to `tail` pages from the detected tail page, with index_tail's randomized
-    delay after every page fetch (success OR failure) so blocked pages are never
-    requested back-to-back. Returns row dicts; the caller persists/dedups them.
+    This is the single real-collection bridge. It reuses:
+    - `BrowserSession` from `src/browser.py`
+    - `_fetch_rows` from `scripts/index_tail.py`
 
-    `on_page_error(page, page_url, reason)` is invoked for each page whose fetch
-    returns an error so the caller can record it (a blocked/expired page must not be
-    silently dropped). Browser imports are loaded lazily to keep the module light.
+    If `list_url` is omitted, no browser is opened and no network request is sent.
     """
-    if tail < 1:
-        raise DailyArchiveGuard(f"--tail must be >= 1 (got {tail})")
+    if not list_url:
+        return [], ["execute mode skipped: --list-url was not provided"]
 
-    import index_tail
-    from browser import BrowserSession, wait_for_login
-    from indexer import build_page_url
+    import time  # noqa: WPS433
 
-    session = BrowserSession()
+    from browser import BrowserSession  # noqa: WPS433
+    from index_tail import _fetch_rows  # noqa: WPS433
+
+    pages_to_scan = page_limit if page_limit is not None else DEFAULT_PAGE_LIMIT
     rows: list[dict[str, Any]] = []
+    session = BrowserSession()
     try:
-        # login trigger — land on the estimate page so the operator can log in
-        session.goto(build_page_url(list_url, estimate))
-        wait_for_login(session.page)
-
-        tail_page = index_tail.find_tail(session, list_url, estimate)
-        if tail_page is None:
-            return []
-
-        pages = [p for p in range(tail_page, tail_page - tail, -1) if p >= 1]
-        for page in pages:
-            page_rows, err = index_tail._fetch_rows(session, list_url, page)
+        for page_num in range(1, pages_to_scan + 1):
+            page_rows, err = _fetch_rows(session, list_url, page_num)
             if err:
-                # blocked / login-expired / frame-load failure on this page —
-                # surface it instead of dropping it, then keep the delay.
-                if on_page_error is not None:
-                    on_page_error(page, build_page_url(list_url, page), err)
-            elif page_rows:
-                for r in page_rows:
-                    rows.append(
-                        {
-                            "article_id": r["article_id"],
-                            "url": r["url"],
-                            "title": r.get("title"),
-                            "author": "굿머닝",
-                            "posted_at": r.get("posted_at"),
-                            "source_page": page,
-                        }
-                    )
-            index_tail._sleep()
+                raise RuntimeError(f"list page {page_num} failed: {err}")
+            for row in page_rows or []:
+                rows.append(row)
+                if len(rows) >= limit:
+                    return rows, []
+            if page_num < pages_to_scan:
+                time.sleep(delay_seconds)
     finally:
         session.close()
-    return rows
+    return rows, []
+
+
+def collect_article_body(article_id: int) -> tuple[str, str | None]:
+    from collector import collect_body  # noqa: WPS433
+
+    return collect_body(article_id)
 
 
 def is_duplicate(article_id: int, seen_ids: set[int], *, dry_run: bool) -> bool:
@@ -302,26 +262,15 @@ def run_daily_archive(
     *,
     dry_run: bool,
     execute: bool = False,
+    limit: int = DEFAULT_LIMIT,
+    page_limit: int | None = DEFAULT_PAGE_LIMIT,
     list_url: str | None = None,
-    tail: int = DEFAULT_TAIL_PAGES,
-    estimate: int = DEFAULT_ESTIMATE,
+    collect_body: bool = False,
+    delay_seconds: float = DEFAULT_DELAY_SECONDS,
     state_dir: Path = DEFAULT_STATE_DIR,
     reports_dir: Path = DEFAULT_REPORTS_DIR,
     today: datetime | None = None,
-    discover_fn=None,
 ) -> tuple[DailyStats, Path]:
-    if dry_run and execute:
-        raise DailyArchiveGuard("--dry-run and --execute are mutually exclusive")
-    if not dry_run and not execute:
-        raise DailyArchiveGuard(
-            "refusing to run: pass --dry-run for safe local validation, "
-            "or --execute to perform real bounded collection"
-        )
-    if execute and not list_url:
-        raise DailyArchiveGuard("--execute requires --list-url")
-    if execute and tail < 1:
-        raise DailyArchiveGuard(f"--tail must be >= 1 (got {tail})")
-
     run_at = today or now_kst()
     state_path = state_dir / ("crawl_state.dry-run.json" if dry_run else "crawl_state.json")
     failed_queue_path = state_dir / (
@@ -330,42 +279,35 @@ def run_daily_archive(
 
     state = load_crawl_state(state_path)
     failed_queue = load_failed_queue(failed_queue_path)
-    stats = DailyStats(dry_run=dry_run)
+    stats = DailyStats(
+        dry_run=dry_run,
+        mode="dry-run" if dry_run else "execute",
+        limit=limit,
+        page_limit=page_limit,
+    )
     seen_ids: set[int] = set()
     max_article: dict[str, Any] | None = None
 
-    if not dry_run:
-        init_db()
-
-    def _record_page_error(page: int, url: str | None, reason: str) -> None:
-        add_failed_item(
-            failed_queue,
-            article_id=None,
-            url=url,
-            reason=f"page_fetch_failed: page={page} {reason}",
-            failed_at=run_at.isoformat(),
-        )
-        stats.failed += 1
-        stats.failed_items.append(failed_queue["items"][-1])
-
     try:
-        rows = collect_new_articles(
-            dry_run=dry_run,
-            execute=execute,
-            list_url=list_url,
-            tail=tail,
-            estimate=estimate,
-            discover_fn=discover_fn,
-            on_page_error=_record_page_error,
-        )
-    except DailyArchiveGuard:
-        raise
+        if dry_run:
+            rows = collect_new_articles(dry_run=True)
+        elif execute:
+            rows, notes = collect_execute_articles(
+                list_url=list_url,
+                limit=limit,
+                page_limit=page_limit,
+                delay_seconds=delay_seconds,
+            )
+            stats.notes.extend(notes)
+        else:
+            rows = []
+            stats.notes.append("no mode selected; use --dry-run or --execute")
     except Exception as exc:
         failed_at = run_at.isoformat()
         add_failed_item(
             failed_queue,
             article_id=None,
-            url=None,
+            url=list_url,
             reason=f"list_collection_failed: {exc}",
             failed_at=failed_at,
         )
@@ -373,9 +315,11 @@ def run_daily_archive(
         stats.failed_items.append(failed_queue["items"][-1])
         rows = []
 
-    stats.discovered = len(rows)
+    stats.discovered = min(len(rows), limit)
+    if not dry_run and rows:
+        init_db()
 
-    for row in rows:
+    for row in rows[:limit]:
         article_id = int(row["article_id"])
         if is_duplicate(article_id, seen_ids, dry_run=dry_run):
             stats.duplicates += 1
@@ -389,6 +333,13 @@ def run_daily_archive(
             if row.get("simulate_failure"):
                 raise RuntimeError(str(row["simulate_failure"]))
             save_article(row, dry_run=dry_run)
+            if collect_body and not dry_run:
+                body_status, block_signal = collect_article_body(article_id)
+                if body_status != Status.BODY_COLLECTED:
+                    reason = f"body_collection_status={body_status}"
+                    if block_signal:
+                        reason += f", block_signal={block_signal}"
+                    raise RuntimeError(reason)
             stats.saved += 1
         except Exception as exc:
             failed_at = run_at.isoformat()
@@ -410,10 +361,9 @@ def run_daily_archive(
     if dry_run:
         stats.notes.append("dry-run: mock data only; data/archive.db was not modified.")
     else:
-        stats.notes.append(
-            f"execute: bounded discovery via index_tail (tail={tail} pages, estimate={estimate}); "
-            "bodies are collected separately via scripts/batch_recollect.py."
-        )
+        stats.notes.append("execute: bounded archive collection path; DB duplicate checks enabled.")
+        if not collect_body:
+            stats.notes.append("body collection skipped; pass --collect-body to call collector.collect_body.")
 
     save_crawl_state(state_path, state)
     save_failed_queue(failed_queue_path, failed_queue)
@@ -445,11 +395,14 @@ def write_daily_report(reports_dir: Path, run_at: datetime, stats: DailyStats) -
             f"# Daily Archive Report - {run_at.date().isoformat()}",
             "",
             "## Summary",
-            f"- 신규 수집: {stats.discovered}",
+            f"- 신규 발견: {stats.discovered}",
             f"- 중복 제외: {stats.duplicates}",
             f"- 저장 성공: {stats.saved}",
             f"- 실패: {stats.failed}",
+            f"- 실행 모드: {stats.mode}",
             f"- dry-run 여부: {'yes' if stats.dry_run else 'no'}",
+            f"- limit: {stats.limit}",
+            f"- page_limit: {stats.page_limit if stats.page_limit is not None else '-'}",
             "",
             "## Failed Items",
             *failed_lines,
@@ -466,56 +419,63 @@ def write_daily_report(reports_dir: Path, run_at: datetime, stats: DailyStats) -
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the daily archive pipeline")
     parser.add_argument("--dry-run", action="store_true", help="use mock data and avoid data/")
+    parser.add_argument("--execute", action="store_true", help="run bounded archive collection")
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--page-limit", type=int, default=DEFAULT_PAGE_LIMIT)
+    parser.add_argument("--list-url", default=None, help="Naver Cafe article-list URL for execute mode")
     parser.add_argument(
-        "--execute",
+        "--collect-body",
         action="store_true",
-        help="perform REAL bounded discovery (requires --list-url; mutually exclusive with --dry-run)",
+        help="after indexing list rows, call collector.collect_body for saved articles",
     )
-    parser.add_argument(
-        "--list-url",
-        type=str,
-        default=None,
-        help="굿머닝 작성글 목록 URL (page=N 파라미터 포함 형태). --execute 시 필수",
-    )
-    parser.add_argument(
-        "--tail",
-        type=int,
-        default=DEFAULT_TAIL_PAGES,
-        help=f"끝페이지에서 인덱싱할 tail 페이지 수 (기본 {DEFAULT_TAIL_PAGES})",
-    )
-    parser.add_argument(
-        "--estimate",
-        type=int,
-        default=DEFAULT_ESTIMATE,
-        help=f"끝페이지 추정값 (기본 {DEFAULT_ESTIMATE})",
-    )
+    parser.add_argument("--delay-seconds", type=float, default=DEFAULT_DELAY_SECONDS)
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
     parser.add_argument("--reports-dir", type=Path, default=DEFAULT_REPORTS_DIR)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.dry_run and args.execute:
+        parser.error("--dry-run and --execute are mutually exclusive")
+    if args.execute and args.limit is None:
+        parser.error("--execute requires --limit N")
+    if args.limit is None:
+        args.limit = DEFAULT_LIMIT
+    if args.limit < 1 or args.limit > MAX_LIMIT:
+        parser.error(f"--limit must be between 1 and {MAX_LIMIT}")
+    if args.page_limit < 1 or args.page_limit > MAX_PAGE_LIMIT:
+        parser.error(f"--page-limit must be between 1 and {MAX_PAGE_LIMIT}")
+    if args.delay_seconds < 0:
+        parser.error("--delay-seconds must be non-negative")
+    return args
 
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
+    if not args.dry_run and not args.execute:
+        print("[daily_archive] no collection mode selected")
+        print("  use --dry-run for mock validation")
+        print("  use --execute --limit N --list-url <URL> for bounded real collection")
+        return 0
+
     try:
         stats, report_path = run_daily_archive(
             dry_run=args.dry_run,
             execute=args.execute,
+            limit=args.limit,
+            page_limit=args.page_limit,
             list_url=args.list_url,
-            tail=args.tail,
-            estimate=args.estimate,
+            collect_body=args.collect_body,
+            delay_seconds=args.delay_seconds,
             state_dir=args.state_dir,
             reports_dir=args.reports_dir,
         )
-    except (NotImplementedError, DailyArchiveGuard) as exc:
-        print(f"[daily_archive] {exc}", file=sys.stderr)
-        return 2
     except Exception as exc:
         print(f"[daily_archive] ERROR: {exc}", file=sys.stderr)
         return 1
 
     print("[daily_archive] done")
+    print(f"  mode       : {stats.mode}")
     print(f"  dry_run    : {stats.dry_run}")
-    print(f"  execute    : {args.execute}")
+    print(f"  limit      : {stats.limit}")
+    print(f"  page_limit : {stats.page_limit}")
     print(f"  discovered : {stats.discovered}")
     print(f"  duplicates : {stats.duplicates}")
     print(f"  saved      : {stats.saved}")

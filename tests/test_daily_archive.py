@@ -1,7 +1,6 @@
 import json
 import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -83,7 +82,7 @@ def test_duplicate_article_is_not_saved_in_dry_run(tmp_path, monkeypatch):
     ]
     saved: list[int] = []
 
-    monkeypatch.setattr(daily_archive, "collect_new_articles", lambda **kwargs: rows)
+    monkeypatch.setattr(daily_archive, "collect_new_articles", lambda *, dry_run: rows)
     monkeypatch.setattr(
         daily_archive,
         "save_article",
@@ -125,53 +124,96 @@ def test_dry_run_creates_report_and_state_files(tmp_path):
     assert state["last_article_id"] == 900003
 
 
-def test_refuses_without_dry_run_or_execute(tmp_path):
-    with pytest.raises(daily_archive.DailyArchiveGuard):
-        daily_archive.run_daily_archive(
-            dry_run=False,
-            execute=False,
-            state_dir=tmp_path / "state",
-            reports_dir=tmp_path / "reports",
-        )
+def test_write_daily_report_without_failed_items(tmp_path):
+    stats = daily_archive.DailyStats(discovered=1, saved=1, dry_run=True)
+
+    path = daily_archive.write_daily_report(
+        tmp_path,
+        datetime(2026, 5, 28, tzinfo=KST),
+        stats,
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert "## Failed Items" in text
+    assert "- 없음" in text
 
 
-def test_dry_run_and_execute_are_mutually_exclusive(tmp_path):
-    with pytest.raises(daily_archive.DailyArchiveGuard):
-        daily_archive.run_daily_archive(
-            dry_run=True,
-            execute=True,
-            state_dir=tmp_path / "state",
-            reports_dir=tmp_path / "reports",
-        )
+def test_main_without_mode_does_not_collect(monkeypatch, capsys):
+    def fail_if_called(**_kwargs):
+        raise AssertionError("run_daily_archive should not be called")
+
+    monkeypatch.setattr(daily_archive, "run_daily_archive", fail_if_called)
+
+    rc = daily_archive.main([])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "no collection mode selected" in captured.out
+    assert "--dry-run" in captured.out
+    assert "--execute" in captured.out
 
 
-def test_execute_requires_list_url(tmp_path):
-    with pytest.raises(daily_archive.DailyArchiveGuard):
-        daily_archive.run_daily_archive(
-            dry_run=False,
-            execute=True,
-            list_url=None,
-            state_dir=tmp_path / "state",
-            reports_dir=tmp_path / "reports",
-        )
+def test_execute_requires_explicit_limit():
+    with pytest.raises(SystemExit) as exc_info:
+        daily_archive.parse_args(["--execute"])
+
+    assert exc_info.value.code == 2
 
 
-def test_main_refuses_real_run_without_execute():
-    # No --dry-run and no --execute → blocked before any DB/file write, exit code 2.
-    assert daily_archive.main([]) == 2
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--execute", "--limit", "0"],
+        ["--execute", "--limit", "101"],
+        ["--execute", "--limit", "2", "--page-limit", "0"],
+        ["--execute", "--limit", "2", "--page-limit", "11"],
+    ],
+)
+def test_execute_rejects_out_of_range_limits(argv):
+    with pytest.raises(SystemExit) as exc_info:
+        daily_archive.parse_args(argv)
+
+    assert exc_info.value.code == 2
 
 
-def test_execute_uses_injected_discovery_without_touching_db(tmp_path, monkeypatch):
-    captured: dict = {}
+def test_dry_run_does_not_use_execute_or_db(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        daily_archive,
+        "collect_execute_articles",
+        lambda **_kwargs: pytest.fail("execute collector should not be called"),
+    )
+    monkeypatch.setattr(daily_archive, "init_db", lambda: pytest.fail("init_db should not be called"))
+    monkeypatch.setattr(
+        daily_archive,
+        "article_exists",
+        lambda _article_id: pytest.fail("article_exists should not be called"),
+    )
+    monkeypatch.setattr(
+        daily_archive,
+        "upsert_article",
+        lambda _article: pytest.fail("upsert_article should not be called"),
+    )
 
-    def fake_discover(*, list_url, tail, estimate, on_page_error=None):
-        captured.update(list_url=list_url, tail=tail, estimate=estimate)
-        return [
-            {"article_id": 10, "url": "https://cafe/10", "title": "a"},
-            {"article_id": 11, "url": "https://cafe/11", "title": "b"},
-        ]
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=True,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
 
+    assert stats.dry_run is True
+    assert stats.saved == 2
+
+
+def test_execute_uses_mockable_collector_and_applies_limit(tmp_path, monkeypatch):
+    rows = [
+        {"article_id": 1, "url": "mock://1", "title": "one"},
+        {"article_id": 2, "url": "mock://2", "title": "two"},
+        {"article_id": 3, "url": "mock://3", "title": "three"},
+    ]
     saved: list[int] = []
+
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: (rows, []))
     monkeypatch.setattr(daily_archive, "init_db", lambda: None)
     monkeypatch.setattr(
         daily_archive,
@@ -187,148 +229,134 @@ def test_execute_uses_injected_discovery_without_touching_db(tmp_path, monkeypat
     stats, report_path = daily_archive.run_daily_archive(
         dry_run=False,
         execute=True,
-        list_url="https://cafe/list",
-        tail=2,
-        estimate=1500,
+        limit=2,
+        page_limit=1,
+        list_url="https://example.test/list",
         state_dir=tmp_path / "state",
         reports_dir=tmp_path / "reports",
         today=datetime(2026, 5, 28, tzinfo=KST),
-        discover_fn=fake_discover,
     )
 
-    # discovery received the bounded params verbatim
-    assert captured == {"list_url": "https://cafe/list", "tail": 2, "estimate": 1500}
+    assert stats.mode == "execute"
     assert stats.discovered == 2
     assert stats.saved == 2
-    assert saved == [10, 11]
-    # real mode writes non-dry-run state/report artifacts
-    assert (tmp_path / "state" / "crawl_state.json").exists()
+    assert saved == [1, 2]
     assert report_path == tmp_path / "reports" / "2026-05-28.md"
 
 
-def test_discover_via_index_tail_maps_rows_and_records_page_errors(monkeypatch):
-    # Exercise the real _discover_via_index_tail by faking the browser + index_tail
-    # primitives it calls — no network. Verifies row mapping, that a per-page fetch
-    # error is surfaced via on_page_error (not silently dropped), and that the
-    # delay runs on every iteration including the failing one.
-    import index_tail
-    import browser as browser_mod
+def test_execute_state_is_separate_from_dry_run_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: ([], []))
 
-    class FakePage:
-        pass
-
-    class FakeSession:
-        def __init__(self):
-            self.page = FakePage()
-            self.closed = False
-
-        def goto(self, url):
-            return url, None
-
-        def close(self):
-            self.closed = True
-
-    sleeps: list[int] = []
-    monkeypatch.setattr(browser_mod, "BrowserSession", FakeSession)
-    monkeypatch.setattr(browser_mod, "wait_for_login", lambda page: None)
-    monkeypatch.setattr(index_tail, "find_tail", lambda session, list_url, estimate: 100)
-    monkeypatch.setattr(index_tail, "_sleep", lambda: sleeps.append(1))
-
-    def fake_fetch(session, list_url, page):
-        if page == 99:
-            return None, "blocked"
-        return (
-            [{"article_id": page * 10, "url": f"https://c/{page}", "title": f"t{page}", "posted_at": "2026"}],
-            None,
-        )
-
-    monkeypatch.setattr(index_tail, "_fetch_rows", fake_fetch)
-
-    errors: list[tuple[int, str]] = []
-    rows = daily_archive._discover_via_index_tail(
-        list_url="https://cafe/list",
-        tail=3,
-        estimate=100,
-        on_page_error=lambda page, url, reason: errors.append((page, reason)),
+    daily_archive.run_daily_archive(
+        dry_run=True,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+    daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=2,
+        page_limit=1,
+        list_url=None,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
     )
 
-    # pages walked = [100, 99, 98]; page 99 errors, 100 and 98 yield rows
-    assert [r["article_id"] for r in rows] == [1000, 980]
-    assert [r["source_page"] for r in rows] == [100, 98]
-    assert [r["author"] for r in rows] == ["굿머닝", "굿머닝"]
-    # the blocked page is reported, not dropped
-    assert errors == [(99, "blocked")]
-    # delay applied once per page, including the failing one
-    assert len(sleeps) == 3
+    assert (tmp_path / "state" / "crawl_state.dry-run.json").exists()
+    assert (tmp_path / "state" / "failed_queue.dry-run.json").exists()
+    assert (tmp_path / "state" / "crawl_state.json").exists()
+    assert (tmp_path / "state" / "failed_queue.json").exists()
 
 
-def test_discover_via_index_tail_returns_empty_when_tail_not_found(monkeypatch):
-    import index_tail
-    import browser as browser_mod
+def test_execute_records_failed_item(tmp_path, monkeypatch):
+    rows = [
+        {
+            "article_id": 10,
+            "url": "mock://10",
+            "title": "bad",
+            "simulate_failure": "parse_failed",
+        }
+    ]
 
-    class FakeSession:
-        page = object()
-
-        def goto(self, url):
-            return url, None
-
-        def close(self):
-            pass
-
-    monkeypatch.setattr(browser_mod, "BrowserSession", FakeSession)
-    monkeypatch.setattr(browser_mod, "wait_for_login", lambda page: None)
-    monkeypatch.setattr(index_tail, "find_tail", lambda session, list_url, estimate: None)
-
-    rows = daily_archive._discover_via_index_tail(
-        list_url="https://cafe/list", tail=3, estimate=100
-    )
-    assert rows == []
-
-
-def test_discover_via_index_tail_rejects_non_positive_tail():
-    with pytest.raises(daily_archive.DailyArchiveGuard):
-        daily_archive._discover_via_index_tail(
-            list_url="https://cafe/list", tail=0, estimate=100
-        )
-
-
-def test_execute_records_page_fetch_failures_to_failed_queue(tmp_path, monkeypatch):
-    # End-to-end through run_daily_archive: a discovery that reports a page error
-    # must land in the failed queue and bump stats.failed.
-    def fake_discover(*, list_url, tail, estimate, on_page_error=None):
-        on_page_error(42, "https://cafe/list?page=42", "captcha")
-        return [{"article_id": 7, "url": "https://cafe/7", "title": "ok"}]
-
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: (rows, []))
     monkeypatch.setattr(daily_archive, "init_db", lambda: None)
     monkeypatch.setattr(
-        daily_archive, "is_duplicate", lambda article_id, seen_ids, *, dry_run: False
+        daily_archive,
+        "is_duplicate",
+        lambda article_id, seen_ids, *, dry_run: False,
     )
-    monkeypatch.setattr(daily_archive, "save_article", lambda row, *, dry_run: None)
 
     stats, _ = daily_archive.run_daily_archive(
         dry_run=False,
         execute=True,
-        list_url="https://cafe/list",
+        limit=10,
+        page_limit=1,
+        list_url="https://example.test/list",
         state_dir=tmp_path / "state",
         reports_dir=tmp_path / "reports",
         today=datetime(2026, 5, 28, tzinfo=KST),
-        discover_fn=fake_discover,
+    )
+
+    queue = json.loads((tmp_path / "state" / "failed_queue.json").read_text())
+    assert stats.failed == 1
+    assert queue["items"][0]["article_id"] == "10"
+    assert queue["items"][0]["reason"] == "parse_failed"
+
+
+def test_execute_without_list_url_does_not_initialize_db(tmp_path, monkeypatch):
+    called = False
+
+    def record_init_db():
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(daily_archive, "init_db", record_init_db)
+
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=2,
+        page_limit=1,
+        list_url=None,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
+    )
+
+    assert stats.saved == 0
+    assert not called
+    assert "execute mode skipped" in stats.notes[0]
+
+
+def test_execute_without_collect_body_does_not_call_body_collector(tmp_path, monkeypatch):
+    rows = [{"article_id": 1, "url": "mock://1", "title": "one"}]
+
+    monkeypatch.setattr(daily_archive, "collect_execute_articles", lambda **_kwargs: (rows, []))
+    monkeypatch.setattr(daily_archive, "init_db", lambda: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "is_duplicate",
+        lambda article_id, seen_ids, *, dry_run: False,
+    )
+    monkeypatch.setattr(daily_archive, "save_article", lambda row, *, dry_run: None)
+    monkeypatch.setattr(
+        daily_archive,
+        "collect_article_body",
+        lambda _article_id: pytest.fail("collect_article_body should not be called"),
+    )
+
+    stats, _ = daily_archive.run_daily_archive(
+        dry_run=False,
+        execute=True,
+        limit=1,
+        page_limit=1,
+        list_url="https://example.test/list",
+        collect_body=False,
+        state_dir=tmp_path / "state",
+        reports_dir=tmp_path / "reports",
+        today=datetime(2026, 5, 28, tzinfo=KST),
     )
 
     assert stats.saved == 1
-    assert stats.failed == 1
-    assert any("page_fetch_failed" in item["reason"] for item in stats.failed_items)
-
-
-def test_write_daily_report_without_failed_items(tmp_path):
-    stats = daily_archive.DailyStats(discovered=1, saved=1, dry_run=True)
-
-    path = daily_archive.write_daily_report(
-        tmp_path,
-        datetime(2026, 5, 28, tzinfo=KST),
-        stats,
-    )
-
-    text = path.read_text(encoding="utf-8")
-    assert "## Failed Items" in text
-    assert "- 없음" in text
