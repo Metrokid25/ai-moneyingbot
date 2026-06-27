@@ -48,6 +48,7 @@ def test_focused_runner_uses_only_explicit_rag_commands():
         "pytest tests/test_rag_retrieval_eval_set.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_golden_questions.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_retrieval.py --basetemp=.tmp/rag_focused_pytest",
+        "pytest tests/test_rag_rerank.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_retrieval_regression.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_answer_citation_contract.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_source_metadata_normalization.py --basetemp=.tmp/rag_focused_pytest",
