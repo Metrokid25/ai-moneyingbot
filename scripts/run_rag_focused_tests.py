@@ -139,6 +139,10 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("pytest", "tests/test_rag_rerank.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
     (
+        f"pytest tests/test_rag_retrieve_rerank.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_rag_retrieve_rerank.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
         f"pytest tests/test_rag_retrieval_regression.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_retrieval_regression.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
