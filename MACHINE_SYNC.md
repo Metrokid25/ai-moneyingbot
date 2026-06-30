@@ -56,9 +56,12 @@
   `src/rag_retrieve_rerank.py` = qdrant 과다인출(fetch_k) → `rag_rerank` → top_k. qdrant·Voyage 둘 다 주입 가능, fixture 테스트 15개. 독립 리뷰 통과. **이로써 리랭킹 "코드" 부분은 끝.**
 - 기타: stale 테스트 수정(`f2653d9`), 노트북 RAG 개발 환경 세팅(venv·키).
 
-### 진행 예정 (다음 작업 = "리랭킹 eval 실측")
-1. **eval 실측** — "합성 쿼리 20개 중 10개 검색 실패 → 리랭킹 후 몇 개로 줄었나" 측정. **PC의 qdrant 인덱스가 노트북에 있어야 가능** (현재 Google Drive 미연결로 대기 — 연결되면 인덱스 받아 즉시 측정).
-   - 코드는 다 됨: `retrieve_then_rerank` + `make_qdrant_search_fn`에 실제 qdrant client만 물리면 됨.
+### 진행 예정 (다음 작업 = "리랭킹 eval 실측") — 막힌 것 없음, 바로 가능
+1. **eval 실측** — "합성 쿼리 20개 중 10개 검색 실패 → 리랭킹 후 몇 개로 줄었나" 측정.
+   - **전제 모두 충족:** qdrant 인덱스(`goodmorning_chunks`, **50,583 청크**, 1024-dim, payload에 `text` 있음) + 리랭킹 코드 + Voyage 키.
+   - 데이터: 노트북엔 2026-06-30 `data/qdrant/`(≈600MB) 복사·검증 완료. **PC엔 원본 인덱스가 이미 있어 PC에서 즉시 실행 가능.**
+   - **할 일:** 기존 eval 자산(합성 쿼리 20개 + 정답 article_id — `docs/rag_phase1_diagnosis.md` 표)으로 **baseline(dense) vs `retrieve_then_rerank`** 순위 비교 스크립트 작성 → Voyage로 쿼리 임베딩 + rerank → 복구된 쿼리 수 집계.
+   - **코드 진입점:** `src/rag_retrieve_rerank.py`의 `retrieve_then_rerank` + `make_qdrant_search_fn`(실제 qdrant client 주입).
 
 ### 알려진 구조 이슈
 - 브랜치 `agent/rag-ingest-boundary`가 `main`보다 **약 114커밋 앞섬(미병합)**. 이 큰 격차가 stale·충돌의 근본 원인.
