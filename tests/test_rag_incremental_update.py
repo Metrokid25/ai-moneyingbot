@@ -91,6 +91,30 @@ def test_load_manifest_empty_when_no_manifest_or_seed(tmp_path):
     assert inc.load_manifest(tmp_path / "none.jsonl", tmp_path / "noseed.npy") == set()
 
 
+def test_manifest_after_update_merges_seed_and_new():
+    # Full indexed set after upsert = seed baseline + new ids (sorted, deduped).
+    result = inc.manifest_after_update({"1:0", "2:0"}, ["3:0", "2:0"])
+    assert result == ["1:0", "2:0", "3:0"]
+
+
+def test_write_manifest_overwrites_with_full_set(tmp_path):
+    man = tmp_path / "manifest.jsonl"
+    inc.append_manifest(man, ["old:0"])  # stale partial content
+    inc.write_manifest(man, ["1:0", "2:0", "3:0"])  # overwrite with full set
+    assert inc.load_manifest(man) == {"1:0", "2:0", "3:0"}
+
+
+def test_first_run_persists_full_baseline_not_just_delta(tmp_path):
+    # Regression: first execute must persist seed+new, so the NEXT run's baseline
+    # is the full set (not only the delta) -> next run does not re-index everything.
+    indexed = {f"{i}:0" for i in range(50)}  # pretend 50 already indexed (seed)
+    new_ids = ["50:0", "51:0"]
+    man = tmp_path / "manifest.jsonl"
+    inc.write_manifest(man, inc.manifest_after_update(indexed, new_ids))
+    assert inc.load_manifest(man) == indexed | {"50:0", "51:0"}
+    assert len(inc.load_manifest(man)) == 52
+
+
 def test_dry_run_main_detects_new_without_side_effects(tmp_path, capsys):
     db = tmp_path / "archive.db"
     _make_db(db, [_row(1, "본문 하나."), _row(2, "본문 둘.")])

@@ -83,6 +83,25 @@ def append_manifest(manifest_path: Path, chunk_ids: list[str]) -> None:
             fh.write(json.dumps({"chunk_id": cid}, ensure_ascii=False) + "\n")
 
 
+def write_manifest(manifest_path: Path, chunk_ids: list[str]) -> None:
+    """Overwrite the manifest with the complete set of indexed chunk_ids."""
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    with manifest_path.open("w", encoding="utf-8", newline="\n") as fh:
+        for cid in chunk_ids:
+            fh.write(json.dumps({"chunk_id": cid}, ensure_ascii=False) + "\n")
+
+
+def manifest_after_update(indexed_ids: set[str], new_chunk_ids: list[str]) -> list[str]:
+    """The complete indexed set after upserting new chunks (seed + new), sorted.
+
+    Persisting the FULL set (not just the new ids) is required: on the first run
+    the manifest is seeded in-memory from embeddings_phase2_ids.npy but not yet on
+    disk, so writing only the new ids would lose the ~50k baseline and make the
+    next run treat everything as new.
+    """
+    return sorted(indexed_ids | {str(cid) for cid in new_chunk_ids})
+
+
 def collect_current_chunks(db_path: Path, limit: int | None = None) -> list[dict[str, Any]]:
     """Read archive.db (read-only) and build the full current chunk set in memory."""
     rows = exporter.fetch_rows(db_path, limit)
@@ -229,7 +248,12 @@ def main(argv: list[str] | None = None) -> int:
         written_batches = upsert_new_chunks(
             new_chunks, embeddings, args.qdrant_path, args.collection, args.upsert_batch_size
         )
-        append_manifest(args.manifest_path, [str(c["chunk_id"]) for c in new_chunks])
+        # Persist the COMPLETE indexed set (seed + new), not just the new ids,
+        # so the next run's baseline is correct even on the first manifest write.
+        write_manifest(
+            args.manifest_path,
+            manifest_after_update(indexed_ids, [str(c["chunk_id"]) for c in new_chunks]),
+        )
     except Exception as exc:  # noqa: BLE001 - report cleanly
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 1
