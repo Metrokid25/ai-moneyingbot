@@ -17,6 +17,7 @@ under "text") and `.score` — i.e. a qdrant_client search hit.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Sequence
 
 import rag_rerank
@@ -29,6 +30,8 @@ from rag_retrieval import (
 
 DEFAULT_FETCH_K = 50
 MAX_FETCH_K = 200
+
+_LOGGER = logging.getLogger(__name__)
 
 # (query_vector, fetch_k) -> list of qdrant-like points
 SearchFn = Callable[[Sequence[float], int], list[Any]]
@@ -74,13 +77,25 @@ def retrieve_then_rerank(
         raise ValueError(f"top_k ({top_k}) must be <= fetch_k ({fetch_k})")
     validate_query_vector(query_vector)
 
-    points = search_fn(query_vector, fetch_k)
+    # fetch_k is only a *request* to search_fn; enforce it here so the candidate
+    # count is actually bounded regardless of what search_fn returns.
+    points = list(search_fn(query_vector, fetch_k))[:fetch_k]
     candidates = [_candidate_from_point(point, text_key=text_key) for point in points]
     rerankable = [
         candidate
         for candidate in candidates
         if isinstance(candidate.get(text_key), str) and candidate[text_key].strip()
     ]
+    dropped = len(candidates) - len(rerankable)
+    if dropped:
+        # empty chunk text usually means an index/payload problem — don't shrink
+        # the pool below top_k silently.
+        _LOGGER.warning(
+            "retrieve_then_rerank: dropped %d/%d candidate(s) with empty %r before reranking",
+            dropped,
+            len(candidates),
+            text_key,
+        )
     if not rerankable:
         return []
 
@@ -95,7 +110,12 @@ def retrieve_then_rerank(
 
 def make_qdrant_search_fn(client: Any, collection: str) -> SearchFn:
     """Build the real Qdrant search_fn. Unlike rag_retrieval.search_qdrant (capped
-    at MAX_TOP_K=20), this allows the larger `fetch_k` over-fetch reranking needs."""
+    at MAX_TOP_K=20), this allows the larger `fetch_k` over-fetch reranking needs.
+
+    Note: this intentionally does NOT apply a score_threshold (unlike search_qdrant) —
+    over-fetching the low-similarity tail is the whole point, since rerank is what
+    rescues those. Add filtering downstream if needed.
+    """
 
     def search_fn(query_vector: Sequence[float], fetch_k: int) -> list[Any]:
         vector = validate_query_vector(query_vector)

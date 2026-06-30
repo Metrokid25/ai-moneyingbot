@@ -140,11 +140,68 @@ def test_make_qdrant_search_fn_over_fetches_without_cap():
             return True
 
         def search(self, *, collection_name, query_vector, limit, with_payload, with_vectors):
-            captured.update(collection=collection_name, limit=limit)
+            captured.update(
+                collection=collection_name,
+                limit=limit,
+                with_payload=with_payload,
+                with_vectors=with_vectors,
+                qv_len=len(query_vector),
+            )
             return [_point(0.9, "x")]
 
     search_fn = rag_retrieve_rerank.make_qdrant_search_fn(FakeClient(), "goodmorning_chunks")
     points = search_fn(QVEC, 100)  # 100 >> rag_retrieval MAX_TOP_K (20)
 
-    assert captured == {"collection": "goodmorning_chunks", "limit": 100}
+    # with_payload MUST be True or every candidate's text would be None and silently dropped
+    assert captured == {
+        "collection": "goodmorning_chunks",
+        "limit": 100,
+        "with_payload": True,
+        "with_vectors": False,
+        "qv_len": 1024,
+    }
     assert len(points) == 1
+
+
+def test_truncates_search_results_to_fetch_k():
+    points = [_point(0.9, f"doc number {i}") for i in range(100)]
+    seen = {}
+
+    def rerank_fn(query, documents, top_k):
+        seen["n"] = len(documents)
+        return [(0, 1.0)]
+
+    out = rag_retrieve_rerank.retrieve_then_rerank(
+        "q", QVEC, search_fn=lambda v, fk: points, top_k=1, fetch_k=5, rerank_fn=rerank_fn
+    )
+
+    assert seen["n"] == 5  # search_fn over-returned 100, but only fetch_k=5 reach rerank
+    assert len(out) == 1
+
+
+def test_warns_when_empty_text_candidates_dropped(caplog):
+    import logging
+
+    points = [_point(0.9, ""), _point(0.8, "real text"), _point(0.7, "  ")]
+
+    with caplog.at_level(logging.WARNING):
+        out = rag_retrieve_rerank.retrieve_then_rerank(
+            "q",
+            QVEC,
+            search_fn=lambda v, fk: points,
+            top_k=1,
+            fetch_k=10,
+            rerank_fn=lambda q, d, k: [(0, 1.0)],
+        )
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "dropped" in warnings[0].getMessage()
+    assert len(out) == 1  # only the one non-empty candidate survived to reranking
+    assert out[0]["text"] == "real text"
+
+
+def test_candidate_from_point_handles_none_payload():
+    candidate = rag_retrieve_rerank._candidate_from_point(FakePoint(0.9, None))
+    assert candidate["text"] is None
+    assert candidate["dense_score"] == 0.9
