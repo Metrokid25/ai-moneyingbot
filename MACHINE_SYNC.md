@@ -4,7 +4,7 @@
 > 실제로 2026-06-27 `daily_archive` 기능이 양쪽에서 평행 구현돼 충돌이 났다 (아래 "사례" 참고).
 > **이 문서는 양쪽 기계에 동일하게 둔다.** 작업 시작 전에 먼저 읽고, 끝나면 갱신한다.
 
-**최종 갱신:** 2026-06-30 (PC: eval gold셋 40개 생성) · 2026-06-30 (노트북: retrieve→rerank 통합 완성) · 2026-06-27 (PC: §6 데이터 지침 추가) / **기준 브랜치:** `agent/rag-ingest-boundary`
+**최종 갱신:** 2026-06-30 (PC: recall 실측 — rerank가 recall@1 0.40→0.80) · 2026-06-30 (PC: eval gold셋 40개 생성) · 2026-06-30 (노트북: retrieve→rerank 통합 완성) / **기준 브랜치:** `agent/rag-ingest-boundary`
 
 ---
 
@@ -62,6 +62,18 @@
   문서지칭형/근접중복/일반상식형 거부 필터 적용, 독립 코드리뷰 2회 통과.
   - **소프트 스폿(알 것):** 보편 사실 청크에서 나온 1~2문항(예: 인플레 타겟 2%)은 동일 주제 다른 청크도
     정답일 수 있어, 정답 청크가 top-k 밖이어도 검색기 잘못이 아닐 수 있음. recall은 chunk_id 기준이라 측정 자체는 유효.
+- **recall 실측 러너 + 첫 측정: 완성 (PC, 2026-06-30)** — `scripts/evaluate_rag_recall_gold.py`.
+  gold셋 `expected_chunk_ids`를 정답으로, 기존 `embed_query`+`make_qdrant_search_fn`+`retrieve_then_rerank`만 조합(재구현 없음).
+  dense top-k vs over-fetch(fetch_k=50)→rerank를 같은 depth=10에서 recall@1/5/10·MRR@10으로 비교. 리포트는 `reports/`(gitignore).
+  - **첫 실측 (gold 40문, voyage-3-large + rerank-2):**
+    | 지표 | dense | +rerank |
+    |---|---|---|
+    | recall@1 | 0.400 | **0.800** |
+    | recall@5 | 0.725 | **0.975** |
+    | recall@10 | 0.800 | **0.975** |
+    | MRR@10 | 0.539 | **0.881** |
+    → **리랭킹이 recall@1을 2배로.** dense가 top10에서 놓친 8개 중 7개를 rerank가 복구. 양쪽 다 놓친 건 corpus-011 1개(gold 소프트스폿).
+  - **노트북 주의:** 이 러너는 이미 done. **재구현 금지(§2-2).** 합성 20쿼리(`docs/rag_phase1_diagnosis.md`) 기반 실측을 따로 하고 싶으면 이 러너에 `--gold` 다른 파일로 주거나 별도 입력 어댑터만 추가.
 
 ### 진행 예정 (다음 작업 = "리랭킹 eval 실측") — 막힌 것 없음, 바로 가능
 1. **eval 실측** — "합성 쿼리 20개 중 10개 검색 실패 → 리랭킹 후 몇 개로 줄었나" 측정.
@@ -69,9 +81,10 @@
    - 데이터: 노트북엔 2026-06-30 `data/qdrant/`(≈600MB) 복사·검증 완료. **PC엔 원본 인덱스가 이미 있어 PC에서 즉시 실행 가능.**
    - **할 일:** 기존 eval 자산(합성 쿼리 20개 + 정답 article_id — `docs/rag_phase1_diagnosis.md` 표)으로 **baseline(dense) vs `retrieve_then_rerank`** 순위 비교 스크립트 작성 → Voyage로 쿼리 임베딩 + rerank → 복구된 쿼리 수 집계.
    - **코드 진입점:** `src/rag_retrieve_rerank.py`의 `retrieve_then_rerank` + `make_qdrant_search_fn`(실제 qdrant client 주입).
-2. **id 기반 recall@k / MRR 러너** — 위 합성 쿼리 외에, 2026-06-30 PC가 만든 코퍼스 gold셋(`tests/fixtures/rag_eval_questions_corpus.jsonl`, 40문, `expected_chunk_ids` 포함)을 정답으로 쓰는 recall@k/MRR 채점을 추가.
-   - 현재 `scripts/evaluate_rag_retrieval_set.py`는 **키워드 겹침만** 채점하고 chunk_id로는 recall을 안 잰다 →
-     검색 결과 payload의 `chunk_id`를 gold의 `expected_chunk_ids`와 매칭하는 채점 경로를 추가하면 됨.
+2. ~~id 기반 recall@k / MRR 러너~~ → **완료 (위 §4 완료 참고, `evaluate_rag_recall_gold.py`).** 다음 후보:
+   - **소프트스폿 보강:** corpus-011처럼 양쪽 다 놓치는 해석형 문항을 gold셋에서 교체(생성기 재실행, `--count` 늘려 거른 뒤 선별).
+   - **fetch_k 스윕:** rerank의 fetch_k(현 50)를 25/100으로 바꿔 recall/지연·비용 트레이드오프 측정.
+   - **합성 20쿼리 실측:** `docs/rag_phase1_diagnosis.md` 자산을 같은 러너 형식(`expected_chunk_ids`)으로 변환해 교차검증.
 
 ### 알려진 구조 이슈
 - 브랜치 `agent/rag-ingest-boundary`가 `main`보다 **약 114커밋 앞섬(미병합)**. 이 큰 격차가 stale·충돌의 근본 원인.
