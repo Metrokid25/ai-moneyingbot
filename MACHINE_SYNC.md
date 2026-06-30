@@ -4,7 +4,7 @@
 > 실제로 2026-06-27 `daily_archive` 기능이 양쪽에서 평행 구현돼 충돌이 났다 (아래 "사례" 참고).
 > **이 문서는 양쪽 기계에 동일하게 둔다.** 작업 시작 전에 먼저 읽고, 끝나면 갱신한다.
 
-**최종 갱신:** 2026-06-27 (PC 동기화 점검 + §6 노트북 데이터 지침 추가) / **기준 브랜치:** `agent/rag-ingest-boundary`
+**최종 갱신:** 2026-06-30 (노트북: retrieve→rerank 통합 완성) · 2026-06-27 (PC: §6 데이터 지침 추가) / **기준 브랜치:** `agent/rag-ingest-boundary`
 
 ---
 
@@ -52,11 +52,13 @@
   → **이 기능은 건드리지 말 것. 이미 done.**
 - **리랭킹 모듈: 완성** — 브랜치 `agent/rag-ingest-boundary` (`5ea34fb`, `f27d7f7`).
   `src/rag_rerank.py` = Voyage `rerank-2`로 검색 후보 재정렬. 단위테스트 15개. 독립 리뷰 통과.
+- **검색 통합(retrieve → rerank): 완성** — 브랜치 (`bf36f59`, `36bbb07`).
+  `src/rag_retrieve_rerank.py` = qdrant 과다인출(fetch_k) → `rag_rerank` → top_k. qdrant·Voyage 둘 다 주입 가능, fixture 테스트 15개. 독립 리뷰 통과. **이로써 리랭킹 "코드" 부분은 끝.**
 - 기타: stale 테스트 수정(`f2653d9`), 노트북 RAG 개발 환경 세팅(venv·키).
 
-### 진행 예정 (다음 작업 = "리랭킹 2단계")
-1. **검색 통합** — `rag_retrieval`이 250자 snippet 말고 **전체 청크 텍스트 유지** → `retrieve → rerank` 파이프라인 연결. (데이터 없이 fixture로 개발/테스트 가능)
-2. **eval 실측** — "합성 쿼리 20개 중 10개 검색 실패 → 리랭킹 후 몇 개로 줄었나" 측정. **PC의 qdrant 인덱스가 노트북에 있어야 가능.**
+### 진행 예정 (다음 작업 = "리랭킹 eval 실측")
+1. **eval 실측** — "합성 쿼리 20개 중 10개 검색 실패 → 리랭킹 후 몇 개로 줄었나" 측정. **PC의 qdrant 인덱스가 노트북에 있어야 가능** (현재 Google Drive 미연결로 대기 — 연결되면 인덱스 받아 즉시 측정).
+   - 코드는 다 됨: `retrieve_then_rerank` + `make_qdrant_search_fn`에 실제 qdrant client만 물리면 됨.
 
 ### 알려진 구조 이슈
 - 브랜치 `agent/rag-ingest-boundary`가 `main`보다 **약 114커밋 앞섬(미병합)**. 이 큰 격차가 stale·충돌의 근본 원인.
