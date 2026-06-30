@@ -4,7 +4,7 @@
 > 실제로 2026-06-27 `daily_archive` 기능이 양쪽에서 평행 구현돼 충돌이 났다 (아래 "사례" 참고).
 > **이 문서는 양쪽 기계에 동일하게 둔다.** 작업 시작 전에 먼저 읽고, 끝나면 갱신한다.
 
-**최종 갱신:** 2026-06-30 (노트북: retrieve→rerank 통합 완성) · 2026-06-27 (PC: §6 데이터 지침 추가) / **기준 브랜치:** `agent/rag-ingest-boundary`
+**최종 갱신:** 2026-06-30 (PC: eval gold셋 40개 생성) · 2026-06-30 (노트북: retrieve→rerank 통합 완성) · 2026-06-27 (PC: §6 데이터 지침 추가) / **기준 브랜치:** `agent/rag-ingest-boundary`
 
 ---
 
@@ -55,6 +55,13 @@
 - **검색 통합(retrieve → rerank): 완성** — 브랜치 (`bf36f59`, `36bbb07`).
   `src/rag_retrieve_rerank.py` = qdrant 과다인출(fetch_k) → `rag_rerank` → top_k. qdrant·Voyage 둘 다 주입 가능, fixture 테스트 15개. 독립 리뷰 통과. **이로써 리랭킹 "코드" 부분은 끝.**
 - 기타: stale 테스트 수정(`f2653d9`), 노트북 RAG 개발 환경 세팅(venv·키).
+- **eval gold셋: 완성 (PC, 2026-06-30)** — `tests/fixtures/rag_eval_questions_corpus.jsonl` (40문).
+  생성기 `scripts/build_rag_eval_gold.py` = qdrant 인덱스(50,583청크) 전수에서 article당 1청크 표본추출 →
+  gpt-4o-mini가 각 청크의 정답 질문 생성 → `expected_chunk_ids`/`expected_article_ids`에 실제 청크 id 기입.
+  point-id 정렬 + `temperature=0,seed=0`으로 동일 인덱스에선 대체로 재현됨(바이트 보장은 아님).
+  문서지칭형/근접중복/일반상식형 거부 필터 적용, 독립 코드리뷰 2회 통과.
+  - **소프트 스폿(알 것):** 보편 사실 청크에서 나온 1~2문항(예: 인플레 타겟 2%)은 동일 주제 다른 청크도
+    정답일 수 있어, 정답 청크가 top-k 밖이어도 검색기 잘못이 아닐 수 있음. recall은 chunk_id 기준이라 측정 자체는 유효.
 
 ### 진행 예정 (다음 작업 = "리랭킹 eval 실측") — 막힌 것 없음, 바로 가능
 1. **eval 실측** — "합성 쿼리 20개 중 10개 검색 실패 → 리랭킹 후 몇 개로 줄었나" 측정.
@@ -62,6 +69,9 @@
    - 데이터: 노트북엔 2026-06-30 `data/qdrant/`(≈600MB) 복사·검증 완료. **PC엔 원본 인덱스가 이미 있어 PC에서 즉시 실행 가능.**
    - **할 일:** 기존 eval 자산(합성 쿼리 20개 + 정답 article_id — `docs/rag_phase1_diagnosis.md` 표)으로 **baseline(dense) vs `retrieve_then_rerank`** 순위 비교 스크립트 작성 → Voyage로 쿼리 임베딩 + rerank → 복구된 쿼리 수 집계.
    - **코드 진입점:** `src/rag_retrieve_rerank.py`의 `retrieve_then_rerank` + `make_qdrant_search_fn`(실제 qdrant client 주입).
+2. **id 기반 recall@k / MRR 러너** — 위 합성 쿼리 외에, 2026-06-30 PC가 만든 코퍼스 gold셋(`tests/fixtures/rag_eval_questions_corpus.jsonl`, 40문, `expected_chunk_ids` 포함)을 정답으로 쓰는 recall@k/MRR 채점을 추가.
+   - 현재 `scripts/evaluate_rag_retrieval_set.py`는 **키워드 겹침만** 채점하고 chunk_id로는 recall을 안 잰다 →
+     검색 결과 payload의 `chunk_id`를 gold의 `expected_chunk_ids`와 매칭하는 채점 경로를 추가하면 됨.
 
 ### 알려진 구조 이슈
 - 브랜치 `agent/rag-ingest-boundary`가 `main`보다 **약 114커밋 앞섬(미병합)**. 이 큰 격차가 stale·충돌의 근본 원인.
