@@ -216,7 +216,10 @@ def test_market_realtime_interactive_login_prepares_before_inactive_skip(monkeyp
 
     out = capsys.readouterr().out
     assert rc == 0
-    assert session.goto_calls == ["https://example.test/list"]
+    # 2026-07-02: 로그인 준비는 (빈 SPA 셸이 되는) 목록 페이지 대신 네이버 로그인 페이지를 연다
+    from member_api import NAVER_LOGIN_URL
+
+    assert session.goto_calls == [NAVER_LOGIN_URL]
     assert enter_waits == ["enter"]
     assert out.index("[archive_loop] interactive login preparation started") < out.index(
         "[archive_loop] market schedule inactive: market-closed-23-06"
@@ -262,11 +265,14 @@ def test_market_realtime_interactive_login_reuses_prepared_session_when_active(m
         interactive_login_enter_waiter=lambda: None,
     )
 
+    from member_api import NAVER_LOGIN_URL
+
     assert rc == 0
-    assert session.goto_calls == ["https://example.test/list"]
+    # 2026-07-02: 로그인 준비가 네이버 로그인 페이지를 연다 (목록 페이지 대신)
+    assert session.goto_calls == [NAVER_LOGIN_URL]
     assert seen == [
-        ("index", session, ["https://example.test/list"], False),
-        ("batch", session, ["https://example.test/list"], False),
+        ("index", session, [NAVER_LOGIN_URL], False),
+        ("batch", session, [NAVER_LOGIN_URL], False),
     ]
     assert session.closed is True
     assert session.close_count == 1
@@ -383,7 +389,7 @@ def test_realtime_index_prints_login_wait_prompt_when_login_required(monkeypatch
         lambda: {"snapshot_max_id": 100},
     )
     monkeypatch.setattr(index_tail_realtime, "wait_for_login", lambda _page: None)
-    monkeypatch.setattr(index_tail_realtime, "_collect_after_snapshot", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(index_tail_realtime, "_collect_after_snapshot", lambda *_args, **_kwargs: (0, None))
 
     rc = index_tail_realtime.run_realtime_index(
         "https://example.test/list",

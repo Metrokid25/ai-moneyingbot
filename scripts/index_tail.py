@@ -27,6 +27,7 @@ sys.path.insert(0, "src")
 from browser import BrowserSession, check_blocked, wait_for_login
 from db import get_conn, init_db, upsert_article, article_exists
 from indexer import build_page_url
+from member_api import NAVER_LOGIN_URL, fetch_member_articles, parse_member_list_url
 from models import Article
 from parser import parse_article_list
 
@@ -47,11 +48,27 @@ def _is_login_required_error(err) -> bool:
     return "login_required" in text or "login" in text or "로그인" in str(err)
 
 
-def _wait_for_interactive_login(input_func=input) -> None:
+def _console_enter_wait(prompt: str) -> None:
+    """콘솔 안전 Enter 대기. Windows PowerShell에서 input()이 stdin EOF로
+    즉시 통과하는 문제(browser.wait_for_login과 동일)를 msvcrt로 우회."""
+    print(prompt, flush=True)
+    if sys.platform == "win32":
+        import msvcrt
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                break
+    else:
+        sys.stdin.readline()
+
+
+def _wait_for_interactive_login(input_func=None) -> None:
     print("[index_tail] login_required detected.")
-    print("[index_tail] 브라우저에서 사용자가 직접 네이버 로그인해야 합니다.")
+    print("[index_tail] 브라우저에 연 네이버 로그인 페이지에서 직접 로그인하세요.")
     print("[index_tail] CAPTCHA/본인인증이 뜨면 사용자가 직접 처리해야 합니다.")
-    print("[index_tail] 멘토선생님 작성글 목록이 보이면 PowerShell에서 Enter를 누르세요.")
+    print("[index_tail] 로그인이 완료되면 PowerShell에서 Enter를 누르세요.")
+    if input_func is None:
+        input_func = _console_enter_wait
     input_func("[index_tail] Enter를 누르면 같은 브라우저 세션으로 다시 확인합니다...")
 
 
@@ -61,7 +78,7 @@ def _fetch_rows_with_interactive_login(
     page_num: int,
     *,
     interactive_login: bool = False,
-    input_func=input,
+    input_func=None,
     max_retries: int = INTERACTIVE_LOGIN_RETRIES,
 ):
     attempts = 0
@@ -72,6 +89,16 @@ def _fetch_rows_with_interactive_login(
         if attempts >= max_retries:
             return rows, err
         attempts += 1
+        # 멤버 목록 SPA는 비로그인 시 빈 셸만 보여서 로그인 폼이 안 뜸 →
+        # 네이버 로그인 페이지를 직접 열어 사용자가 바로 로그인할 수 있게 한다.
+        # goto는 에러를 반환값으로 주며, 로그인 페이지 자체는 'login_required'로
+        # 감지되는 게 정상. 그 외 실패(navigation_failed 등)는 경고로 알린다.
+        try:
+            _login_url, login_nav_err = session.goto(NAVER_LOGIN_URL)
+            if login_nav_err and "login" not in str(login_nav_err):
+                print(f"[index_tail] WARN: 로그인 페이지 열기 실패({login_nav_err}) — 브라우저 상태를 확인하세요.")
+        except Exception as e:
+            print(f"[index_tail] WARN: 로그인 페이지 열기 중 예외({e}) — 브라우저 상태를 확인하세요.")
         _wait_for_interactive_login(input_func=input_func)
         print(f"[index_tail] 같은 브라우저 세션으로 page {page_num} 재확인 ({attempts}/{max_retries})")
 
@@ -90,7 +117,7 @@ def _create_snapshot(
     list_url: str,
     *,
     interactive_login: bool = False,
-    input_func=input,
+    input_func=None,
 ) -> Optional[dict]:
     """페이지 1 fetch → 최고 article_id 스냅샷 생성 후 data/snapshot_<ts>.json 저장."""
     rows, err = _fetch_rows_with_interactive_login(
@@ -138,14 +165,17 @@ def _collect_after_snapshot(
     min_id: int,
     *,
     interactive_login: bool = False,
-    input_func=input,
-) -> int:
+    input_func=None,
+):
     """min_id 이상인 신규 글만 page 1부터 순방향 수집.
 
     article_id < min_id 글을 처음 만나는 순간 수집 종료.
+    (total, stop_err) 반환 — stop_err은 차단(login_required 등)으로 중단됐을 때의
+    에러 문자열. 정상 종료면 None. 호출부는 stop_err 시 성공으로 위장하면 안 된다.
     """
     total = 0
     page = 1
+    stop_err = None
     while True:
         page_url = build_page_url(list_url, page)
         print(f"\n[after-snapshot][PAGE {page}] {page_url}")
@@ -159,6 +189,7 @@ def _collect_after_snapshot(
         )
         if err:
             print(f"  [STOP] 차단 감지: {err}")
+            stop_err = err
             break
 
         if not rows:
@@ -195,7 +226,7 @@ def _collect_after_snapshot(
         _sleep()
         page += 1
 
-    return total
+    return total, stop_err
 
 
 def _sleep() -> None:
@@ -206,6 +237,13 @@ def _sleep() -> None:
 
 def _fetch_rows(session: BrowserSession, list_url: str, page_num: int):
     """(rows_or_None, err_or_None) 반환."""
+    # 2026-07-02: 멤버 작성글 목록 페이지가 SPA(클라이언트 렌더)로 바뀌어
+    # HTML 파싱이 0행이 됨 → 멤버 목록 URL이면 REST API를 직접 호출한다.
+    member = parse_member_list_url(list_url)
+    if member is not None:
+        cafe_id, member_key = member
+        return fetch_member_articles(session, cafe_id, member_key, page_num)
+    # 멤버 목록 URL이 아니면 기존 HTML 파싱 경로 유지
     page_url = build_page_url(list_url, page_num)
     final_url, err = session.goto(page_url)
     if err:
@@ -226,7 +264,7 @@ def find_tail(
     estimate: int,
     *,
     interactive_login: bool = False,
-    input_func=input,
+    input_func=None,
 ):
     """끝페이지 번호 반환 (None=감지 실패)."""
     print(f"\n[tail_scan] estimate={estimate} 에서 탐색 시작...")
@@ -300,7 +338,7 @@ def index_pages(
     snapshot_max_id: Optional[int] = None,
     *,
     interactive_login: bool = False,
-    input_func=input,
+    input_func=None,
 ) -> int:
     """pages 목록을 순서대로 인덱싱. 저장 건수 반환.
 
@@ -391,18 +429,26 @@ def main() -> int:
             min_id = snapshot["snapshot_max_id"] + 1
             print(f"[index_tail] --collect-after-snapshot: article_id >= {min_id} 수집 시작")
 
-            trigger_url = build_page_url(args.url, 1)
-            print(f"\n[index_tail] 브라우저 진입: {trigger_url}")
-            session.goto(trigger_url)
-            if args.interactive_login:
-                wait_for_login(session.page)
+            # 멤버 목록 URL은 REST API로 수집하므로 (죽은 SPA 셸) 페이지 진입이 불필요.
+            # 로그인 필요 여부는 API의 login_required 감지 → 재시도 흐름에서 처리된다.
+            if parse_member_list_url(args.url) is None:
+                trigger_url = build_page_url(args.url, 1)
+                print(f"\n[index_tail] 브라우저 진입: {trigger_url}")
+                session.goto(trigger_url)
+                if args.interactive_login:
+                    wait_for_login(session.page)
+            else:
+                print("[index_tail] member-list URL: REST API로 수집 (browser entry 생략)")
 
-            total = _collect_after_snapshot(
+            total, stop_err = _collect_after_snapshot(
                 session,
                 args.url,
                 min_id,
                 interactive_login=args.interactive_login,
             )
+            if stop_err:
+                print(f"\n[index_tail] stopped: {stop_err}  (저장 {total}개)")
+                return 1
             print(f"\n[index_tail] 완료. 총 {total}개 저장")
             return 0
 
@@ -410,12 +456,15 @@ def main() -> int:
         print(f"[index_tail] estimate: {args.estimate}")
         print(f"[index_tail] tail    : {args.tail}")
 
-        # 로그인 트리거 — estimate 페이지로 직진
-        trigger_url = build_page_url(args.url, args.estimate)
-        print(f"\n[index_tail] 브라우저 진입: {trigger_url}")
-        session.goto(trigger_url)
-        if args.interactive_login:
-            wait_for_login(session.page)
+        # 로그인 트리거 — estimate 페이지로 직진 (멤버 목록 URL은 API 수집이라 생략)
+        if parse_member_list_url(args.url) is None:
+            trigger_url = build_page_url(args.url, args.estimate)
+            print(f"\n[index_tail] 브라우저 진입: {trigger_url}")
+            session.goto(trigger_url)
+            if args.interactive_login:
+                wait_for_login(session.page)
+        else:
+            print("[index_tail] member-list URL: REST API로 수집 (browser entry 생략)")
 
         # 스냅샷 생성 (페이지 1 fetch → 최고 article_id 기록)
         snapshot = _create_snapshot(

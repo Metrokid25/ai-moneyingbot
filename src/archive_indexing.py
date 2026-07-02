@@ -12,6 +12,7 @@ from browser import (
     has_article_list_marker,
 )
 from indexer import build_page_url
+from member_api import fetch_member_articles, parse_member_list_url
 from parser import parse_article_list
 
 LIST_PAGE_READY_RETRIES = 3
@@ -28,6 +29,20 @@ def fetch_index_rows(
     sleeper: Callable[[float], None] = time.sleep,
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
     """Fetch one list page using the same primitives as scripts/index_tail.py."""
+    # 2026-07-02: 멤버 작성글 목록은 SPA로 바뀌어 HTML 파싱이 0행 → REST API 사용.
+    member = parse_member_list_url(list_url)
+    if member is not None:
+        cafe_id, member_key = member
+        rows, err = fetch_member_articles(session, cafe_id, member_key, page_num)
+        if err:
+            # 이 레이어의 기존 계약은 정확히 "login_required" 문자열 비교
+            if err.startswith("login_required"):
+                return None, "login_required"
+            return None, err
+        for row in rows:
+            row.setdefault("source_page", page_num)
+        return rows, None
+
     page_url = build_page_url(list_url, page_num)
     final_url, err = session.goto(page_url)
     if err and err != "login_required":

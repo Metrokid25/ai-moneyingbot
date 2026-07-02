@@ -106,7 +106,7 @@ def test_collect_after_snapshot_continues_after_interactive_retry(monkeypatch):
 
     monkeypatch.setattr(index_tail, "_fetch_rows_with_interactive_login", fake_fetch_rows)
 
-    total = index_tail._collect_after_snapshot(
+    total, stop_err = index_tail._collect_after_snapshot(
         session,
         "https://cafe.example/list",
         min_id=2,
@@ -115,6 +115,7 @@ def test_collect_after_snapshot_continues_after_interactive_retry(monkeypatch):
     )
 
     assert total == 0
+    assert stop_err is None
     assert calls == [(session, 1, True)]
     assert prompts == []
 
@@ -127,7 +128,7 @@ def test_main_noninteractive_does_not_call_wait_for_login(monkeypatch):
     monkeypatch.setattr(index_tail, "BrowserSession", lambda: session)
     monkeypatch.setattr(index_tail, "_load_latest_snapshot", lambda: {"snapshot_max_id": 9})
     monkeypatch.setattr(index_tail, "wait_for_login", lambda _page: wait_calls.append(_page))
-    monkeypatch.setattr(index_tail, "_collect_after_snapshot", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(index_tail, "_collect_after_snapshot", lambda *_args, **_kwargs: (0, None))
     monkeypatch.setattr(index_tail, "build_page_url", lambda url, page: f"{url}?page={page}")
     monkeypatch.setattr(index_tail.sys, "argv", ["index_tail.py", "https://cafe.example/list", "--collect-after-snapshot"])
 
@@ -146,7 +147,7 @@ def test_main_interactive_calls_wait_for_login(monkeypatch):
     monkeypatch.setattr(index_tail, "BrowserSession", lambda: session)
     monkeypatch.setattr(index_tail, "_load_latest_snapshot", lambda: {"snapshot_max_id": 9})
     monkeypatch.setattr(index_tail, "wait_for_login", lambda page: wait_calls.append(page))
-    monkeypatch.setattr(index_tail, "_collect_after_snapshot", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(index_tail, "_collect_after_snapshot", lambda *_args, **_kwargs: (0, None))
     monkeypatch.setattr(index_tail, "build_page_url", lambda url, page: f"{url}?page={page}")
     monkeypatch.setattr(
         index_tail.sys,

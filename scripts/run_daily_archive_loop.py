@@ -784,14 +784,39 @@ def prepare_interactive_login_session(
     *,
     enter_waiter: Callable[[], None] | None = None,
 ) -> None:
+    # 2026-07-02: 멤버 목록 페이지는 비로그인 시 빈 SPA 셸이라 로그인 폼이 안 보임 →
+    # 네이버 로그인 페이지를 직접 연다 (이미 로그인된 세션이면 naver.com으로 리다이렉트됨).
+    # 로그인 여부의 신뢰 가능한 판별은 멤버 API 프로브(code 0004)로 한다.
+    from member_api import NAVER_LOGIN_URL, check_member_login, parse_member_list_url
+
+    def _probe_login():
+        member = parse_member_list_url(config.list_url)
+        if member is None:
+            return None, "not a member-list url"
+        return check_member_login(session, member[0], member[1])
+
     print("[archive_loop] interactive login preparation started", flush=True)
+
+    logged_in, probe_detail = _probe_login()
+    if logged_in is True:
+        # 쿠키가 살아있으면 Enter 없이 통과 → 무인(스케줄러) 재시작도 안 멈춘다
+        print(f"[archive_loop] already logged in ({probe_detail}) — skipping login prompt", flush=True)
+        print("[archive_loop] interactive login preparation finished", flush=True)
+        return
+
     print("[archive_loop] opening login/check page", flush=True)
-    session.goto(config.list_url)
+    session.goto(NAVER_LOGIN_URL)
     print("[LOGIN] 브라우저에서 네이버 로그인을 완료한 뒤, 이 PowerShell 창에서 엔터를 눌러주세요.", flush=True)
     print("[LOGIN] 엔터 입력 대기 중...", flush=True)
     if enter_waiter is None:
         enter_waiter = _wait_for_interactive_login_enter
     enter_waiter()
+
+    # Enter 후 로그인 실제 성공 여부 재검증 (프로브 불가 환경이면 경고 없이 진행)
+    logged_in, probe_detail = _probe_login()
+    if logged_in is False:
+        print(f"[archive_loop] WARN: 로그인이 확인되지 않았습니다 ({probe_detail}).", flush=True)
+        print("[archive_loop] WARN: 이대로 진행하면 수집이 login_required로 중단됩니다.", flush=True)
     print("[archive_loop] interactive login preparation finished", flush=True)
 
 

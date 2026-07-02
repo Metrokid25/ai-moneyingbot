@@ -149,12 +149,13 @@ def test_collect_after_snapshot_indexes_only_new_articles(tmp_path):
          patch("index_tail.check_blocked", return_value=None), \
          patch("index_tail._sleep"):
         import index_tail
-        count = index_tail._collect_after_snapshot(
+        count, stop_err = index_tail._collect_after_snapshot(
             session,
             "https://cafe.naver.com/test",
             min_id=1001,
         )
 
+    assert stop_err is None
     assert count == 2
     assert article_exists(1003)
     assert article_exists(1001)
@@ -184,10 +185,11 @@ def test_collect_after_snapshot_skips_already_existing(tmp_path):
          patch("index_tail.check_blocked", return_value=None), \
          patch("index_tail._sleep"):
         import index_tail
-        count = index_tail._collect_after_snapshot(
+        count, stop_err = index_tail._collect_after_snapshot(
             session,
             "https://cafe.naver.com/test",
             min_id=1001,
         )
 
+    assert stop_err is None
     assert count == 1  # 1001만 신규 저장
