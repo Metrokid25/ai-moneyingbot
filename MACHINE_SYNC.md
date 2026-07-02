@@ -4,7 +4,7 @@
 > 실제로 2026-06-27 `daily_archive` 기능이 양쪽에서 평행 구현돼 충돌이 났다 (아래 "사례" 참고).
 > **이 문서는 양쪽 기계에 동일하게 둔다.** 작업 시작 전에 먼저 읽고, 끝나면 갱신한다.
 
-**최종 갱신:** 2026-06-30 (PC: recall 실측 — rerank가 recall@1 0.40→0.80) · 2026-06-30 (PC: eval gold셋 40개 생성) · 2026-06-30 (노트북: retrieve→rerank 통합 완성) / **기준 브랜치:** `agent/rag-ingest-boundary`
+**최종 갱신:** 2026-06-30 (PC: mentor.db 코퍼스 DB 노트북 이관 결정) · 2026-06-30 (PC: recall 실측 — rerank가 recall@1 0.40→0.80) · 2026-06-30 (PC: eval gold셋 40개 생성) / **기준 브랜치:** `agent/rag-ingest-boundary`
 
 ---
 
@@ -38,7 +38,10 @@
 
 - `data/`, `archive.db`, `data/qdrant/`는 **gitignore** — git으로 안 넘어간다. 기계별 로컬.
 - 실제 코퍼스(약 42k건 본문 + qdrant 인덱스)는 **PC에만** 있음. 노트북엔 없음.
-- **노트북엔 `data/qdrant/`(≈600MB)만 복사한다. `archive.db`(16GB)는 옮기지 않는다.** 노트북이 하는 일(검색·리랭킹·eval)은 qdrant 인덱스만 필요하고, 청크 본문이 qdrant payload에 들어있어 `archive.db`를 안 거친다. `archive.db`는 수집/색인용이고 그건 PC 전담(§1).
+- **노트북엔 `data/qdrant/`(≈600MB) + `data/mentor.db`(≈170MB)를 복사한다. `archive.db`(16GB)는 옮기지 않는다.**
+  - `data/qdrant/` = 의미검색(리랭킹·eval)용.
+  - `data/mentor.db` = 전 글 42,947건 **전체 본문(clean_text) + 메타** 담은 단일 SQLite(LIKE + 트라이그램 FTS). 트레이딩봇용 코퍼스 마이닝/키워드검색·원문열람용. `scripts/build_mentor_db.py`로 `normalized_articles.jsonl`에서 생성 (2026-06-30 결정, §6 참고).
+  - `archive.db`(16GB)의 추가분은 대부분 `raw_html`(수집 원본 마크업)이라 판단·검증에 안 쓰인다 → 옮기지 않는다.
 - `embeddings_phase2.npy`도 노트북엔 불필요 — qdrant 적재용일 뿐, 질의엔 `data/qdrant/` 폴더만 있으면 됨.
 - 복사한 인덱스는 노트북에서 **읽기 전용**으로만. (수집은 PC에서만 → 양쪽 인덱스 어긋남 방지. PC가 재색인하면 노트북 사본은 오래된 스냅샷이 되니 가끔 다시 복사.)
 
@@ -55,6 +58,9 @@
 - **검색 통합(retrieve → rerank): 완성** — 브랜치 (`bf36f59`, `36bbb07`).
   `src/rag_retrieve_rerank.py` = qdrant 과다인출(fetch_k) → `rag_rerank` → top_k. qdrant·Voyage 둘 다 주입 가능, fixture 테스트 15개. 독립 리뷰 통과. **이로써 리랭킹 "코드" 부분은 끝.**
 - 기타: stale 테스트 수정(`f2653d9`), 노트북 RAG 개발 환경 세팅(venv·키).
+- **mentor.db 코퍼스 DB 빌더: 완성 (PC, 2026-06-30)** — `scripts/build_mentor_db.py`.
+  `normalized_articles.jsonl`(42,947건 전체 clean_text) → `data/mentor.db`(단일 SQLite, LIKE + 트라이그램 FTS5, ≈170MB).
+  트레이딩봇 작업 시 노트북이 전 글을 키워드검색·원문열람하는 용도. qdrant(의미검색)와 병행. **db 파일은 gitignore → 수동 이관**(§3·§6).
 - **eval gold셋: 완성 (PC, 2026-06-30)** — `tests/fixtures/rag_eval_questions_corpus.jsonl` (40문).
   생성기 `scripts/build_rag_eval_gold.py` = qdrant 인덱스(50,583청크) 전수에서 article당 1청크 표본추출 →
   gpt-4o-mini가 각 청크의 정답 질문 생성 → `expected_chunk_ids`/`expected_article_ids`에 실제 청크 id 기입.
@@ -104,15 +110,23 @@
 
 ## 6. 노트북 Claude Code 지침 (데이터 동기화)
 
-> 노트북에서 Claude Code로 작업할 때, "전체 DB를 옮겨야 하나?" 같은 데이터 복사 질문은 아래 결론을 그대로 따른다. (PC 측에서 2026-06-27 점검·확정한 논리)
+> 노트북에서 Claude Code로 작업할 때, "전체 DB를 옮겨야 하나?" 같은 데이터 복사 질문은 아래 결론을 그대로 따른다. (2026-06-30 갱신 — 트레이딩봇 작업을 위해 mentor.db 추가)
 
-**결론: 노트북엔 `data/qdrant/`(≈600MB)만 복사. `archive.db`(16GB)는 절대 옮기지 않는다.**
+**결론: 노트북엔 `data/qdrant/`(≈600MB) + `data/mentor.db`(≈170MB)를 복사. `archive.db`(16GB)는 절대 옮기지 않는다.**
 
-**왜 archive.db(16GB)는 불필요한가**
-1. 노트북이 하는 일 = 검색·리랭킹·eval. 이건 **qdrant 인덱스만** 있으면 된다.
-2. **청크 본문이 qdrant payload 안에 저장**돼 있어, 답변·리랭킹·eval이 `archive.db`를 거치지 않는다.
-3. `archive.db`는 **수집/색인할 때만** 필요 → 그건 PC 전담(§1, "수집은 PC에서만").
-4. 16GB를 양쪽에 두면 데이터 사본이 둘이 되어 **어긋남(divergence)** 위험 (§3 원칙 위반).
+**왜 이 두 개면 충분하고 archive.db(16GB)는 불필요한가**
+1. 노트북이 하는 일 = 검색·리랭킹·eval **+ 트레이딩봇용 코퍼스 마이닝**.
+2. 검색·리랭킹·eval = **qdrant만** 있으면 된다(청크 본문이 qdrant payload에 있음).
+3. 트레이딩봇 작업(스승님 글을 근거로 매수타점·매도규칙 판단) = **전 글 본문**이 필요한데, 그 **읽을 수 있는 텍스트(clean_text) 전체가 `mentor.db`(170MB)에 다 들어있다.** 42,947건 전부, 잘림 없음.
+4. Claude는 애초에 DB를 통째로 읽지 못한다(컨텍스트 한계) → 항상 **검색해서 관련 글만** 읽는다. 그래서 필요한 건 "검색 가능한 전체 텍스트"이고, 그게 mentor.db(키워드/FTS) + qdrant(의미검색)다.
+5. `archive.db`(16GB)의 추가분은 대부분 **`raw_html`**(수집 원본 마크업)이라 판단에 안 쓰인다. clean_text와 내용은 같은데 용량만 100배 → 옮길 이유 없음.
+6. 16GB를 양쪽에 두면 사본이 둘이 되어 **어긋남(divergence)** 위험도 커진다(§3 원칙 위반).
+
+**mentor.db 사용법(노트북)**
+- 키워드/부분문자열: `SELECT article_id,title,posted_at FROM articles WHERE clean_text LIKE '%손절%';`
+- 랭킹 전문검색(3글자↑): `SELECT a.article_id,a.title FROM articles_fts f JOIN articles a ON a.article_id=f.rowid WHERE articles_fts MATCH '분할매수' ORDER BY rank;`
+- 원문 읽기: `SELECT clean_text FROM articles WHERE article_id=28832;`
+- PC가 재수집하면 스냅샷이 낡음 → `scripts/build_mentor_db.py` 재실행 후 재이관. **읽기 전용**.
 
 **복사 방법**
 - PC에서 `data/qdrant/` 폴더를 압축 → 클라우드/USB → 노트북 같은 경로 `data/qdrant/`에 푼다.
