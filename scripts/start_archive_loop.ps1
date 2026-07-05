@@ -25,9 +25,13 @@ Write-Host "[archive] When the mentor teacher article list is visible, return he
 Write-Host "[archive] Market schedule controls when the proven archive routine runs."
 Write-Host "[archive] No automatic login or CAPTCHA bypass is performed."
 
+# --realtime-index: 수집·본문을 인프로세스(브라우저 세션 재사용)로 돌린다. 이 경로만이
+# 무인 안전하다 — 세션 만료 시 콘솔 Enter 대기로 멈추지 않고 서킷브레이커로 중단하고,
+# 차단(login_required)을 조용한 0건 성공으로 위장하지 않는다. (subprocess 경로는 무인 부적합)
 & $Python "scripts\run_daily_archive_loop.py" `
     --interactive-login `
     --market-schedule `
+    --realtime-index `
     --list-url $ListUrl
 
 exit $LASTEXITCODE

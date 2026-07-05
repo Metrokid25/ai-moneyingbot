@@ -24,8 +24,11 @@ Write-Host "[archive] If a Naver login window appears, log in manually in the br
 Write-Host "[archive] When the mentor teacher article list is visible, return here and press Enter if prompted."
 Write-Host "[archive] No automatic login or CAPTCHA bypass is performed."
 
+# --realtime-index: 인프로세스 경로(세션 재사용·블록 안전). subprocess 경로의
+# 대화형 로그인 무한 정지를 피한다.
 & $Python "scripts\run_daily_archive_loop.py" `
     --interactive-login `
+    --realtime-index `
     --list-url $ListUrl `
     --max-runs 1
 

@@ -216,3 +216,26 @@ def test_index_pages_stops_on_block_signal():
             )
 
     assert excinfo.value.err == "login_required"
+
+
+def test_realtime_index_pages_stops_on_block_signal():
+    """실시간 포크의 index_pages도 차단 시 _BlockStop을 올린다(index_tail.py와 동기화)."""
+    import index_tail_realtime
+
+    rows_page1 = [
+        {"article_id": 1005, "title": "x", "url": "https://cafe.naver.com/a/1005", "posted_at": "2026-05-02"},
+    ]
+    session = _make_session({})
+
+    with patch("index_tail_realtime.parse_article_list", return_value=rows_page1), \
+         patch("index_tail_realtime.check_blocked", return_value="login_required"), \
+         patch("index_tail_realtime._sleep"):
+        with pytest.raises(index_tail_realtime._BlockStop) as excinfo:
+            index_tail_realtime.index_pages(
+                session,
+                "https://cafe.naver.com/test",
+                [1, 2, 3],
+                snapshot_max_id=None,
+            )
+
+    assert excinfo.value.err == "login_required"
