@@ -25,7 +25,9 @@
 cd C:\projects
 git clone https://github.com/Metrokid25/ai-moneyingbot.git ai_moneyingbot_rag_agent
 cd C:\projects\ai_moneyingbot_rag_agent
-git checkout agent/rag-ingest-boundary
+# 배포는 main 기준. 배포 기준점 = 태그 deploy-baseline-20260705 (생존신호 포함 병합 커밋)
+git checkout main
+# 기준점 확인: git log -1 deploy-baseline-20260705
 ```
 
 ## 2. venv 생성 + 의존성 설치
