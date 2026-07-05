@@ -59,6 +59,64 @@ def test_success_message_handles_zero_new():
     assert "최신" in msg
 
 
+def test_success_message_includes_collection_liveness():
+    msg = wrapper.build_success_message(
+        {"new_chunks": 0}, timestamp="t", last_collected="2026.07.04. 09:10"
+    )
+    assert "마지막 수집글 작성일: 2026.07.04. 09:10" in msg
+
+
+def test_success_message_liveness_unknown_when_probe_fails():
+    msg = wrapper.build_success_message({"new_chunks": 0}, timestamp="t", last_collected=None)
+    assert "마지막 수집글 작성일: 확인불가" in msg
+
+
+# ── collection-liveness probe ──────────────────────────────────────────────
+
+def _make_archive_db(path, rows):
+    import sqlite3
+
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE articles (article_id INTEGER PRIMARY KEY, posted_at TEXT,"
+        " saved_at TEXT, status TEXT)"
+    )
+    conn.executemany("INSERT INTO articles VALUES (?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+
+def test_get_last_collected_returns_latest_body_collected(tmp_path):
+    db = tmp_path / "a.db"
+    # Deliberately DE-correlated columns: the row with the newest saved_at
+    # (article 1) has the LOWEST article_id and an OLDER posted_at, so ordering
+    # by article_id/rowid/posted_at instead of saved_at would return the wrong
+    # row and fail this test.
+    _make_archive_db(
+        db,
+        [
+            (1, "2026.07.02. 08:00", "2026-07-05T00:00:00Z", "BODY_COLLECTED"),  # newest saved_at
+            (2, "2026.07.04. 09:10", "2026-07-01T00:00:00Z", "BODY_COLLECTED"),
+            (3, "2026.07.05. 10:00", "2026-07-06T00:00:00Z", "INDEXED"),  # not collected yet
+        ],
+    )
+    # Latest by saved_at among BODY_COLLECTED is article 1; article 3 is excluded.
+    assert wrapper.get_last_collected(db) == "2026.07.02. 08:00"
+
+
+def test_get_last_collected_falls_back_to_saved_at_when_posted_at_null(tmp_path):
+    db = tmp_path / "b.db"
+    _make_archive_db(db, [(1, None, "2026-07-05T01:02:03Z", "BODY_COLLECTED")])
+    assert wrapper.get_last_collected(db) == "2026-07-05T01:02:03Z"
+
+
+def test_get_last_collected_none_on_empty_or_missing(tmp_path):
+    empty = tmp_path / "empty.db"
+    _make_archive_db(empty, [])
+    assert wrapper.get_last_collected(empty) is None
+    assert wrapper.get_last_collected(tmp_path / "does_not_exist.db") is None
+
+
 def test_failure_message_truncates_long_detail():
     detail = "z" * 2000
     msg = wrapper.build_failure_message(attempts=3, detail=detail, timestamp="t")
@@ -78,6 +136,7 @@ def _fake_proc(returncode, stdout="", stderr=""):
 def test_main_success_on_first_attempt_sends_success(monkeypatch):
     sent = []
     monkeypatch.setattr(wrapper, "send_telegram", lambda text, **k: sent.append(text) or True)
+    monkeypatch.setattr(wrapper, "get_last_collected", lambda p: "2026.07.05. 09:00")
     monkeypatch.setattr(
         wrapper,
         "run_indexer_once",
@@ -87,6 +146,7 @@ def test_main_success_on_first_attempt_sends_success(monkeypatch):
     assert rc == 0
     assert len(sent) == 1
     assert "신규 2청크" in sent[0]
+    assert "마지막 수집글 작성일: 2026.07.05. 09:00" in sent[0]
 
 
 def test_main_retries_then_fails_and_notifies(monkeypatch):

@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import subprocess
 import sys
 import time
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -41,6 +43,8 @@ from notify_telegram import send_telegram  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
 INDEXER = SCRIPTS_DIR / "update_rag_index_incremental.py"
+# Same default the child indexer uses, so the liveness probe looks at the same DB.
+DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "archive.db"
 DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_BACKOFF_SECONDS = 30.0
 
@@ -83,7 +87,38 @@ def parse_summary(stdout: str) -> dict | None:
     return found
 
 
-def build_success_message(summary: dict, *, timestamp: str) -> str:
+def get_last_collected(db_path: Path) -> str | None:
+    """Posted date of the most recently collected article in archive.db (read-only).
+
+    Collection-liveness signal (PM 2026-07-05): lets the operator tell "truly no
+    new articles" apart from "the Archive bot's collection silently died" from
+    the notification text alone. Never raises — an unattended notify run must
+    not fail because the probe did; returns None and the message says 확인불가.
+    """
+    try:
+        # Percent-escape the path: SQLite's URI parser decodes %HH and truncates
+        # at '#'/'?', so a raw path containing those would open the wrong file.
+        quoted = urllib.parse.quote(db_path.as_posix(), safe="/:")
+        conn = sqlite3.connect(f"file:{quoted}?mode=ro", uri=True)
+        try:
+            row = conn.execute(
+                "SELECT posted_at, saved_at FROM articles "
+                "WHERE status = 'BODY_COLLECTED' ORDER BY saved_at DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 - probe must never break the notify path
+        print(f"[run_rag_incremental_notify] WARN: liveness probe failed: {exc}")
+        return None
+    if row is None:
+        return None
+    posted_at, saved_at = row
+    return str(posted_at or saved_at or "").strip() or None
+
+
+def build_success_message(
+    summary: dict, *, timestamp: str, last_collected: str | None = None
+) -> str:
     new_chunks = summary.get("new_chunks", 0)
     if new_chunks:
         head = f"✅ RAG indexing 완료 · 신규 {new_chunks}청크 추가"
@@ -93,6 +128,9 @@ def build_success_message(summary: dict, *, timestamp: str) -> str:
         head,
         f"현재 청크: {summary.get('current_chunks', '?')} / 반영됨: {summary.get('indexed_chunks', '?')}",
         f"컬렉션: {summary.get('collection', '?')}",
+        # Collection-liveness: if this date stops advancing while "신규 0건"
+        # repeats, the Archive bot's collection is likely down (not "no news").
+        f"마지막 수집글 작성일: {last_collected or '확인불가'}",
         timestamp,
     ]
     return "\n".join(lines)
@@ -191,7 +229,13 @@ def main(argv: list[str] | None = None) -> int:
 
         if proc.returncode == 0:
             summary = parse_summary(proc.stdout) or {}
-            notify(build_success_message(summary, timestamp=now_kst_str()), enabled=telegram_enabled)
+            last_collected = get_last_collected(args.db_path or DEFAULT_DB_PATH)
+            notify(
+                build_success_message(
+                    summary, timestamp=now_kst_str(), last_collected=last_collected
+                ),
+                enabled=telegram_enabled,
+            )
             return 0
 
         last_detail = (proc.stderr or "") + (proc.stdout or "")
