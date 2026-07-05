@@ -116,6 +116,43 @@ def test_failed_queue_updates_existing_target_reason_and_timestamp():
     assert item["last_failed_at"] == "2026-05-28T01:00:00+09:00"
 
 
+def test_add_failed_item_returns_the_affected_item_not_last():
+    """제자리 갱신 시 반환값이 갱신된 그 항목이어야 한다(items[-1]은 무관한 마지막 항목)."""
+    queue = daily_archive.default_failed_queue()
+    daily_archive.add_failed_item(
+        queue, article_id=1, url="u1", reason="r1", failed_at="t1"
+    )
+    daily_archive.add_failed_item(
+        queue, article_id=2, url="u2", reason="r2", failed_at="t2"
+    )
+    returned = daily_archive.add_failed_item(
+        queue, article_id=1, url="u1", reason="r1-again", failed_at="t3"
+    )
+
+    assert returned["article_id"] == "1"
+    assert returned["reason"] == "r1-again"
+    # items[-1]은 article 2 → 반환값과 달라야 오귀속이 안 난 것
+    assert returned is not queue["items"][-1]
+    assert queue["items"][-1]["article_id"] == "2"
+
+
+def test_save_article_defaults_author_when_missing(monkeypatch):
+    """member API 행에 author가 없으면 기본 저자로 채워 RAG export 드롭을 막는다."""
+    captured = {}
+    monkeypatch.setattr(
+        daily_archive,
+        "upsert_article",
+        lambda article: captured.update(author=article.author),
+    )
+
+    daily_archive.save_article(
+        {"article_id": 1, "url": "https://example.test/1", "title": "t"},
+        dry_run=False,
+    )
+
+    assert captured["author"] == daily_archive.DEFAULT_AUTHOR
+
+
 def test_failed_queue_keeps_distinct_targets_separate():
     queue = daily_archive.default_failed_queue()
     daily_archive.add_failed_item(

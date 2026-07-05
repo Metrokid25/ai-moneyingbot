@@ -848,7 +848,9 @@ def run_once_realtime_session(
     if batch_recollect_runner is None:
         from batch_recollect import run_batch_recollect
 
-        batch_recollect_runner = run_batch_recollect
+        def batch_recollect_runner(*, session):
+            # 무인 루프: 세션 만료 시 콘솔 Enter 대기로 멈추지 않고 서킷브레이커로 중단한다.
+            return run_batch_recollect(session=session, interactive=False)
 
     if session is None:
         session = browser_session_factory()
@@ -958,7 +960,14 @@ def run_once(
     stderr_parts: list[str] = []
     returncode = 0
     for command in commands:
-        completed = runner(command, text=True, capture_output=True, check=False)
+        # cwd를 프로젝트 루트로 고정: 자식 스크립트가 sys.path.insert(0, 'src')를
+        # 상대경로로 하므로, Task Scheduler 등 다른 cwd에서 기동해도 import가 깨지지 않게 한다.
+        # (주의: 이 subprocess 경로에서 --interactive-login이 전달되고 login_required가
+        #  나면 자식이 콘솔 Enter 대기로 정지한다. 무인 실행은 --realtime-index 인프로세스
+        #  경로를 쓰거나, 프로필을 미리 로그인 시드해 둘 것 — DEPLOY 문서 참고.)
+        completed = runner(
+            command, text=True, capture_output=True, check=False, cwd=str(PROJECT_ROOT)
+        )
         command_stdout = completed.stdout or ""
         command_stderr = completed.stderr or ""
         stdout_parts.append("$ " + " ".join(command))

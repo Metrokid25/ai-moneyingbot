@@ -193,3 +193,26 @@ def test_collect_after_snapshot_skips_already_existing(tmp_path):
 
     assert stop_err is None
     assert count == 1  # 1001만 신규 저장
+
+
+def test_index_pages_stops_on_block_signal():
+    """차단(login_required) 감지 시 _BlockStop을 올려 남은 페이지 두드리기/거짓 성공을 막는다."""
+    import index_tail
+
+    rows_page1 = [
+        {"article_id": 1005, "title": "x", "url": "https://cafe.naver.com/a/1005", "posted_at": "2026-05-02"},
+    ]
+    session = _make_session({})
+
+    with patch("index_tail.parse_article_list", return_value=rows_page1), \
+         patch("index_tail.check_blocked", return_value="login_required"), \
+         patch("index_tail._sleep"):
+        with pytest.raises(index_tail._BlockStop) as excinfo:
+            index_tail.index_pages(
+                session,
+                "https://cafe.naver.com/test",
+                [1, 2, 3],
+                snapshot_max_id=None,
+            )
+
+    assert excinfo.value.err == "login_required"

@@ -83,7 +83,10 @@ def fetch_index_rows(
                 rows = _parse_rows_with_source_page(html, current_url, page_num)
                 if rows:
                     return rows, None
-                last_error = frame_err
+                # frame_err는 이 분기에서 항상 None → 앞선 시도가 기록한 의미 있는
+                # 사유(goto의 login_required 등)를 None으로 덮어쓰지 않는다. 덮어쓰면
+                # ([], None)으로 반환돼 차단이 '빈 페이지 성공'으로 위장된다(조용한 0건).
+                last_error = frame_err or last_error
 
         if attempt < max(1, ready_retries):
             sleeper(ready_delay_seconds)

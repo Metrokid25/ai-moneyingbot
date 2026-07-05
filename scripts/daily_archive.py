@@ -36,6 +36,9 @@ MAX_PAGE_LIMIT = 10
 DEFAULT_DELAY_SECONDS = 3.0
 DEFAULT_LOGIN_CHECK_RETRIES = 3
 DEFAULT_LOGIN_URL = "https://nid.naver.com/nidlogin.login"
+# member API 행에는 author 키가 없다. RAG export(scripts/export_archive_articles.py)는
+# author가 비면 글을 통째로 드롭하므로, index_tail.py와 동일하게 기본 저자로 채운다.
+DEFAULT_AUTHOR = "굿머닝"
 LIST_PAGE_READY_RETRIES = 3
 LIST_PAGE_READY_DELAY_SECONDS = 1.0
 
@@ -133,7 +136,13 @@ def add_failed_item(
     url: str | None,
     reason: str,
     failed_at: str,
-) -> None:
+) -> dict[str, Any]:
+    """실패 항목을 큐에 추가/갱신하고 그 항목을 반환한다.
+
+    기존 (article_id, url) 항목이면 제자리 갱신하고 그 항목을 돌려준다. 호출부는
+    반환값을 써야 한다 — items[-1]은 제자리 갱신 시 무관한 마지막 항목이라 리포트가
+    엉뚱한 글을 싣게 된다.
+    """
     article_id_text = str(article_id) if article_id is not None else None
     items = queue.setdefault("items", [])
     for item in items:
@@ -141,16 +150,16 @@ def add_failed_item(
             item["reason"] = reason
             item["retry_count"] = int(item.get("retry_count", 0)) + 1
             item["last_failed_at"] = failed_at
-            return
-    items.append(
-        {
-            "article_id": article_id_text,
-            "url": url,
-            "reason": reason,
-            "retry_count": 1,
-            "last_failed_at": failed_at,
-        }
-    )
+            return item
+    new_item = {
+        "article_id": article_id_text,
+        "url": url,
+        "reason": reason,
+        "retry_count": 1,
+        "last_failed_at": failed_at,
+    }
+    items.append(new_item)
+    return new_item
 
 
 def mock_articles() -> list[dict[str, Any]]:
@@ -401,7 +410,7 @@ def save_article(row: dict[str, Any], *, dry_run: bool) -> None:
             article_id=int(row["article_id"]),
             url=str(row["url"]),
             title=row.get("title"),
-            author=row.get("author"),
+            author=row.get("author") or DEFAULT_AUTHOR,
             posted_at=row.get("posted_at"),
             raw_html=row.get("raw_html"),
             clean_text=row.get("body") or row.get("clean_text"),
@@ -468,7 +477,7 @@ def run_daily_archive(
             stats.notes.append("no mode selected; use --dry-run or --execute")
     except Exception as exc:
         failed_at = run_at.isoformat()
-        add_failed_item(
+        failed_item = add_failed_item(
             failed_queue,
             article_id=None,
             url=list_url,
@@ -476,7 +485,7 @@ def run_daily_archive(
             failed_at=failed_at,
         )
         stats.failed += 1
-        stats.failed_items.append(failed_queue["items"][-1])
+        stats.failed_items.append(failed_item)
         rows = []
 
     stats.discovered = min(len(rows), limit)
@@ -507,7 +516,7 @@ def run_daily_archive(
             stats.saved += 1
         except Exception as exc:
             failed_at = run_at.isoformat()
-            add_failed_item(
+            failed_item = add_failed_item(
                 failed_queue,
                 article_id=row.get("article_id"),
                 url=row.get("url"),
@@ -515,7 +524,7 @@ def run_daily_archive(
                 failed_at=failed_at,
             )
             stats.failed += 1
-            stats.failed_items.append(failed_queue["items"][-1])
+            stats.failed_items.append(failed_item)
 
     state["last_run_at"] = run_at.isoformat()
     state["total_runs"] = int(state.get("total_runs") or 0) + 1

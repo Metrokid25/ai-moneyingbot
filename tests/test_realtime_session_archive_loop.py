@@ -448,3 +448,35 @@ def test_print_run_summary_prints_stderr_only_when_present(capsys):
     out = capsys.readouterr().out
     assert "[archive_loop] stdout" not in out
     assert "[archive_loop] stderr    : error output" in out
+
+
+def test_batch_recollect_noninteractive_stops_cleanly_when_logged_out(monkeypatch):
+    """무인(interactive=False): 로그아웃 확정 시 콘솔 Enter 대기 없이 서킷브레이커로 중단(rc=2)."""
+    session = FakeSession()
+    wait_calls = []
+
+    monkeypatch.setattr(batch_recollect, "get_articles_by_status", lambda _status: [FakeArticle()])
+    monkeypatch.setattr(batch_recollect, "get_conn", lambda: FakeConn())
+    monkeypatch.setattr(batch_recollect, "_open_logfile", lambda: (Path("test.log"), FakeLog()))
+    monkeypatch.setattr(batch_recollect, "_write_log_header", lambda *_a, **_k: None)
+    monkeypatch.setattr(batch_recollect, "_write_final_report", lambda *_a, **_k: None)
+    monkeypatch.setattr(batch_recollect, "_print_summary", lambda *_a, **_k: None)
+    monkeypatch.setattr(batch_recollect, "_print_error_reason_dist", lambda: None)
+    monkeypatch.setattr(batch_recollect, "wait_for_login", lambda _page: wait_calls.append(1))
+    monkeypatch.setattr(
+        batch_recollect,
+        "check_member_login",
+        lambda *_a, **_k: (False, "login_required: member_api code=0004"),
+    )
+    monkeypatch.setattr(batch_recollect.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(batch_recollect, "get_article_by_id", lambda _aid: FakeCollectedArticle())
+    monkeypatch.setattr(
+        batch_recollect,
+        "collect_body",
+        lambda *_a, **_k: (batch_recollect.Status.BODY_COLLECTED, None),
+    )
+
+    rc = batch_recollect.run_batch_recollect(session=session, interactive=False)
+
+    assert rc == 2  # CircuitBreakerTripped → 깔끔한 중단
+    assert wait_calls == []  # 무인: wait_for_login(콘솔 Enter 대기) 절대 호출 안 함

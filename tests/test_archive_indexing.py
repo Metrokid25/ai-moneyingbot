@@ -289,3 +289,29 @@ def test_collect_index_rows_raises_on_list_page_error(monkeypatch):
         assert str(exc) == "list page 1 failed: login_required"
     else:
         raise AssertionError("expected RuntimeError")
+
+
+def test_fetch_index_rows_preserves_login_required_over_empty_retry():
+    """goto가 login_required를 준 뒤 빈 셸(마커 없음)이 와도 사유를 None으로 덮지 않는다.
+
+    덮으면 ([], None)으로 반환돼 차단이 '빈 페이지 성공'으로 위장된다(조용한 0건).
+    """
+
+    class _EmptyShellSession:
+        page = FakePage("https://cafe.naver.com/list?page=1", title="")
+
+        def goto(self, url):
+            return url, "login_required"
+
+        def get_frame_html(self):
+            return "<html><body><div>empty</div></body></html>", None
+
+    rows, err = archive_indexing.fetch_index_rows(
+        _EmptyShellSession(),
+        "https://cafe.naver.com/list",
+        1,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert rows is None
+    assert err == "login_required"

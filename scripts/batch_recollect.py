@@ -307,6 +307,7 @@ def run_batch_recollect(
     simulate_fail: Optional[str] = None,
     simulate_rate: float = 1.0,
     inject_sim: bool = False,
+    interactive: bool = True,
 ) -> int:
     args = argparse.Namespace(
         simulate_fail=simulate_fail,
@@ -390,7 +391,11 @@ def run_batch_recollect(
         if entry_err == "login_required":
             print("[LOGIN] 브라우저에서 로그인을 완료한 뒤, 이 PowerShell 창에서 엔터를 눌러주세요.", flush=True)
             print("[LOGIN] 엔터 입력 대기 중...", flush=True)
-        wait_for_login(session.page)
+        # 무인(interactive=False) 실행에서는 콘솔 Enter 대기로 멈추지 않는다.
+        # 로그인 상태는 아래 멤버 API 프로브(code 0004)로 확정 판별하고, 로그아웃이면
+        # 서킷브레이커로 즉시(그러나 깔끔하게, rc=2) 중단한다. (무인 루프 무한 정지 방지)
+        if interactive:
+            wait_for_login(session.page)
 
         # 2026-07-02: SPA 셸에는 'article-board' 마커가 항상 있어 위의 HTML 휴리스틱이
         # 로그아웃을 감지하지 못한다 → 멤버 API 프로브(code 0004)로 확정 검증.
@@ -398,7 +403,7 @@ def run_batch_recollect(
         _member = parse_member_list_url(CAFE_MEMBERS_URL)
         if _member is not None:
             _logged_in, _detail = check_member_login(session, _member[0], _member[1])
-            if _logged_in is False:
+            if _logged_in is False and interactive:
                 print("[LOGIN] API 확인 결과 로그아웃 상태입니다.", flush=True)
                 print("[LOGIN] 브라우저에 연 로그인 페이지에서 로그인한 뒤 엔터를 눌러주세요.", flush=True)
                 session.goto(NAVER_LOGIN_URL)

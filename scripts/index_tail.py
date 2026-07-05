@@ -39,6 +39,19 @@ SCAN_BACKWARD_MAX = 50  # estimate에서 최대 후퇴 폭
 INTERACTIVE_LOGIN_RETRIES = 3
 
 
+class _BlockStop(Exception):
+    """index_pages가 차단(login_required 등)을 만나 양산을 중단해야 함을 알린다.
+
+    이 신호가 없으면 남은 페이지를 계속 두드리고(밴 위험) exit 0으로 '완료'를
+    출력해 조용한 0건 성공으로 위장된다.
+    """
+
+    def __init__(self, err: str, total: int) -> None:
+        super().__init__(err)
+        self.err = err
+        self.total = total
+
+
 # ── 스냅샷 유틸 ───────────────────────────────────────────────────────────────
 
 def _is_login_required_error(err) -> bool:
@@ -356,6 +369,11 @@ def index_pages(
             interactive_login=interactive_login,
             input_func=input_func,
         )
+        if err:
+            # 차단/로그인 필요 → 남은 페이지를 계속 두드리지 않고 즉시 중단한다.
+            # (_collect_after_snapshot과 동일 원칙; 호출부가 성공으로 위장 못 하게 예외로 알림)
+            print(f"  [STOP] 차단 감지: {err}  (누적 {total}개)")
+            raise _BlockStop(err, total)
         if not rows:
             print(f"  [WARN] 글 행 파싱 실패 또는 빈 페이지, 스킵")
             _sleep()
@@ -492,13 +510,17 @@ def main() -> int:
         pages = [p for p in range(tail, tail - args.tail, -1) if p >= 1]
         print(f"[index_tail] 인덱싱 대상: {pages}")
 
-        total = index_pages(
-            session,
-            args.url,
-            pages,
-            snapshot_max_id=snapshot_max_id,
-            interactive_login=args.interactive_login,
-        )
+        try:
+            total = index_pages(
+                session,
+                args.url,
+                pages,
+                snapshot_max_id=snapshot_max_id,
+                interactive_login=args.interactive_login,
+            )
+        except _BlockStop as stop:
+            print(f"\n[index_tail] stopped: {stop.err}  (저장 {stop.total}개)")
+            return 1
         print(f"\n[index_tail] 완료. 총 {total}개 저장")
         return 0
 
