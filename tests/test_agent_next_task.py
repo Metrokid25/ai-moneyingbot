@@ -18,13 +18,13 @@ def run_agent_next_task(root: Path, *args: str) -> subprocess.CompletedProcess[s
 def test_prints_first_pending_task(tmp_path):
     pending = tmp_path / "agent_tasks" / "pending"
     pending.mkdir(parents=True)
-    (pending / "002-second.md").write_text("# Second\n", encoding="utf-8")
-    (pending / "001-first.md").write_text("# First\n\nBody", encoding="utf-8")
+    (pending / "002-rag-second.md").write_text("# Second\n", encoding="utf-8")
+    (pending / "001-rag-first.md").write_text("# First\n\nBody", encoding="utf-8")
 
     result = run_agent_next_task(tmp_path)
 
     assert result.returncode == 0
-    assert "Next pending task: agent_tasks\\pending\\001-first.md" in result.stdout
+    assert "Next pending task: agent_tasks\\pending\\001-rag-first.md" in result.stdout
     assert "# First" in result.stdout
     assert "# Second" not in result.stdout
 
@@ -33,7 +33,7 @@ def test_no_pending_tasks_message(tmp_path):
     result = run_agent_next_task(tmp_path)
 
     assert result.returncode == 0
-    assert result.stdout.strip() == "No pending agent tasks."
+    assert result.stdout.strip() == "No actionable RAG pending agent tasks."
 
 
 def test_list_outputs_each_queue(tmp_path):

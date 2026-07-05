@@ -1,14 +1,21 @@
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
 from rag_retrieval import (
     VECTOR_SIZE,
+    extract_source_metadata,
     format_search_result,
+    format_search_results,
     make_snippet,
     validate_query_vector,
     validate_run_mode,
+    validate_score_threshold,
     validate_top_k,
 )
 
@@ -29,6 +36,11 @@ def test_format_search_result_handles_payload_fields():
         payload={
             "chunk_id": "1:0",
             "article_id": 1,
+            "content_hash": "hash-1",
+            "url": "https://example.test/articles/1",
+            "source_url": "https://example.test/articles/1",
+            "created_at": "2026.05.18.",
+            "collected_at": "2026-05-18T09:00:00+09:00",
             "posted_at": "2026.05.18.",
             "title": "title",
             "text": "body text",
@@ -43,6 +55,13 @@ def test_format_search_result_handles_payload_fields():
         "score": 0.87,
         "chunk_id": "1:0",
         "article_id": 1,
+        "source_id": None,
+        "source_path": None,
+        "content_hash": "hash-1",
+        "url": "https://example.test/articles/1",
+        "source_url": "https://example.test/articles/1",
+        "created_at": "2026.05.18.",
+        "collected_at": "2026-05-18T09:00:00+09:00",
         "posted_at": "2026.05.18.",
         "title": "title",
         "snippet": "body text",
@@ -56,9 +75,181 @@ def test_format_search_result_handles_missing_payload_fields():
     assert row["rank"] == 3
     assert row["chunk_id"] is None
     assert row["article_id"] is None
+    assert row["content_hash"] is None
+    assert row["url"] is None
+    assert row["source_url"] is None
+    assert row["created_at"] is None
+    assert row["collected_at"] is None
     assert row["title"] is None
     assert row["snippet"] == ""
     assert row["source"] is None
+
+
+def test_format_search_results_preserves_backend_source_order_and_ranks():
+    points = [
+        SimpleNamespace(
+            score=0.91,
+            payload={
+                "chunk_id": "300:0",
+                "article_id": 300,
+                "source_id": "300",
+                "source_path": "https://example.test/articles/300",
+                "url": "https://example.test/articles/300",
+                "source_url": "https://example.test/articles/300",
+                "title": "third article",
+                "text": "highest ranked retrieval evidence",
+                "source": "fixture",
+            },
+        ),
+        SimpleNamespace(
+            score=0.91,
+            payload={
+                "chunk_id": "100:0",
+                "article_id": 100,
+                "source_id": "100",
+                "source_path": "https://example.test/articles/100",
+                "url": "https://example.test/articles/100",
+                "source_url": "https://example.test/articles/100",
+                "title": "first article",
+                "text": "same score but backend ranked second",
+                "source": "fixture",
+            },
+        ),
+        SimpleNamespace(
+            score=0.72,
+            payload={
+                "chunk_id": "200:0",
+                "article_id": 200,
+                "source_id": "200",
+                "source_path": "https://example.test/articles/200",
+                "url": "https://example.test/articles/200",
+                "source_url": "https://example.test/articles/200",
+                "title": "second article",
+                "text": "lower ranked retrieval evidence",
+                "source": "fixture",
+            },
+        ),
+    ]
+
+    rows = format_search_results(points)
+
+    assert [row["rank"] for row in rows] == [1, 2, 3]
+    assert [row["chunk_id"] for row in rows] == ["300:0", "100:0", "200:0"]
+    assert [row["source_id"] for row in rows] == ["300", "100", "200"]
+    assert [row["source_url"] for row in rows] == [
+        "https://example.test/articles/300",
+        "https://example.test/articles/100",
+        "https://example.test/articles/200",
+    ]
+
+
+def test_format_search_results_ranks_multiple_candidate_chunks_by_backend_score_order():
+    points = [
+        SimpleNamespace(
+            score=0.97,
+            payload={
+                "chunk_id": "rate-policy:0",
+                "article_id": 10,
+                "title": "Interest rate policy and liquidity",
+                "text": "Interest rate policy and liquidity signals for equities",
+            },
+        ),
+        SimpleNamespace(
+            score=0.64,
+            payload={
+                "chunk_id": "chip-cycle:0",
+                "article_id": 20,
+                "title": "Semiconductor cycle update",
+                "text": "Chip demand and earnings guidance",
+            },
+        ),
+        SimpleNamespace(
+            score=0.22,
+            payload={
+                "chunk_id": "housing-credit:0",
+                "article_id": 30,
+                "title": "Housing credit conditions",
+                "text": "Mortgage credit and property transaction trends",
+            },
+        ),
+    ]
+
+    rows = format_search_results(points)
+
+    assert [row["rank"] for row in rows] == [1, 2, 3]
+    assert [row["chunk_id"] for row in rows] == [
+        "rate-policy:0",
+        "chip-cycle:0",
+        "housing-credit:0",
+    ]
+    assert [row["score"] for row in rows] == [0.97, 0.64, 0.22]
+    assert rows[0]["score"] > rows[1]["score"] > rows[2]["score"]
+
+
+def test_format_search_results_filters_scores_below_threshold_and_reranks():
+    points = [
+        SimpleNamespace(
+            score=0.82,
+            payload={
+                "chunk_id": "strong-match:0",
+                "article_id": 10,
+                "title": "Strong match",
+                "text": "evidence above the retrieval threshold",
+            },
+        ),
+        SimpleNamespace(
+            score=0.7,
+            payload={
+                "chunk_id": "boundary-match:0",
+                "article_id": 20,
+                "title": "Boundary match",
+                "text": "evidence exactly at the retrieval threshold",
+            },
+        ),
+        SimpleNamespace(
+            score=0.69,
+            payload={
+                "chunk_id": "weak-match:0",
+                "article_id": 30,
+                "title": "Weak match",
+                "text": "weak evidence below the retrieval threshold",
+            },
+        ),
+    ]
+
+    rows = format_search_results(points, score_threshold=0.7)
+
+    assert [row["rank"] for row in rows] == [1, 2]
+    assert [row["chunk_id"] for row in rows] == [
+        "strong-match:0",
+        "boundary-match:0",
+    ]
+    assert [row["score"] for row in rows] == [0.82, 0.7]
+    assert all(row["score"] >= 0.7 for row in rows)
+
+
+def test_extract_source_metadata_accepts_nested_metadata_fallback():
+    payload = {
+        "metadata": {
+            "chunk_id": "1:0",
+            "article_id": 1,
+            "content_hash": "hash-1",
+            "url": "https://example.test/articles/1",
+            "source_url": "https://example.test/articles/1",
+            "created_at": "2026.05.18.",
+            "collected_at": "2026-05-18T09:00:00+09:00",
+            "posted_at": "2026.05.18.",
+            "source": "source",
+            "title": "title",
+        }
+    }
+
+    metadata = extract_source_metadata(payload)
+
+    assert metadata["chunk_id"] == "1:0"
+    assert metadata["content_hash"] == "hash-1"
+    assert metadata["url"] == "https://example.test/articles/1"
+    assert metadata["created_at"] == "2026.05.18."
 
 
 @pytest.mark.parametrize("top_k", [1, 5, 20])
@@ -88,6 +279,11 @@ def test_validate_run_mode_accepts_dry_run():
 
 def test_validate_run_mode_accepts_execute():
     validate_run_mode(dry_run=False, execute=True)
+
+
+def test_validate_score_threshold_rejects_nan():
+    with pytest.raises(ValueError, match="score_threshold"):
+        validate_score_threshold(float("nan"))
 
 
 def test_validate_query_vector_accepts_1024_vector():

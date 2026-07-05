@@ -5,14 +5,19 @@ from dataclasses import asdict, dataclass
 from typing import Any, Sequence
 
 from dotenv import load_dotenv
-from rag_answer_context import build_context_items
+from rag_answer_context import build_context_items, source_identity_key
 from rag_retrieval import embed_query, open_qdrant_client, search_qdrant
 
 
 DEFAULT_ANSWER_MODEL = "gpt-4o-mini"
+DEFAULT_ANSWER_SOURCE_LIMIT = 5
 PRICING_NOTE_ESTIMATE = "estimated from configured per-token model pricing; cached input is not included"
 UNKNOWN_PRICING_NOTE = "pricing not configured for this model"
 MISSING_USAGE_NOTE = "usage not returned by provider"
+NO_CONTEXT_ANSWER = (
+    "The RAG corpus does not contain enough related evidence to answer this question. "
+    "I cannot answer from the provided RAG context without inventing unsupported facts."
+)
 
 OPENAI_PRICING_USD_PER_1M_TOKENS = {
     "gpt-4o-mini": {
@@ -55,15 +60,112 @@ Do not give definitive investment advice. Frame the answer as an interpretation 
 
 def build_source(item: dict[str, Any]) -> dict[str, Any]:
     return {
+        "source_id": item.get("source_id"),
+        "source_path": item.get("source_path"),
         "chunk_id": item.get("chunk_id"),
         "article_id": item.get("article_id"),
+        "content_hash": item.get("content_hash"),
+        "url": item.get("url"),
+        "source_url": item.get("source_url"),
+        "created_at": item.get("created_at"),
+        "collected_at": item.get("collected_at"),
+        "posted_at": item.get("posted_at"),
+        "source": item.get("source"),
         "title": item.get("title"),
         "score": item.get("score"),
     }
 
 
-def build_sources(items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [build_source(item) for item in items]
+def limit_sources(
+    sources: Sequence[dict[str, Any]],
+    max_sources: int = DEFAULT_ANSWER_SOURCE_LIMIT,
+) -> list[dict[str, Any]]:
+    if max_sources < 0:
+        raise ValueError("max_sources must be non-negative")
+    return list(sources)[:max_sources]
+
+
+def build_sources(
+    items: Sequence[dict[str, Any]],
+    max_sources: int = DEFAULT_ANSWER_SOURCE_LIMIT,
+) -> list[dict[str, Any]]:
+    if max_sources < 0:
+        raise ValueError("max_sources must be non-negative")
+
+    sources: list[dict[str, Any]] = []
+    seen_sources: set[tuple[str, str]] = set()
+    for item in items:
+        if len(sources) >= max_sources:
+            break
+        source = build_source(item)
+        identity = source_identity_key(source)
+        if identity is not None and identity in seen_sources:
+            continue
+        if identity is not None:
+            seen_sources.add(identity)
+        sources.append(source)
+    return sources
+
+
+def _normalized_text(value: Any) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _source_matches_context(source: dict[str, Any], context_item: dict[str, Any]) -> bool:
+    identity_keys = ("source_id", "chunk_id", "article_id", "content_hash", "url", "source_url")
+    for key in identity_keys:
+        source_value = source.get(key)
+        context_value = context_item.get(key)
+        if source_value is not None and context_value is not None and source_value == context_value:
+            return True
+    return False
+
+
+def evaluate_answer_grounding(
+    record: dict[str, Any],
+    context_items: Sequence[dict[str, Any]],
+    claim_terms: Sequence[str] = (),
+) -> list[str]:
+    errors: list[str] = []
+    sources = list(record.get("sources") or [])
+    citations = list(record.get("citations") or [])
+    context_list = list(context_items)
+
+    if sources and not citations:
+        errors.append("answer has sources but no citations")
+    if citations and not sources:
+        errors.append("answer has citations but no sources")
+    if context_list and not sources and not record.get("no_context"):
+        errors.append("answer has context evidence but no source citations")
+
+    for label, entries in (("source", sources), ("citation", citations)):
+        for entry in entries:
+            if not any(_source_matches_context(entry, item) for item in context_list):
+                errors.append(
+                    f"{label} does not match provided context: "
+                    f"chunk_id={entry.get('chunk_id')} source_id={entry.get('source_id')}"
+                )
+
+    answer_text = _normalized_text(record.get("answer"))
+    evidence_text = _normalized_text(
+        " ".join(str(item.get(key) or "") for item in context_list for key in ("title", "text"))
+    )
+    for term in claim_terms:
+        normalized_term = _normalized_text(term)
+        if normalized_term and normalized_term in answer_text and normalized_term not in evidence_text:
+            errors.append(f"unsupported answer claim term not found in evidence: {term}")
+
+    return errors
+
+
+def assert_answer_grounded(
+    record: dict[str, Any],
+    context_items: Sequence[dict[str, Any]],
+    claim_terms: Sequence[str] = (),
+) -> None:
+    errors = evaluate_answer_grounding(record, context_items, claim_terms=claim_terms)
+    if errors:
+        raise AssertionError("Answer is not grounded in provided context:\n- " + "\n- ".join(errors))
 
 
 def format_context_for_prompt(items: Sequence[dict[str, Any]]) -> str:
@@ -73,8 +175,17 @@ def format_context_for_prompt(items: Sequence[dict[str, Any]]) -> str:
             [
                 "",
                 f"## Source {item.get('rank')}",
+                f"- source_id: {item.get('source_id')}",
+                f"- source_path: {item.get('source_path')}",
                 f"- chunk_id: {item.get('chunk_id')}",
                 f"- article_id: {item.get('article_id')}",
+                f"- content_hash: {item.get('content_hash')}",
+                f"- url: {item.get('url')}",
+                f"- source_url: {item.get('source_url')}",
+                f"- created_at: {item.get('created_at')}",
+                f"- collected_at: {item.get('collected_at')}",
+                f"- posted_at: {item.get('posted_at')}",
+                f"- source: {item.get('source')}",
                 f"- title: {item.get('title')}",
                 f"- score: {item.get('score')}",
                 "",
@@ -192,6 +303,15 @@ def format_cost_usd(value: float | None) -> str:
     return f"{value:.8f}".rstrip("0").rstrip(".")
 
 
+def format_source_value(value: Any) -> str:
+    if value is None:
+        return "unknown"
+    text = str(value)
+    if not text.strip():
+        return "unknown"
+    return text
+
+
 def call_llm(
     messages: Sequence[dict[str, str]],
     model: str = DEFAULT_ANSWER_MODEL,
@@ -244,6 +364,13 @@ def run_rag_answer(
         top_k=top_k,
     )
     context_items = build_context_items(points)
+    if not context_items:
+        return build_no_context_answer_record(
+            query=query,
+            model=model,
+            top_k=top_k,
+        )
+
     context = format_context_for_prompt(context_items)
     messages = build_answer_messages(query, context)
     llm_result = call_llm(messages, model=model)
@@ -266,18 +393,34 @@ def build_answer_record(
     top_k: int,
     usage: LlmUsage | None = None,
     estimated_cost: EstimatedCost | None = None,
+    max_sources: int = DEFAULT_ANSWER_SOURCE_LIMIT,
 ) -> dict[str, Any]:
     if estimated_cost is None:
         estimated_cost = estimate_openai_cost(model, usage)
+    source_list = limit_sources(sources, max_sources=max_sources)
     return {
         "query": query,
         "answer": answer,
-        "sources": list(sources),
+        "sources": source_list,
+        "citations": source_list,
+        "no_context": not bool(source_list),
+        "insufficient_context": not bool(source_list),
         "model": model,
         "top_k": top_k,
         "usage": asdict(usage) if usage is not None else None,
         "estimated_cost": asdict(estimated_cost),
     }
+
+
+def build_no_context_answer_record(query: str, model: str, top_k: int) -> dict[str, Any]:
+    return build_answer_record(
+        query=query,
+        answer=NO_CONTEXT_ANSWER,
+        sources=[],
+        model=model,
+        top_k=top_k,
+        usage=None,
+    )
 
 
 def format_answer_markdown(record: dict[str, Any]) -> str:
@@ -292,14 +435,33 @@ def format_answer_markdown(record: dict[str, Any]) -> str:
         "",
         "## 근거 chunks",
     ]
+    lines.extend(
+        [
+            "",
+            "## Context status",
+            f"- no_context: {bool(record.get('no_context'))}",
+            f"- insufficient_context: {bool(record.get('insufficient_context'))}",
+        ]
+    )
+    if not record["sources"]:
+        lines.append("- No related evidence.")
     for source in record["sources"]:
         lines.extend(
             [
                 "",
-                f"- chunk_id: {source.get('chunk_id')}",
-                f"  article_id: {source.get('article_id')}",
-                f"  title: {source.get('title')}",
-                f"  score: {source.get('score')}",
+                f"- chunk_id: {format_source_value(source.get('chunk_id'))}",
+                f"  source_id: {format_source_value(source.get('source_id'))}",
+                f"  source_path: {format_source_value(source.get('source_path'))}",
+                f"  article_id: {format_source_value(source.get('article_id'))}",
+                f"  content_hash: {format_source_value(source.get('content_hash'))}",
+                f"  url: {format_source_value(source.get('url'))}",
+                f"  source_url: {format_source_value(source.get('source_url'))}",
+                f"  created_at: {format_source_value(source.get('created_at'))}",
+                f"  collected_at: {format_source_value(source.get('collected_at'))}",
+                f"  posted_at: {format_source_value(source.get('posted_at'))}",
+                f"  source: {format_source_value(source.get('source'))}",
+                f"  title: {format_source_value(source.get('title'))}",
+                f"  score: {format_source_value(source.get('score'))}",
             ]
         )
     usage = record.get("usage")

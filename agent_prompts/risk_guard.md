@@ -15,6 +15,8 @@ Recommend immediate stop if any of these are found:
 - external network access without explicit approval
 - real Naver Cafe access without execute flag and safety limits
 - trading/live order code modified
+- any RAG task writes to `archive.db` or modifies archive crawling/write code
+- archive/RAG boundary is violated without explicit human approval
 - RAG uses archive DB write APIs
 - archive work directly modifies RAG vector index
 - broad refactor unrelated to the task

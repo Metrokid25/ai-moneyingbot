@@ -1,4 +1,5 @@
 import http.client
+from html.parser import HTMLParser
 import json
 import sqlite3
 import sys
@@ -13,6 +14,30 @@ import serve_rag_web
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+class HtmlIdCollector(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.ids: set[str] = set()
+        self.forms: list[dict[str, str]] = []
+        self.buttons: list[dict[str, str]] = []
+        self.inputs: list[dict[str, str]] = []
+        self.textareas: list[dict[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {key: value or "" for key, value in attrs}
+        element_id = attr_map.get("id")
+        if element_id:
+            self.ids.add(element_id)
+        if tag == "form":
+            self.forms.append(attr_map)
+        elif tag == "button":
+            self.buttons.append(attr_map)
+        elif tag == "input":
+            self.inputs.append(attr_map)
+        elif tag == "textarea":
+            self.textareas.append(attr_map)
 
 
 class RunningServer:
@@ -150,6 +175,39 @@ def test_get_root_returns_html(monkeypatch, archive_db_path):
     assert "실행 시 Voyage/OpenAI API 호출 및 비용이 발생할 수 있음" in html
 
 
+def test_get_root_renders_core_rag_controls_and_answer_surfaces(monkeypatch, archive_db_path):
+    def fake_run(**kwargs):
+        raise AssertionError("run_rag_answer should not be called for GET /")
+
+    with RunningServer(monkeypatch, fake_run, archive_db_path) as server:
+        status, headers, body = server.request("GET", "/")
+
+    html = body.decode("utf-8")
+    parser = HtmlIdCollector()
+    parser.feed(html)
+    form_ids = {form.get("id") for form in parser.forms}
+    input_by_id = {field.get("id"): field for field in parser.inputs}
+    textarea_by_id = {field.get("id"): field for field in parser.textareas}
+    button_by_id = {button.get("id"): button for button in parser.buttons}
+
+    assert status == 200
+    assert "text/html" in dict(headers)["Content-Type"]
+    assert form_ids == {"rag-form"}
+    assert textarea_by_id["query"]["name"] == "query"
+    assert textarea_by_id["query"].get("required") == ""
+    assert input_by_id["top-k"]["name"] == "top_k"
+    assert input_by_id["top-k"]["type"] == "number"
+    assert input_by_id["top-k"]["min"] == "1"
+    assert input_by_id["top-k"]["max"] == "20"
+    assert input_by_id["model"]["name"] == "model"
+    assert input_by_id["embedding-model"]["name"] == "embedding_model"
+    assert button_by_id["run-button"]["type"] == "submit"
+    assert {"status", "error", "answer", "sources", "usage"}.issubset(parser.ids)
+    assert "Please enter a question before running RAG." in html
+    assert html.index("payload.query.trim()") < html.index('fetch("/api/answer"')
+    assert 'fetch("/api/answer"' in html
+
+
 def test_post_answer_returns_mocked_result_and_expected_arguments(monkeypatch, archive_db_path):
     captured = {}
 
@@ -162,6 +220,11 @@ def test_post_answer_returns_mocked_result_and_expected_arguments(monkeypatch, a
                 {
                     "chunk_id": "10:0",
                     "article_id": 10,
+                    "url": "https://example.test/exported/10",
+                    "source_url": "https://example.test/exported/10",
+                    "created_at": "2026.05.18.",
+                    "collected_at": "2026-05-18T09:00:00+09:00",
+                    "source": "sample_archive_export",
                     "title": "sample title",
                     "score": 0.91,
                 }
@@ -194,6 +257,11 @@ def test_post_answer_returns_mocked_result_and_expected_arguments(monkeypatch, a
             {
                 "chunk_id": "10:0",
                 "article_id": 10,
+                "url": "https://example.test/exported/10",
+                "source_url": "https://example.test/exported/10",
+                "created_at": "2026.05.18.",
+                "collected_at": "2026-05-18T09:00:00+09:00",
+                "source": "sample_archive_export",
                 "title": "sample title",
                 "posted_at": "2024.01.02.",
                 "score": 0.91,
@@ -215,18 +283,57 @@ def test_post_answer_returns_mocked_result_and_expected_arguments(monkeypatch, a
     }
 
 
+def test_success_response_preserves_source_metadata_without_archive_match(archive_db_path):
+    record = {
+        "answer": "answer",
+        "sources": [
+            {
+                "chunk_id": "999:0",
+                "article_id": 999,
+                "url": "https://example.test/exported/999",
+                "source_url": "https://example.test/exported/999",
+                "created_at": "2026.05.18.",
+                "collected_at": "2026-05-18T09:00:00+09:00",
+                "posted_at": "2026.05.18.",
+                "source": "sample_archive_export",
+                "title": "exported title",
+                "score": 0.7,
+            }
+        ],
+        "usage": None,
+        "estimated_cost": None,
+    }
+
+    payload = serve_rag_web.build_success_response(record, archive_db_path)
+
+    assert payload["sources"][0] == {
+        "chunk_id": "999:0",
+        "article_id": 999,
+        "url": "https://example.test/exported/999",
+        "source_url": "https://example.test/exported/999",
+        "created_at": "2026.05.18.",
+        "collected_at": "2026-05-18T09:00:00+09:00",
+        "posted_at": "2026.05.18.",
+        "source": "sample_archive_export",
+        "title": "exported title",
+        "score": 0.7,
+        "article_url": "https://example.test/exported/999",
+        "article_page_url": "/article?article_id=999",
+    }
+
+
 @pytest.mark.parametrize("query", ["", "   "])
 def test_post_answer_rejects_missing_query(monkeypatch, archive_db_path, query):
     def fake_run(**kwargs):
         raise AssertionError("run_rag_answer should not be called for invalid query")
 
     with RunningServer(monkeypatch, fake_run, archive_db_path) as server:
-        status, _headers, body = server.request("POST", "/api/answer", {"query": query})
+        status, _headers, body = server.request("POST", "/api/answer", {"query": query, "top_k": "not-an-int"})
 
     payload = json.loads(body.decode("utf-8"))
     assert status == 400
     assert payload["ok"] is False
-    assert "query" in payload["error"]
+    assert payload["error"] == "query is required; enter a question before running RAG"
 
 
 @pytest.mark.parametrize("top_k", [0, 21, "not-an-int"])

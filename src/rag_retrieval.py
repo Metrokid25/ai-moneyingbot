@@ -5,7 +5,11 @@ from typing import Any, Sequence
 
 import numpy as np
 from dotenv import load_dotenv
-from qdrant_client import QdrantClient
+
+try:
+    from qdrant_client import QdrantClient
+except ModuleNotFoundError:
+    QdrantClient = None
 
 
 DEFAULT_QDRANT_PATH = "data/qdrant"
@@ -15,6 +19,20 @@ DEFAULT_TOP_K = 5
 VECTOR_SIZE = 1024
 MAX_TOP_K = 20
 SNIPPET_CHARS = 250
+SOURCE_METADATA_FIELDS = (
+    "article_id",
+    "source_id",
+    "source_path",
+    "content_hash",
+    "url",
+    "source_url",
+    "created_at",
+    "collected_at",
+    "posted_at",
+    "source",
+    "title",
+    "chunk_id",
+)
 EVALUATION_QUERIES = [
     "금리 인상 국면에서 주식시장은 어떻게 반응하는가",
     "원달러 환율 상승이 외국인 수급에 미치는 영향",
@@ -46,11 +64,31 @@ def validate_top_k(top_k: int) -> None:
         raise ValueError(f"--top-k must be between 1 and {MAX_TOP_K}")
 
 
+def validate_score_threshold(score_threshold: float | None) -> None:
+    if score_threshold is None:
+        return
+    if not np.isfinite(float(score_threshold)):
+        raise ValueError("score_threshold must be a finite number")
+
+
 def make_snippet(text: str | None, max_chars: int = SNIPPET_CHARS) -> str:
     if not text:
         return ""
     normalized = " ".join(str(text).split())
     return normalized[:max_chars]
+
+
+def payload_value(payload: dict[str, Any], field: str) -> Any:
+    if field in payload:
+        return payload.get(field)
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        return metadata.get(field)
+    return None
+
+
+def extract_source_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: payload_value(payload, field) for field in SOURCE_METADATA_FIELDS}
 
 
 def validate_query_vector(vector: Sequence[float], vector_size: int = VECTOR_SIZE) -> np.ndarray:
@@ -90,6 +128,8 @@ def embed_query(query: str, model: str = DEFAULT_MODEL, project_root: Path | Non
 
 
 def open_qdrant_client(qdrant_path: Path | str) -> QdrantClient:
+    if QdrantClient is None:
+        raise RuntimeError("qdrant_client is required for Qdrant search")
     return QdrantClient(path=str(qdrant_path))
 
 
@@ -123,14 +163,17 @@ def search_qdrant(
     collection: str,
     query_vector: Sequence[float],
     top_k: int = DEFAULT_TOP_K,
+    score_threshold: float | None = None,
 ):
     validate_top_k(top_k)
+    validate_score_threshold(score_threshold)
     vector = validate_query_vector(query_vector)
     ensure_collection_exists(client, collection)
     return client.search(
         collection_name=collection,
         query_vector=vector.tolist(),
         limit=top_k,
+        score_threshold=score_threshold,
         with_payload=True,
         with_vectors=False,
     )
@@ -138,20 +181,26 @@ def search_qdrant(
 
 def format_search_result(point: Any, rank: int) -> dict[str, Any]:
     payload = point.payload or {}
-    return {
+    row = {
         "rank": rank,
         "score": point.score,
-        "chunk_id": payload.get("chunk_id"),
-        "article_id": payload.get("article_id"),
-        "posted_at": payload.get("posted_at"),
-        "title": payload.get("title"),
+        **extract_source_metadata(payload),
         "snippet": make_snippet(payload.get("text")),
-        "source": payload.get("source"),
     }
+    return row
 
 
-def format_search_results(points: Sequence[Any]) -> list[dict[str, Any]]:
-    return [format_search_result(point, rank=index + 1) for index, point in enumerate(points)]
+def format_search_results(
+    points: Sequence[Any],
+    score_threshold: float | None = None,
+) -> list[dict[str, Any]]:
+    validate_score_threshold(score_threshold)
+    rows = []
+    for point in points:
+        if score_threshold is not None and float(point.score) < score_threshold:
+            continue
+        rows.append(format_search_result(point, rank=len(rows) + 1))
+    return rows
 
 
 def validate_eval_queries(queries: Sequence[str]) -> None:

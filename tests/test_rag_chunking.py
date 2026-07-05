@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from rag_chunking import (
@@ -9,6 +11,7 @@ from rag_chunking import (
     build_embedding_text,
     parse_year_month,
     split_text_into_chunks,
+    validate_chunk_metadata,
 )
 
 
@@ -17,9 +20,14 @@ def _article(**overrides):
         "article_id": 169913,
         "title": "하방경직성",
         "posted_at": "11:47",
+        "created_at": "2026.05.20.",
+        "collected_at": "2026-05-20T09:00:00+09:00",
         "author": "굿모닝",
         "clean_text": "하방경직성\n\n-엘앤에프",
         "status": "BODY_COLLECTED",
+        "url": "https://example.test/articles/169913",
+        "source_url": "https://example.test/articles/169913",
+        "content_hash": "hash-169913",
     }
     data.update(overrides)
     return data
@@ -79,6 +87,61 @@ def test_chunk_id_rule():
 def test_metadata_required_fields_included():
     record = build_chunk_records(_article())[0]
     assert REQUIRED_METADATA_FIELDS <= set(record["metadata"])
+    validate_chunk_metadata(record["metadata"], chunk_id=record["chunk_id"])
+
+
+def test_chunk_metadata_validation_rejects_missing_field():
+    record = build_chunk_records(_article())[0]
+    del record["metadata"]["source_url"]
+
+    with pytest.raises(ValueError, match="metadata missing required fields: source_url"):
+        validate_chunk_metadata(record["metadata"], chunk_id=record["chunk_id"])
+
+
+def test_chunk_metadata_validation_rejects_empty_required_field():
+    record = build_chunk_records(_article())[0]
+    record["metadata"]["content_hash"] = " "
+
+    with pytest.raises(ValueError, match="metadata empty required fields: content_hash"):
+        validate_chunk_metadata(record["metadata"], chunk_id=record["chunk_id"])
+
+
+def test_chunk_metadata_validation_rejects_type_mismatch():
+    record = build_chunk_records(_article())[0]
+    record["metadata"]["article_id"] = "169913"
+
+    with pytest.raises(ValueError, match="article_id expected int, got str"):
+        validate_chunk_metadata(record["metadata"], chunk_id=record["chunk_id"])
+
+
+def test_chunk_metadata_validation_rejects_chunk_id_mismatch():
+    record = build_chunk_records(_article())[0]
+    record["metadata"]["chunk_id"] = "169913:99"
+
+    with pytest.raises(ValueError, match="metadata chunk_id mismatch"):
+        validate_chunk_metadata(record["metadata"], chunk_id=record["chunk_id"])
+
+
+def test_ingest_metadata_fields_are_preserved():
+    record = build_chunk_records(
+        _article(
+            article_id=1001,
+            source="sample_archive_export",
+            url="https://example.test/articles/1001",
+            source_url="https://example.test/articles/1001",
+            created_at="2026.05.20.",
+            collected_at="2026-05-20T09:00:00+09:00",
+            content_hash="hash-1001",
+        )
+    )[0]
+
+    assert record["metadata"]["article_id"] == 1001
+    assert record["metadata"]["source"] == "sample_archive_export"
+    assert record["metadata"]["url"] == "https://example.test/articles/1001"
+    assert record["metadata"]["source_url"] == "https://example.test/articles/1001"
+    assert record["metadata"]["created_at"] == "2026.05.20."
+    assert record["metadata"]["collected_at"] == "2026-05-20T09:00:00+09:00"
+    assert record["metadata"]["content_hash"] == "hash-1001"
 
 
 def test_body_len_zero_is_preserved_with_title():

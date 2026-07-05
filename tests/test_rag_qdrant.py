@@ -26,12 +26,19 @@ def _metadata(chunk_id: str) -> dict:
         "chunk_id": chunk_id,
         "chunk_index": int(chunk_index),
         "posted_at": "2026.05.18.",
+        "created_at": "2026.05.18.",
+        "collected_at": "2026-05-18T09:00:00+09:00",
         "year": 2026,
         "month": 5,
         "title": "title",
         "body_len": 4,
         "author": "author",
         "source": "naver_cafe_119investment_goodmorning",
+        "source_id": article_id,
+        "source_path": f"https://example.test/articles/{article_id}",
+        "url": f"https://example.test/articles/{article_id}",
+        "source_url": f"https://example.test/articles/{article_id}",
+        "content_hash": f"hash-{article_id}",
         "status": "BODY_COLLECTED",
     }
 
@@ -130,6 +137,14 @@ def test_build_payload_maps_embedding_text_to_text():
     payload = rag_qdrant.build_payload(_chunk("1:0", "hello"))
 
     assert payload["chunk_id"] == "1:0"
+    assert payload["article_id"] == 1
+    assert payload["content_hash"] == "hash-1"
+    assert payload["url"] == "https://example.test/articles/1"
+    assert payload["source_url"] == "https://example.test/articles/1"
+    assert payload["created_at"] == "2026.05.18."
+    assert payload["collected_at"] == "2026-05-18T09:00:00+09:00"
+    assert payload["source"] == "naver_cafe_119investment_goodmorning"
+    assert payload["title"] == "title"
     assert payload["text"] == "hello"
     assert "embedding_text" not in payload
 

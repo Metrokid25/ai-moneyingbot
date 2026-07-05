@@ -4,8 +4,26 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 import numpy as np
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, PointStruct, VectorParams
+except ModuleNotFoundError:
+    QdrantClient = None
+
+    class Distance:
+        COSINE = "Cosine"
+
+    class PointStruct:
+        def __init__(self, id: str, vector: list[float], payload: dict[str, Any]):
+            self.id = id
+            self.vector = vector
+            self.payload = payload
+
+    class VectorParams:
+        def __init__(self, size: int, distance: str):
+            self.size = size
+            self.distance = distance
 
 from rag_chunking import REQUIRED_METADATA_FIELDS
 
@@ -162,7 +180,7 @@ def summarize_inputs(
 
 
 def ensure_collection_for_load(
-    client: QdrantClient,
+    client: Any,
     collection_name: str,
     vector_size: int,
     recreate: bool = False,
@@ -185,7 +203,7 @@ def ensure_collection_for_load(
 
 
 def upsert_points(
-    client: QdrantClient,
+    client: Any,
     collection_name: str,
     points: Sequence[PointStruct],
     batch_size: int,

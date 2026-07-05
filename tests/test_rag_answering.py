@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import answer_question_phase2
 from rag_answering import (
+    DEFAULT_ANSWER_SOURCE_LIMIT,
     LlmUsage,
     build_answer_messages,
     build_answer_record,
@@ -35,6 +36,13 @@ def sample_context_items():
             "score": 0.91,
             "chunk_id": "10:0",
             "article_id": 10,
+            "content_hash": "hash-10",
+            "url": "https://example.test/articles/10",
+            "source_url": "https://example.test/articles/10",
+            "created_at": "2026.05.18.",
+            "collected_at": "2026-05-18T09:00:00+09:00",
+            "posted_at": "2026.05.18.",
+            "source": "sample_archive_export",
             "title": "rate and stocks",
             "text": "Higher rates can pressure discounts and liquidity.",
         }
@@ -50,6 +58,8 @@ def test_prompt_contains_context_and_query():
     assert "rate hike question" in rendered
     assert "Higher rates can pressure discounts and liquidity." in rendered
     assert "chunk_id: 10:0" in rendered
+    assert "url: https://example.test/articles/10" in rendered
+    assert "content_hash: hash-10" in rendered
 
 
 def test_prompt_instructs_no_guessing_without_evidence():
@@ -68,12 +78,96 @@ def test_sources_include_required_fields():
 
     assert sources == [
         {
+            "source_id": None,
+            "source_path": None,
             "chunk_id": "10:0",
             "article_id": 10,
+            "content_hash": "hash-10",
+            "url": "https://example.test/articles/10",
+            "source_url": "https://example.test/articles/10",
+            "created_at": "2026.05.18.",
+            "collected_at": "2026-05-18T09:00:00+09:00",
+            "posted_at": "2026.05.18.",
+            "source": "sample_archive_export",
             "title": "rate and stocks",
             "score": 0.91,
         }
     ]
+
+
+def test_sources_deduplicate_multiple_chunks_for_same_source_article():
+    context_items = [
+        {
+            "rank": 1,
+            "score": 0.95,
+            "chunk_id": "1001:0",
+            "article_id": 1001,
+            "content_hash": "hash-1001",
+            "url": "https://example.test/articles/1001",
+            "source_url": "https://example.test/articles/1001",
+            "title": "Rates",
+        },
+        {
+            "rank": 2,
+            "score": 0.93,
+            "chunk_id": "1001:1",
+            "article_id": 1001,
+            "content_hash": "hash-1001",
+            "url": "https://example.test/articles/1001",
+            "source_url": "https://example.test/articles/1001",
+            "title": "Rates",
+        },
+        {
+            "rank": 3,
+            "score": 0.91,
+            "chunk_id": "1002:0",
+            "article_id": 1002,
+            "content_hash": "hash-1002",
+            "url": "https://example.test/articles/1002",
+            "source_url": "https://example.test/articles/1002",
+            "title": "FX",
+        },
+    ]
+
+    sources = build_sources(context_items)
+
+    assert [source["chunk_id"] for source in sources] == ["1001:0", "1002:0"]
+    assert [source["article_id"] for source in sources] == [1001, 1002]
+
+
+def test_answer_record_limits_sources_preserving_order_in_json_and_markdown():
+    sources = [
+        {
+            "chunk_id": f"{article_id}:0",
+            "article_id": article_id,
+            "content_hash": f"hash-{article_id}",
+            "url": f"https://example.test/articles/{article_id}",
+            "source_url": f"https://example.test/articles/{article_id}",
+            "title": f"source {article_id}",
+            "score": 1.0 - article_id / 100,
+        }
+        for article_id in range(1, DEFAULT_ANSWER_SOURCE_LIMIT + 3)
+    ]
+
+    record = build_answer_record(
+        query="question",
+        answer="answer",
+        sources=sources,
+        model="gpt-4o-mini",
+        top_k=len(sources),
+    )
+    markdown = format_answer_markdown(record)
+    payload = json.loads(format_answer_json(record))
+
+    expected_chunk_ids = [f"{article_id}:0" for article_id in range(1, DEFAULT_ANSWER_SOURCE_LIMIT + 1)]
+    omitted_chunk_id = f"{DEFAULT_ANSWER_SOURCE_LIMIT + 1}:0"
+
+    assert [source["chunk_id"] for source in record["sources"]] == expected_chunk_ids
+    assert [source["chunk_id"] for source in record["citations"]] == expected_chunk_ids
+    assert [source["chunk_id"] for source in payload["sources"]] == expected_chunk_ids
+    assert f"chunk_id: {expected_chunk_ids[-1]}" in markdown
+    assert omitted_chunk_id not in [source["chunk_id"] for source in record["sources"]]
+    assert f"chunk_id: {omitted_chunk_id}" not in markdown
 
 
 def test_answer_formats_include_sources():
@@ -90,7 +184,19 @@ def test_answer_formats_include_sources():
 
     assert "## " in markdown
     assert "chunk_id: 10:0" in markdown
+    assert "url: https://example.test/articles/10" in markdown
+    assert "source_url: https://example.test/articles/10" in markdown
+    assert "created_at: 2026.05.18." in markdown
+    assert "collected_at: 2026-05-18T09:00:00+09:00" in markdown
+    assert "source: sample_archive_export" in markdown
+    assert "title: rate and stocks" in markdown
     assert payload["sources"][0]["article_id"] == 10
+    assert payload["sources"][0]["content_hash"] == "hash-10"
+    assert payload["sources"][0]["url"] == "https://example.test/articles/10"
+    assert payload["sources"][0]["source_url"] == "https://example.test/articles/10"
+    assert payload["sources"][0]["created_at"] == "2026.05.18."
+    assert payload["sources"][0]["collected_at"] == "2026-05-18T09:00:00+09:00"
+    assert payload["sources"][0]["source"] == "sample_archive_export"
 
 
 def test_usage_and_estimated_cost_are_in_answer_formats():

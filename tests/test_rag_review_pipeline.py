@@ -1,0 +1,410 @@
+from pathlib import Path
+import shutil
+import subprocess
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def read_text(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_review_pipeline_files_exist():
+    assert (ROOT / "agent_prompts" / "rag_reviewer.md").exists()
+    assert (ROOT / "scripts" / "review_rag_agent_run.ps1").exists()
+    assert (ROOT / "scripts" / "run_rag_agent_pipeline.ps1").exists()
+
+
+def test_review_script_is_read_only_and_runs_required_checks():
+    script = read_text("scripts/review_rag_agent_run.ps1")
+
+    forbidden_invocations = (
+        "git add",
+        "git commit",
+        "git push",
+        "& git add",
+        "& git commit",
+        "& git push",
+    )
+    for invocation in forbidden_invocations:
+        assert invocation not in script
+
+    assert '"git" @("status", "-sb")' in script
+    assert '"git" @("diff", "--name-only")' in script
+    assert '"git" @("diff", "--stat")' in script
+    assert '"git" @("diff", "--check")' in script
+    assert '"python" @("scripts\\run_rag_focused_tests.py")' in script
+    assert '"python" @("scripts\\agent_next_task.py", "--list")' in script
+    assert "PASS" in script
+    assert "FAIL" in script
+    assert "NEEDS_HUMAN_REVIEW" in script
+    assert "NO_ACTIONABLE_TASKS" in script
+    assert "agent_tasks/pending/001-real-daily-archive-wiring.md" in script
+
+
+def test_review_report_records_latest_commit_summary_read_only():
+    script = read_text("scripts/review_rag_agent_run.ps1")
+
+    assert "function Get-LatestCommitSummary" in script
+    assert 'git log -1 --format="%h %s"' in script
+    assert 'Add-Report "## Latest commit summary"' in script
+    assert 'Add-Report "$(Get-LatestCommitSummary)"' in script
+    assert "git commit" not in script
+    assert "git push" not in script
+
+
+def test_pipeline_runs_no_push_then_review_with_publish_options_defaulting_off():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "[CmdletBinding()]" in script
+    assert "[switch]$Help" in script
+    assert "[switch]$CommitOnPass" in script
+    assert "[switch]$PushOnPass" in script
+    assert '[string]$CommitMessage = ""' in script
+    assert '[string]$ManualTaskRef = ""' in script
+    assert '[string]$ManualTaskTitle = ""' in script
+    assert '[string]$ManualReviewOutDir = "agent_reports"' in script
+    assert "& $OnceScript -NoPush" in script
+    assert "& $ReviewScript" in script
+    assert "Test-NoActionableRagTask" in script
+    assert "Waiting for user approval before any commit or push." in script
+    assert 'if (-not $Commit)' in script
+    assert "Pipeline passed review. Waiting for user approval before any commit or push." in script
+
+
+def test_pipeline_help_exits_before_any_runner_or_planner_side_effect():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "if ($Help)" in script
+    assert "exit 0" in script
+    assert "run_rag_agent_pipeline.ps1" in script
+    assert "ManualTaskRef" in script
+    assert "ManualTaskTitle" in script
+    assert "ManualReviewOutDir" in script
+    assert "CommitOnPass" in script
+    assert "PushOnPass" in script
+    assert "Push is forbidden before REVIEW_RESULT=PASS." in script
+    assert "Archive-owned 001-real-daily-archive-wiring.md tasks are BLOCKED FOR RAG IMPLEMENTATION." in script
+
+    help_index = script.index("if ($Help)")
+    exit_index = script.index("exit 0", help_index)
+    once_index = script.index("& $OnceScript -NoPush")
+    review_index = script.index("& $ReviewScript *>&1")
+    planner_index = script.index("function Invoke-RagPlanner")
+    manual_gate_index = script.index("function Invoke-ManualReviewGate")
+    commit_index = script.index('Invoke-GitPublishCommand -FailureContext "git commit"')
+    push_index = script.index('Invoke-GitPublishCommand -FailureContext "git push"')
+
+    assert help_index < exit_index < planner_index
+    assert exit_index < once_index
+    assert exit_index < review_index
+    assert exit_index < manual_gate_index
+    assert exit_index < commit_index
+    assert exit_index < push_index
+
+
+def test_pipeline_help_execution_does_not_create_pending_tasks():
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    assert powershell is not None
+    pending_dir = ROOT / "agent_tasks" / "pending"
+    before = sorted(path.name for path in pending_dir.glob("*.md"))
+
+    result = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "scripts\\run_rag_agent_pipeline.ps1",
+            "-Help",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    after = sorted(path.name for path in pending_dir.glob("*.md"))
+    assert result.returncode == 0, result.stderr
+    assert before == after
+    assert "run_rag_agent_pipeline.ps1" in result.stdout
+    assert "ManualTaskRef" in result.stdout
+    assert "Push is forbidden before REVIEW_RESULT=PASS." in result.stdout
+    assert "BLOCKED FOR RAG IMPLEMENTATION" in result.stdout
+    assert "Starting RAG agent pipeline." not in result.stdout
+
+
+def test_pipeline_wires_manual_review_gate_as_optional_helper():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert '$ManualReviewScript = Join-Path $ScriptDir "prepare_manual_task_review.py"' in script
+    assert "function Invoke-ManualReviewGate" in script
+    assert "function Test-ManualReviewGateBlocked" in script
+    assert '"scripts\\prepare_manual_task_review.py"' in script
+    assert "$manualReviewResult = Invoke-ManualReviewGate -TaskRef $ManualTaskRef -TaskTitle $ManualTaskTitle -OutDir $ManualReviewOutDir" in script
+    assert "manual review prompt path:" in script
+    assert "manual review gate enabled:" in script
+    assert "manual review gate blocked:" in script
+
+
+def test_pipeline_blocks_archive_owned_manual_task_before_publish():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert 'return (($output | Out-String) -match "BLOCKED FOR RAG IMPLEMENTATION")' in script
+    assert "if (Test-ManualReviewGateBlocked -TaskRef $ManualTaskRef -TaskTitle $ManualTaskTitle)" in script
+    assert "manual task review gate returned BLOCKED FOR RAG IMPLEMENTATION" in script
+    assert '$manualReviewResult.Blocked = $true' in script
+    assert "Pipeline stopped after manual review gate failure. Commit and push are forbidden." in script
+    blocked_index = script.index("if (Test-ManualReviewGateBlocked -TaskRef $ManualTaskRef -TaskTitle $ManualTaskTitle)")
+    no_action_index = script.index("if (Test-NoActionableRagTask)")
+    publish_index = script.index("function Invoke-PassGatedPublish")
+    assert publish_index < blocked_index < no_action_index
+
+
+def test_pipeline_commits_and_pushes_only_through_pass_gated_options():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Invoke-PassGatedPublish" in script
+    assert 'if ($reviewResult -eq "PASS")' in script
+    assert "Invoke-PassGatedPublish -Message $CommitMessage -PlannerResult $plannerResult -Commit:$CommitOnPass -Push:$PushOnPass" in script
+    assert 'Invoke-GitPublishCommand -FailureContext "git commit" -Arguments @("commit", "-m", $resolvedMessage)' in script
+    assert 'if (-not $Push)' in script
+    assert 'Invoke-GitPublishCommand -FailureContext "git push" -Arguments @("push")' in script
+    assert "PushOnPass not requested; push skipped." in script
+    assert "Pipeline needs human review. Waiting for user approval before any commit or push." in script
+    assert "Pipeline stopped after review failure. Inspect the review report before continuing." in script
+    assert "Pipeline found no actionable RAG task. No commit or push will run." in script
+    assert '$publishResult = Invoke-PassGatedPublish -Message $CommitMessage -PlannerResult $plannerResult -Commit:$CommitOnPass -Push:$PushOnPass' in script
+
+
+def test_pipeline_stages_only_git_status_changed_paths_without_add_dot():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Get-ChangedPaths" in script
+    assert "git status --porcelain --untracked-files=all" in script
+    assert "foreach ($path in $changedPaths)" in script
+    assert 'Invoke-GitPublishCommand -FailureContext "git add for $path" -Arguments @("add", "--", $path)' in script
+    assert "git add ." not in script
+    assert "& git add ." not in script
+
+
+def test_pipeline_tolerates_git_warning_output_and_uses_exit_codes():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Invoke-GitPublishCommand" in script
+    assert '$previousErrorActionPreference = $ErrorActionPreference' in script
+    assert '$ErrorActionPreference = "Continue"' in script
+    assert "$output = & git @Arguments *>&1" in script
+    assert "$exitCode = $LASTEXITCODE" in script
+    assert "$output | ForEach-Object { Write-Host $_ }" in script
+    assert "if ($exitCode -ne 0)" in script
+    assert "return $exitCode" in script
+
+
+def test_pipeline_blocks_forbidden_and_archive_owned_paths_before_publish():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Test-ForbiddenPublishPath" in script
+    assert '".env"' in script
+    assert '"archive.db"' in script
+    assert 'if ($p.StartsWith("data/")) { return $true }' in script
+    assert '"scripts/_step3_verify_v2.py"' in script
+    assert '"scripts/daily_archive.py"' in script
+    assert '"scripts/index_tail.py"' in script
+    assert '"scripts/batch_recollect.py"' in script
+    assert '"src/browser.py"' in script
+    assert '"src/parser.py"' in script
+    assert '"src/collector.py"' in script
+    assert '"src/indexer.py"' in script
+    assert '"agent_tasks/pending/001-real-daily-archive-wiring.md"' in script
+    assert "Publish gate failed: forbidden files changed." in script
+
+
+def test_pipeline_parses_review_result_and_report_lines():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Get-ReviewMetadata" in script
+    assert "& $ReviewScript *>&1" in script
+    assert 'REVIEW_RESULT=(PASS|FAIL|NEEDS_HUMAN_REVIEW|NO_ACTIONABLE_TASKS)' in script
+    assert 'REVIEW_REPORT=(.+)' in script
+    assert "$reviewMetadata = Get-ReviewMetadata -ReviewOutput $reviewOutput" in script
+    assert "Pipeline review result: $reviewResult" in script
+    assert "Pipeline review report: $reviewReport" in script
+
+
+def test_pipeline_prints_final_human_readable_summary_contract():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Write-PipelineSummary" in script
+    assert "function Get-PendingRagTaskAudit" in script
+    assert "RAG Pipeline Summary" in script
+    assert "pipeline result: $PipelineResult" in script
+    assert "review result: $ReviewResult" in script
+    assert "review report path: $ReviewReport" in script
+    assert "manual review gate enabled:" in script
+    assert "manual review prompt path:" in script
+    assert "manual review gate blocked:" in script
+    assert "commit attempted: $(Format-BooleanResult $PublishResult.CommitAttempted)" in script
+    assert "commit succeeded: $(Format-BooleanResult $PublishResult.CommitSucceeded)" in script
+    assert "push attempted: $(Format-BooleanResult $PublishResult.PushAttempted)" in script
+    assert "push succeeded: $(Format-BooleanResult $PublishResult.PushSucceeded)" in script
+    assert "planner result: $($PlannerResult.Result)" in script
+    assert "planner created task path: $($PlannerResult.CreatedTaskPath)" in script
+    assert "planner exhaustion report path: $($PlannerResult.ExhaustionReportPath)" in script
+    assert "latest commit hash: $(Get-LatestCommitHash)" in script
+    assert "git status -sb:" in script
+    assert "remaining pending task summary:" in script
+    assert "pending RAG task audit:" in script
+    assert "git rev-parse --short HEAD" in script
+    assert "git status -sb" in script
+    assert "python scripts\\agent_next_task.py --list" in script
+    assert "python scripts\\agent_next_task.py --status" in script
+
+
+def test_pipeline_summary_is_written_for_all_review_outcomes_and_run_failure():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert 'if ($reviewResult -eq "PASS")' in script
+    assert '$pipelineResult = "PASS"' in script
+    assert '$pipelineResult = "NO_ACTIONABLE_TASKS"' in script
+    assert '$pipelineResult = "PLANNER_CREATED_TASK"' in script
+    assert '$pipelineResult = "NEEDS_HUMAN_REVIEW"' in script
+    assert '$pipelineResult = "FAIL"' in script
+    assert "Write-PipelineSummary -PipelineResult $pipelineResult -ReviewResult $reviewResult -ReviewReport $reviewReport -ManualReviewResult $manualReviewResult -PublishResult $publishResult -PlannerResult $plannerResult" in script
+
+
+def test_pipeline_generates_task_specific_commit_messages_without_archive_owned_task():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "function Resolve-PassGatedCommitMessage" in script
+    assert "function Get-RagTaskNameFromPath" in script
+    assert 'if (-not [string]::IsNullOrWhiteSpace($ExplicitMessage))' in script
+    assert 'return $ExplicitMessage' in script
+    assert 'return "Plan next RAG task: $plannedTask"' in script
+    assert 'return "Complete RAG task: $completedTask"' in script
+    assert 'return "RAG pipeline pass-gated update"' in script
+    assert '$fileName -eq "001-real-daily-archive-wiring.md"' in script
+    assert '$fileName -notmatch "^\\d+-rag-.+\\.md$"' in script
+    assert '$p.StartsWith("agent_tasks/done/")' in script
+    assert "Pass-gated commit message: $resolvedMessage" in script
+
+
+def test_autonomous_loop_tracks_completed_tasks_by_done_queue_delta():
+    script = read_text("scripts/run_rag_autonomous_loop.ps1")
+
+    assert "function Get-QueueTaskPaths" in script
+    assert "function Add-NewCompletedTasks" in script
+    assert '$doneTasksBeforeRun = @(Get-QueueTaskPaths -QueueName "done")' in script
+    assert '$doneTasksAfterCycle = @(Get-QueueTaskPaths -QueueName "done")' in script
+    assert "Add-NewCompletedTasks -BeforeDoneTasks $doneTasksBeforeRun -AfterDoneTasks $doneTasksAfterCycle -CompletedTasks $completedTasks" in script
+    assert '$doneTasksBeforeRun = $doneTasksAfterCycle' in script
+    assert "$BeforeDoneTasks -notcontains $task" in script
+    assert "$CompletedTasks -notcontains $task" in script
+    assert "Sort-Object -Property Name" in script
+    assert "TrimEnd([char[]]@('\\', '/'))" in script
+    assert 'Replace("\\", "/")' in script
+
+
+def test_autonomous_loop_completed_task_summary_uses_none_only_when_empty():
+    script = read_text("scripts/run_rag_autonomous_loop.ps1")
+
+    assert "completed task list:" in script
+    assert "if ($CompletedTasks.Count -eq 0)" in script
+    assert 'Write-Host "  - (none)"' in script
+    assert 'foreach ($task in $CompletedTasks) { Write-Host "  - $task" }' in script
+
+
+def test_pipeline_auto_plans_when_no_actionable_rag_task_exists():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert '$PlannerScript = Join-Path $ScriptDir "plan_next_rag_task.py"' in script
+    assert '$TaskScript = Join-Path $ScriptDir "agent_next_task.py"' in script
+    assert "Set-Location $RepoRoot" in script
+    assert "function Test-NoActionableRagTask" in script
+    assert "python $TaskScript --status" in script
+    assert "function Invoke-RagPlanner" in script
+    assert "python $PlannerScript" in script
+    assert 'if (Test-NoActionableRagTask)' in script
+    assert 'Write-Host "No actionable RAG task found. Running one-shot RAG planner."' in script
+    assert '$reviewResult = "NO_ACTIONABLE_TASKS"' in script
+    assert '$plannerResult = Invoke-RagPlanner' in script
+    assert 'if ($plannerResult.Result -eq "CREATED_TASK")' in script
+    assert 'Write-Host "Planner created a task for a later pipeline run: $($plannerResult.CreatedTaskPath)"' in script
+
+
+def test_pipeline_no_action_detection_matches_agent_next_task_status_contract(tmp_path):
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+    pending = tmp_path / "agent_tasks" / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    archive_task = pending / "001-real-daily-archive-wiring.md"
+    archive_task.write_text("Title: Archive task\n", encoding="utf-8")
+    result = subprocess.run(
+        ["python", "scripts/agent_next_task.py", "--root", str(tmp_path), "--status"],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    assert lines[0] == "NO_ACTIONABLE_TASKS"
+    assert "selected_task=(none)" in lines
+    assert "actionable_count=0" in lines
+    assert "skipped_count=1" in lines
+    assert f"skipped={archive_task.relative_to(tmp_path)}" in lines
+    assert '$lines[0] -eq "NO_ACTIONABLE_TASKS"' in script
+    assert '$skipsArchiveOwnedTask = $lines -contains "skipped=agent_tasks\\pending\\001-real-daily-archive-wiring.md"' in script
+    assert "return ($hasNoActionResult -and $skipsArchiveOwnedTask)" in script
+
+
+def test_pipeline_leaves_planner_task_for_next_run_and_reports_created_path():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "PLANNER_CREATED_TASK=(.+)" in script
+    assert '$result.Result = "CREATED_TASK"' in script
+    assert "$result.CreatedTaskPath = $Matches[1].Trim()" in script
+    assert "planner created task path:" in script
+    assert "for a later pipeline run" in script
+    assert "Codex exec" not in script.split('if (Test-NoActionableRagTask)', 1)[1].split('Write-Host "Step 1: run_rag_agent_once.ps1 -NoPush"', 1)[0]
+
+
+def test_pipeline_carries_planner_exhaustion_report_path_into_summary():
+    script = read_text("scripts/run_rag_agent_pipeline.ps1")
+
+    assert "PLANNER_EXHAUSTION_REPORT=(.+)" in script
+    assert '$result.ExhaustionReportPath = $Matches[1].Trim()' in script
+    assert "planner exhaustion report path:" in script
+    assert '"Planner did not create a task. No commit or push will run."' in script
+
+
+def test_once_runner_runs_planner_when_no_actionable_rag_task_exists():
+    script = read_text("scripts/run_rag_agent_once.ps1")
+
+    assert "python scripts/agent_next_task.py --status" in script
+    assert "NO_ACTIONABLE_TASKS: no actionable RAG pending task. Codex exec, commit, and push skipped." in script
+    assert '"python" @("scripts\\plan_next_rag_task.py")' in script
+    assert "RUN_RESULT=PLANNER_RUN" in script
+
+
+def test_review_script_keeps_no_actionable_tasks_distinct_from_human_review():
+    script = read_text("scripts/review_rag_agent_run.ps1")
+
+    assert '"python" @("scripts\\agent_next_task.py", "--status")' in script
+    assert '$decision = "NO_ACTIONABLE_TASKS"' in script
+    assert '$decision -ne "NO_ACTIONABLE_TASKS"' in script
+
+
+def test_reviewer_prompt_documents_review_decision_contract():
+    prompt = read_text("agent_prompts/rag_reviewer.md")
+
+    assert "Do not modify code" in prompt
+    assert "Do not stage changes" in prompt
+    assert "Do not create commits" in prompt
+    assert "Do not push to any remote" in prompt
+    assert "python scripts\\run_rag_focused_tests.py" in prompt
+    assert "agent_tasks/pending/001-real-daily-archive-wiring.md" in prompt
+    assert "PASS" in prompt
+    assert "FAIL" in prompt
+    assert "NEEDS_HUMAN_REVIEW" in prompt

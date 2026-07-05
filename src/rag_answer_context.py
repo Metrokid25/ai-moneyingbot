@@ -2,10 +2,13 @@ import json
 from pathlib import Path
 from typing import Any, Sequence
 
+from rag_retrieval import extract_source_metadata, payload_value
+
 
 DEFAULT_CONTEXT_TOP_K = 5
 MAX_CONTEXT_TOP_K = 10
 DEFAULT_SNIPPET_CHARS = 900
+DEFAULT_CONTEXT_TEXT_TOKENS = 1800
 
 
 def truncate_text(text: str | None, max_chars: int = DEFAULT_SNIPPET_CHARS) -> str:
@@ -19,6 +22,14 @@ def truncate_text(text: str | None, max_chars: int = DEFAULT_SNIPPET_CHARS) -> s
     return normalized[:max_chars]
 
 
+def truncate_text_tokens(text: str | None, max_tokens: int) -> str:
+    if max_tokens < 0:
+        raise ValueError("max_tokens must be non-negative")
+    if text is None or max_tokens == 0:
+        return ""
+    return " ".join(str(text).split()[:max_tokens])
+
+
 def validate_context_top_k(top_k: int) -> None:
     if not (1 <= top_k <= MAX_CONTEXT_TOP_K):
         raise ValueError(f"--top-k must be between 1 and {MAX_CONTEXT_TOP_K}")
@@ -26,28 +37,55 @@ def validate_context_top_k(top_k: int) -> None:
 
 def build_context_item(point: Any, rank: int, max_chars: int = DEFAULT_SNIPPET_CHARS) -> dict[str, Any]:
     payload = point.payload or {}
-    raw_text = payload.get("text")
+    raw_text = payload_value(payload, "text")
     text = truncate_text(raw_text, max_chars=max_chars)
     return {
         "rank": rank,
         "score": getattr(point, "score", None),
-        "chunk_id": payload.get("chunk_id"),
-        "article_id": payload.get("article_id"),
-        "title": payload.get("title"),
-        "posted_at": payload.get("posted_at"),
-        "year": payload.get("year"),
-        "month": payload.get("month"),
-        "source": payload.get("source"),
+        **extract_source_metadata(payload),
+        "year": payload_value(payload, "year"),
+        "month": payload_value(payload, "month"),
         "text": text,
         "empty_text": not bool(text.strip()),
     }
 
 
+def source_identity_key(item: dict[str, Any]) -> tuple[str, str] | None:
+    for key in ("source_id", "article_id", "url", "source_url", "content_hash"):
+        value = item.get(key)
+        if value is not None and str(value).strip():
+            return key, " ".join(str(value).casefold().split())
+    return None
+
+
 def build_context_items(
     points: Sequence[Any],
     max_chars: int = DEFAULT_SNIPPET_CHARS,
+    max_text_tokens: int | None = None,
 ) -> list[dict[str, Any]]:
-    return [build_context_item(point, rank=index + 1, max_chars=max_chars) for index, point in enumerate(points)]
+    if max_text_tokens is not None and max_text_tokens < 0:
+        raise ValueError("max_text_tokens must be non-negative")
+
+    items: list[dict[str, Any]] = []
+    seen_sources: set[tuple[str, str]] = set()
+    remaining_tokens = max_text_tokens
+    for point in points:
+        if remaining_tokens == 0:
+            break
+        item = build_context_item(point, rank=len(items) + 1, max_chars=max_chars)
+        identity = source_identity_key(item)
+        if identity is not None and identity in seen_sources:
+            continue
+        if identity is not None:
+            seen_sources.add(identity)
+        if remaining_tokens is not None:
+            item["text"] = truncate_text_tokens(item["text"], max_tokens=remaining_tokens)
+            item["empty_text"] = not bool(item["text"].strip())
+            remaining_tokens -= len(item["text"].split())
+        items.append(item)
+        if remaining_tokens == 0:
+            break
+    return items
 
 
 def build_context_record(question: str, results: Sequence[dict[str, Any]], top_k: int) -> dict[str, Any]:
@@ -76,9 +114,17 @@ def format_context_markdown(question: str, results: Sequence[dict[str, Any]], to
             [
                 "",
                 f"{result.get('rank')}. {result.get('title') or ''}",
+                f"- source_id: {result.get('source_id')}",
+                f"- source_path: {result.get('source_path')}",
                 f"- article_id: {result.get('article_id')}",
                 f"- chunk_id: {result.get('chunk_id')}",
+                f"- content_hash: {result.get('content_hash')}",
+                f"- url: {result.get('url')}",
+                f"- source_url: {result.get('source_url')}",
+                f"- created_at: {result.get('created_at')}",
+                f"- collected_at: {result.get('collected_at')}",
                 f"- posted_at: {result.get('posted_at')}",
+                f"- source: {result.get('source')}",
                 f"- score: {result.get('score')}",
                 f"- empty_text: {result.get('empty_text')}",
                 "",
