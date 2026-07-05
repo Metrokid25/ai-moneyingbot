@@ -1,11 +1,14 @@
 import sys
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Tuple
+from urllib.parse import urlparse
 from playwright.sync_api import (
     sync_playwright, Page, Browser, BrowserContext,
     Error as PlaywrightError,
 )
-from config import BROWSER_TIMEOUT_MS, HEADLESS
+from config import BROWSER_TIMEOUT_MS, DEFAULT_BROWSER_PROFILE_DIR, HEADLESS
 
 _BLOCK_URL: list[Tuple[str, str]] = [
     ("login_required", "nid.naver.com"),
@@ -15,16 +18,207 @@ _BLOCK_CONTENT: list[Tuple[str, str]] = [
     ("login_required",   "로그인이 필요"),
     ("login_required",   "로그인 후 이용"),
     ("no_permission",    "접근 권한이 없습니다"),
+    ("no_permission",    "권한이 없습니다"),
     ("no_permission",    "가입한 회원만 이용"),
     ("no_permission",    "이 카페는 가입 후"),
-    ("no_permission",    "비공개 카페로 회원만"),
+    ("no_permission",    "가입 후 이용"),
+    ("no_permission",    "카페 가입 후 이용"),
+    ("no_permission",    "이용이 제한"),
+    ("no_permission",    "비정상 접근"),
+    ("age_verification", "본인인증"),
+    ("captcha",          "captcha"),
     ("captcha",          "자동입력 방지문자"),
     # ("age_verification", "본인확인"),  # 2026-04-27: genderUnknownLayer 모달이 모든 페이지 DOM에 박혀있어 false positive
     # ("age_verification", "성인인증"),  # 2026-04-27: 119investment 카페는 성인인증 대상 아님 (멤버 수년 경험상 0건)
 ]
 
 
-def _is_login_page(page: Page) -> Optional[str]:
+_ARTICLE_LIST_MARKERS = (
+    "article-board",
+    "board-box",
+    "article_list",
+    "board_list_w",
+    "board-list__item",
+    "td_article",
+    "articleid=",
+    "articleid%3d",
+)
+
+_LOGIN_FORM_MARKERS = (
+    'id="id"',
+    "id='id'",
+    'name="id"',
+    "name='id'",
+    'id="pw"',
+    "id='pw'",
+    'name="pw"',
+    "name='pw'",
+    'type="password"',
+    "type='password'",
+    "nidlogin.login",
+)
+
+_LOGIN_REQUIRED_MARKERS = (
+    "notloggedinerror",
+    "login_required",
+    "로그인이 필요",
+    "로그인 후 이용",
+    "먼저 로그인",
+)
+
+_PRIVATE_CAFE_BADGE_MARKERS = (
+    "비공개카페",
+    "비공개 카페",
+)
+
+_CAFE_ACCESS_MARKERS = (
+    "<title",
+    "카페 홈",
+    "카페홈",
+    "카페정보",
+    "카페 정보",
+    "cafe_name",
+    "cafe-info",
+    "cafe-menu",
+    "club-info",
+)
+
+
+@dataclass(frozen=True)
+class LoginDetection:
+    reason: Optional[str]
+    detail: Optional[str]
+    article_markers_found: bool
+    login_markers_found: bool
+    password_input_found: bool
+    current_url_is_login: bool
+
+
+def _has_article_list_marker(html: str) -> bool:
+    lowered = html.lower()
+    return any(marker in lowered for marker in _ARTICLE_LIST_MARKERS)
+
+
+def _has_login_marker(html: str) -> bool:
+    lowered = html.lower()
+    return any(marker in lowered for marker in _LOGIN_FORM_MARKERS) or any(
+        marker.lower() in lowered for marker in _LOGIN_REQUIRED_MARKERS
+    )
+
+
+def _has_private_cafe_badge(html: str) -> bool:
+    return any(marker in html for marker in _PRIVATE_CAFE_BADGE_MARKERS)
+
+
+def _has_cafe_access_marker(html: str) -> bool:
+    lowered = html.lower()
+    return any(marker.lower() in lowered for marker in _CAFE_ACCESS_MARKERS)
+
+
+def _is_login_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    return "nid.naver.com" in host or ("login" in path and ("naver.com" in host or not host))
+
+
+def detect_login_state(
+    url: str,
+    html: str,
+    *,
+    login_form_visible: bool = False,
+    password_input_visible: bool = False,
+) -> LoginDetection:
+    """Return login detection details without dumping page/session content."""
+    current_url_is_login = _is_login_url(url)
+    has_article_list = _has_article_list_marker(html)
+    has_login_marker = _has_login_marker(html) or login_form_visible
+    password_input_found = password_input_visible or "type=\"password\"" in html.lower() or "type='password'" in html.lower()
+    has_private_cafe_badge = _has_private_cafe_badge(html)
+    has_cafe_access_marker = _has_cafe_access_marker(html)
+
+    if "nid.naver.com" in urlparse(url).netloc.lower():
+        return LoginDetection(
+            "login_required",
+            "redirected to login url",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    if current_url_is_login:
+        return LoginDetection(
+            "login_required",
+            "redirected to login path",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    if login_form_visible or password_input_found:
+        return LoginDetection(
+            "login_required",
+            "login form detected",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    if has_private_cafe_badge and has_cafe_access_marker:
+        return LoginDetection(
+            None,
+            "private cafe badge ignored",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    if has_article_list:
+        return LoginDetection(
+            None,
+            "article-list markers found",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    if has_login_marker:
+        return LoginDetection(
+            "login_required",
+            "no article-list markers found and login marker visible",
+            has_article_list,
+            has_login_marker,
+            password_input_found,
+            current_url_is_login,
+        )
+    return LoginDetection(None, None, has_article_list, has_login_marker, password_input_found, current_url_is_login)
+
+
+def format_login_detection_summary(detection: LoginDetection) -> str:
+    return (
+        f"article_markers_found={str(detection.article_markers_found).lower()}, "
+        f"login_markers_found={str(detection.login_markers_found).lower()}, "
+        f"password_input_found={str(detection.password_input_found).lower()}, "
+        f"current_url_is_login={str(detection.current_url_is_login).lower()}"
+    )
+
+
+def detect_login_required(
+    url: str,
+    html: str,
+    *,
+    login_form_visible: bool = False,
+) -> tuple[Optional[str], Optional[str]]:
+    """Return login_required only when the page is actually a login/block page."""
+    detection = detect_login_state(url, html, login_form_visible=login_form_visible)
+    return detection.reason, detection.detail
+
+
+def has_article_list_marker(html: str) -> bool:
+    return _has_article_list_marker(html)
+
+
+def _legacy_is_login_page(page: Page) -> Optional[str]:
     """현재 페이지 상태 감지. 'login_required', 'next_error', None 중 하나 반환."""
     url = page.url
     if "nid.naver.com" in url:
@@ -39,8 +233,8 @@ def _is_login_page(page: Page) -> Optional[str]:
     except PlaywrightError:
         html = ""
 
-    if "NotLoggedInError" in html:
-        print("[DEBUG] 로그인 페이지 감지: NotLoggedInError 문자열 존재")
+    if False and "legacy_disabled_not_logged_in_error" in html:
+        print("[DEBUG] legacy login detector disabled")
         return "login_required"
     if "카페 멤버이시면 먼저 로그인을 해야 합니다" in html:
         print("[DEBUG] 로그인 페이지 감지: 로그인 안내 문자열 존재")
@@ -57,6 +251,49 @@ def _is_login_page(page: Page) -> Optional[str]:
     except PlaywrightError:
         pass
 
+    return None
+
+
+def _is_login_page(page: Page) -> Optional[str]:
+    """Detect login pages without treating embedded error strings as decisive."""
+    url = page.url
+    try:
+        title = page.title()
+    except PlaywrightError:
+        title = "-"
+    try:
+        html = page.content()
+    except PlaywrightError:
+        html = ""
+
+    login_form_visible = False
+    password_input_visible = False
+    try:
+        if page.query_selector('input[id="id"], input[name="id"], input[type="password"]'):
+            login_form_visible = True
+        if page.query_selector('input[type="password"]'):
+            password_input_visible = True
+    except PlaywrightError:
+        pass
+
+    detection = detect_login_state(
+        url,
+        html,
+        login_form_visible=login_form_visible,
+        password_input_visible=password_input_visible,
+    )
+    if detection.reason:
+        print(
+            "[DEBUG] login_required detected: "
+            f"{detection.detail}; url={url}; title={title}; "
+            f"{format_login_detection_summary(detection)}"
+        )
+        return detection.reason
+    if detection.detail == "article-list markers found":
+        print("[DEBUG] login_required skipped: article-list markers found")
+    if 'id="__next_error__"' in html:
+        print("[DEBUG] next_error detected: __next_error__ without login markers")
+        return "next_error"
     return None
 
 
@@ -84,6 +321,11 @@ def wait_for_login(page: Page) -> None:
 
 
 def check_blocked(url: str, content: str) -> Optional[str]:
+    login_detection = detect_login_state(url, content)
+    if login_detection.reason:
+        return login_detection.reason
+    if login_detection.detail == "private cafe badge ignored":
+        return None
     for reason, signal in _BLOCK_URL:
         if signal in url:
             return reason
@@ -96,10 +338,26 @@ def check_blocked(url: str, content: str) -> Optional[str]:
 class BrowserSession:
     """단일 브라우저 세션. indexer에서 페이지 간 재사용."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        user_data_dir: str | Path | None = None,
+        persistent: bool = True,
+        headless: bool | None = None,
+    ) -> None:
         self._pw = sync_playwright().start()
-        self._browser: Browser = self._pw.chromium.launch(headless=HEADLESS)
-        self._context: BrowserContext = self._browser.new_context()
+        self._browser: Browser | None = None
+        self.user_data_dir = Path(user_data_dir or DEFAULT_BROWSER_PROFILE_DIR)
+        browser_headless = HEADLESS if headless is None else headless
+        if persistent:
+            self.user_data_dir.mkdir(parents=True, exist_ok=True)
+            self._context: BrowserContext = self._pw.chromium.launch_persistent_context(
+                user_data_dir=str(self.user_data_dir),
+                headless=browser_headless,
+            )
+        else:
+            self._browser = self._pw.chromium.launch(headless=browser_headless)
+            self._context = self._browser.new_context()
         self._page: Page = self._context.new_page()
 
     @property
@@ -177,12 +435,11 @@ class BrowserSession:
 
     def close(self) -> None:
         # page → context → browser → pw 순으로 단계별 종료 (pending task hang 방지)
-        for fn in (
-            self._page.close,
-            self._context.close,
-            self._browser.close,
-            self._pw.stop,
-        ):
+        close_steps = [self._page.close, self._context.close]
+        if self._browser is not None:
+            close_steps.append(self._browser.close)
+        close_steps.append(self._pw.stop)
+        for fn in close_steps:
             try:
                 fn()
             except Exception:

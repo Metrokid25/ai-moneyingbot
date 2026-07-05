@@ -74,8 +74,15 @@ def test_parse_year_month_time_format_is_null():
     assert parse_year_month("11:47") == (None, None)
 
 
+def test_parse_year_month_iso_format():
+    # 2026-07-02: member_api 경로가 posted_at을 ISO 형식으로 저장 → 파싱 지원
+    assert parse_year_month("2026-05-15") == (2026, 5)
+    assert parse_year_month("2026-07-02 11:49:39") == (2026, 7)
+
+
 def test_parse_year_month_unknown_format_is_null():
-    assert parse_year_month("2026-05-15") == (None, None)
+    assert parse_year_month("어제") == (None, None)
+    assert parse_year_month("2026/05/15") == (None, None)
 
 
 def test_chunk_id_rule():

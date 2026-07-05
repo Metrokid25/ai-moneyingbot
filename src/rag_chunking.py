@@ -46,6 +46,8 @@ REQUIRED_METADATA_TYPES = {
 NULLABLE_METADATA_FIELDS = {"year", "month"}
 
 _DATE_RE = re.compile(r"^(\d{4})\.(\d{1,2})\.(\d{1,2})\.$")
+# 2026-07-02: member_api 경로는 posted_at을 'YYYY-MM-DD HH:MM:SS'로 저장 → ISO 형식도 파싱
+_DATE_RE_ISO = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?$")
 
 
 def build_embedding_text(title: str | None, clean_text: str | None) -> str:
@@ -58,7 +60,8 @@ def parse_year_month(posted_at: str | None) -> tuple[int | None, int | None]:
     if not posted_at:
         return None, None
 
-    match = _DATE_RE.match(posted_at.strip())
+    stripped = posted_at.strip()
+    match = _DATE_RE.match(stripped) or _DATE_RE_ISO.match(stripped)
     if not match:
         return None, None
 

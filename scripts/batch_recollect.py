@@ -12,12 +12,16 @@ sys.path.insert(0, "src")
 from browser import BrowserSession, wait_for_login
 from collector import _VALID_SIMULATE, BlockReason, collect_body
 from db import get_article_by_id, get_articles_by_status, get_conn
+from member_api import NAVER_LOGIN_URL, check_member_login, parse_member_list_url
 from models import Status
 
+# 2026-06-30: /f-e/ 멤버 페이지가 빈 SPA 셸로 바뀌어 로그인 감지가 불안정(헛 login_required).
+# /ca-fe/ 페이지는 article-list 마커가 있어 로그인 감지가 안정적 → 진입/로그인 트리거 URL을 /ca-fe/로.
 CAFE_MEMBERS_URL = (
-    "https://cafe.naver.com/f-e/cafes/29082876/members/"
+    "https://cafe.naver.com/ca-fe/cafes/29082876/members/"
     "THEA7uBzD6uKXKno57_Bl7jItzRnvmuDMltnPsGI9BY"
 )
+CAFE_MEMBERS_LIST_URL = CAFE_MEMBERS_URL + "?page=1"
 
 SLEEP_MIN_S = 3.0
 SLEEP_MAX_S = 5.0
@@ -35,13 +39,18 @@ CIRCUIT_BREAKER_REASONS = {
 _SIM_PLAN = [("timeout", 10), ("navigation", 5), ("empty", 3)]
 
 
+class CircuitBreakerTripped(Exception):
+    pass
+
+
 class _CircuitBreaker:
     """연속 block 신호 임계값 도달 시 양산을 즉시 중단한다."""
 
-    def __init__(self, enabled: bool, threshold: int, reasons: set) -> None:
+    def __init__(self, enabled: bool, threshold: int, reasons: set, *, use_sys_exit: bool = True) -> None:
         self.enabled = enabled
         self.threshold = threshold
         self.reasons = reasons
+        self.use_sys_exit = use_sys_exit
         self._signal: Optional[str] = None
         self._count: int = 0
 
@@ -73,7 +82,9 @@ class _CircuitBreaker:
             print(msg)
             if log_fh:
                 _log(log_fh, msg)
-            sys.exit(2)
+            if self.use_sys_exit:
+                sys.exit(2)
+            raise CircuitBreakerTripped(msg)
 
 
 def _build_sim_map(indexed_ids: list[int]) -> dict[int, str]:
@@ -290,8 +301,18 @@ def _parse_args():
     return p.parse_args()
 
 
-def main() -> int:
-    args = _parse_args()
+def run_batch_recollect(
+    session: Optional[BrowserSession] = None,
+    *,
+    simulate_fail: Optional[str] = None,
+    simulate_rate: float = 1.0,
+    inject_sim: bool = False,
+) -> int:
+    args = argparse.Namespace(
+        simulate_fail=simulate_fail,
+        simulate_rate=simulate_rate,
+        inject_sim=inject_sim,
+    )
 
     if args.inject_sim and args.simulate_fail:
         print("[ERROR] --inject-sim and --simulate-fail are mutually exclusive")
@@ -344,7 +365,9 @@ def main() -> int:
     print(f"[batch] 예상 소요 시간: 약 {total * (8 + avg_sleep) / 60:.1f}분")
     print()
     print("[batch] 브라우저 세션 시작...")
-    session = BrowserSession()
+    owns_session = session is None
+    if session is None:
+        session = BrowserSession()
 
     status_counts: dict[str, int] = {}
     body_lens: list[int] = []
@@ -353,12 +376,37 @@ def main() -> int:
     retry_stats = {"new": 0, "retry": 0, "success": 0, "kept_indexed": 0, "demoted": 0}
     sim_stats = {"injected": 0, "success": 0}
     processed = 0
+    returncode = 0
     start_ts = time.time()
-    cb = _CircuitBreaker(CIRCUIT_BREAKER_ENABLED, CIRCUIT_BREAKER_THRESHOLD, CIRCUIT_BREAKER_REASONS)
+    cb = _CircuitBreaker(
+        CIRCUIT_BREAKER_ENABLED,
+        CIRCUIT_BREAKER_THRESHOLD,
+        CIRCUIT_BREAKER_REASONS,
+        use_sys_exit=False,
+    )
 
     try:
-        session.goto(CAFE_MEMBERS_URL)
+        _final_url, entry_err = session.goto(CAFE_MEMBERS_LIST_URL)
+        if entry_err == "login_required":
+            print("[LOGIN] 브라우저에서 로그인을 완료한 뒤, 이 PowerShell 창에서 엔터를 눌러주세요.", flush=True)
+            print("[LOGIN] 엔터 입력 대기 중...", flush=True)
         wait_for_login(session.page)
+
+        # 2026-07-02: SPA 셸에는 'article-board' 마커가 항상 있어 위의 HTML 휴리스틱이
+        # 로그아웃을 감지하지 못한다 → 멤버 API 프로브(code 0004)로 확정 검증.
+        # (프로브 불가 환경 — 테스트용 가짜 세션 등 — 이면 None → 기존 동작 유지)
+        _member = parse_member_list_url(CAFE_MEMBERS_URL)
+        if _member is not None:
+            _logged_in, _detail = check_member_login(session, _member[0], _member[1])
+            if _logged_in is False:
+                print("[LOGIN] API 확인 결과 로그아웃 상태입니다.", flush=True)
+                print("[LOGIN] 브라우저에 연 로그인 페이지에서 로그인한 뒤 엔터를 눌러주세요.", flush=True)
+                session.goto(NAVER_LOGIN_URL)
+                wait_for_login(session.page)
+                _logged_in, _detail = check_member_login(session, _member[0], _member[1])
+            if _logged_in is False:
+                print(f"[batch] ERROR: 로그인 미확인({_detail}) — 본문수집을 시작하지 않고 중단합니다.", flush=True)
+                raise CircuitBreakerTripped()
 
         for i, aid in enumerate(indexed_ids, 1):
             # 신규/재시도 분류
@@ -432,6 +480,9 @@ def main() -> int:
             if i < total:
                 time.sleep(random.uniform(SLEEP_MIN_S, SLEEP_MAX_S))
 
+    except CircuitBreakerTripped:
+        returncode = 2
+
     except KeyboardInterrupt:
         print(f"\n[batch] 사용자 중단. 처리 완료: {processed}/{total}")
 
@@ -444,12 +495,24 @@ def main() -> int:
             log_fh.close()
         except Exception:
             pass
-        try:
-            session.close()
-        except Exception:
-            pass
+        if owns_session:
+            try:
+                session.close()
+            except Exception:
+                pass
 
+    if returncode:
+        return returncode
     return 0 if not failed_ids else 1
+
+
+def main() -> int:
+    args = _parse_args()
+    return run_batch_recollect(
+        simulate_fail=args.simulate_fail,
+        simulate_rate=args.simulate_rate,
+        inject_sim=args.inject_sim,
+    )
 
 
 if __name__ == "__main__":

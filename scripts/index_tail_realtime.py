@@ -166,6 +166,7 @@ def _collect_after_snapshot(
     *,
     interactive_login: bool = False,
     input_func=None,
+    stop_after_empty_pages: Optional[int] = None,
 ):
     """min_id 이상인 신규 글만 page 1부터 순방향 수집.
 
@@ -175,6 +176,7 @@ def _collect_after_snapshot(
     """
     total = 0
     page = 1
+    empty_save_pages = 0
     stop_err = None
     while True:
         page_url = build_page_url(list_url, page)
@@ -222,6 +224,18 @@ def _collect_after_snapshot(
         if reached_old:
             print(f"  [after-snapshot] 스냅샷 이전 글 도달, 수집 완료")
             break
+
+        if stop_after_empty_pages is not None:
+            if new_cnt == 0:
+                empty_save_pages += 1
+                if empty_save_pages >= stop_after_empty_pages:
+                    print(
+                        "  [after-snapshot][realtime] "
+                        f"saved 0 for {empty_save_pages} consecutive pages, stop"
+                    )
+                    break
+            else:
+                empty_save_pages = 0
 
         _sleep()
         page += 1
@@ -388,6 +402,56 @@ def index_pages(
     return total
 
 
+def run_realtime_index(
+    list_url: str,
+    session: BrowserSession,
+    *,
+    interactive_login: bool = False,
+    stop_after_empty_pages: Optional[int] = None,
+) -> int:
+    """Run the realtime collect-after-snapshot path using an existing session."""
+    print(f"[index_tail] url     : {list_url}")
+
+    init_db()
+
+    snapshot = _load_latest_snapshot()
+    if snapshot is None:
+        print("[index_tail] ERROR: data/snapshot_*.json not found.")
+        return 1
+
+    min_id = snapshot["snapshot_max_id"] + 1
+    print(f"[index_tail] --collect-after-snapshot: article_id >= {min_id}")
+
+    # 멤버 목록 URL은 REST API로 수집하므로 (죽은 SPA 셸) 페이지 진입이 불필요.
+    # 로그인 필요 여부는 API의 login_required 감지 → 재시도 흐름에서 처리된다.
+    if parse_member_list_url(list_url) is None:
+        trigger_url = build_page_url(list_url, 1)
+        print(f"\n[index_tail] browser entry: {trigger_url}")
+        _final_url, entry_err = session.goto(trigger_url)
+        if interactive_login:
+            if entry_err == "login_required":
+                print("[LOGIN] 브라우저에서 로그인을 완료한 뒤, 이 PowerShell 창에서 엔터를 눌러주세요.", flush=True)
+                print("[LOGIN] 엔터 입력 대기 중...", flush=True)
+            wait_for_login(session.page)
+    else:
+        print("[index_tail] member-list URL: REST API로 수집 (browser entry 생략)")
+
+    total, stop_err = _collect_after_snapshot(
+        session,
+        list_url,
+        min_id,
+        interactive_login=interactive_login,
+        stop_after_empty_pages=stop_after_empty_pages,
+    )
+    if stop_err:
+        # 'complete'를 찍지 않는다 — 루프(run_daily_archive_loop)가 이 신호로
+        # 본문수집 스킵/정지 사유 판정을 한다. 성공 위장 금지.
+        print(f"\n[index_tail] stopped: {stop_err}  saved={total}")
+        return 1
+    print(f"\n[index_tail] complete. saved={total}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="끝페이지 자동 감지 후 tail N 페이지 인덱싱"
@@ -411,6 +475,12 @@ def main() -> int:
         action="store_true",
         help="login_required 발생 시 브라우저를 유지하고 사용자의 수동 로그인/Enter 후 같은 세션으로 재시도",
     )
+    ap.add_argument(
+        "--stop-after-empty-pages",
+        type=int,
+        default=None,
+        help="Realtime experiment: stop after N consecutive pages save 0 new articles.",
+    )
     args = ap.parse_args()
 
     print(f"[index_tail] url     : {args.url}")
@@ -421,36 +491,12 @@ def main() -> int:
     try:
         # ── --collect-after-snapshot 모드 ─────────────────────────────────
         if args.collect_after_snapshot:
-            snapshot = _load_latest_snapshot()
-            if snapshot is None:
-                print(f"[index_tail] ERROR: data/snapshot_*.json 없음. 양산 먼저 실행 필요.")
-                return 1
-
-            min_id = snapshot["snapshot_max_id"] + 1
-            print(f"[index_tail] --collect-after-snapshot: article_id >= {min_id} 수집 시작")
-
-            # 멤버 목록 URL은 REST API로 수집하므로 (죽은 SPA 셸) 페이지 진입이 불필요.
-            # 로그인 필요 여부는 API의 login_required 감지 → 재시도 흐름에서 처리된다.
-            if parse_member_list_url(args.url) is None:
-                trigger_url = build_page_url(args.url, 1)
-                print(f"\n[index_tail] 브라우저 진입: {trigger_url}")
-                session.goto(trigger_url)
-                if args.interactive_login:
-                    wait_for_login(session.page)
-            else:
-                print("[index_tail] member-list URL: REST API로 수집 (browser entry 생략)")
-
-            total, stop_err = _collect_after_snapshot(
-                session,
+            return run_realtime_index(
                 args.url,
-                min_id,
+                session,
                 interactive_login=args.interactive_login,
+                stop_after_empty_pages=args.stop_after_empty_pages,
             )
-            if stop_err:
-                print(f"\n[index_tail] stopped: {stop_err}  (저장 {total}개)")
-                return 1
-            print(f"\n[index_tail] 완료. 총 {total}개 저장")
-            return 0
 
         # ── 정상 양산 모드 ────────────────────────────────────────────────
         print(f"[index_tail] estimate: {args.estimate}")
