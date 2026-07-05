@@ -86,12 +86,12 @@ def parse_summary(stdout: str) -> dict | None:
 def build_success_message(summary: dict, *, timestamp: str) -> str:
     new_chunks = summary.get("new_chunks", 0)
     if new_chunks:
-        head = f"✅ RAG 증분색인 완료 · 신규 {new_chunks}청크 색인"
+        head = f"✅ RAG indexing 완료 · 신규 {new_chunks}청크 추가"
     else:
-        head = "✅ RAG 증분색인 · 신규 0건 (인덱스 최신)"
+        head = "✅ RAG indexing · 신규 0건 (최신 상태)"
     lines = [
         head,
-        f"현재 청크: {summary.get('current_chunks', '?')} / 색인됨: {summary.get('indexed_chunks', '?')}",
+        f"현재 청크: {summary.get('current_chunks', '?')} / 반영됨: {summary.get('indexed_chunks', '?')}",
         f"컬렉션: {summary.get('collection', '?')}",
         timestamp,
     ]
@@ -104,7 +104,7 @@ def build_failure_message(*, attempts: int, detail: str, timestamp: str) -> str:
         detail = detail[-800:]
     return "\n".join(
         [
-            f"\U0001f534 RAG 증분색인 실패 (재시도 {attempts}회 소진)",
+            f"\U0001f534 RAG indexing 실패 (재시도 {attempts}회 소진)",
             f"사유: {detail or 'unknown error'}",
             timestamp,
         ]

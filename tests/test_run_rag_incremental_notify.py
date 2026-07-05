@@ -60,11 +60,13 @@ def test_success_message_handles_zero_new():
 
 
 def test_failure_message_truncates_long_detail():
-    detail = "x" * 2000
+    detail = "z" * 2000
     msg = wrapper.build_failure_message(attempts=3, detail=detail, timestamp="t")
     assert "재시도 3회 소진" in msg
-    # 800-char cap on the detail body keeps the Telegram message bounded.
-    assert msg.count("x") == 800
+    # 800-char cap on the detail body keeps the Telegram message bounded:
+    # exactly 800 of the detail chars survive, not 801.
+    assert ("z" * 800) in msg
+    assert ("z" * 801) not in msg
 
 
 # ── retry loop ─────────────────────────────────────────────────────────────
