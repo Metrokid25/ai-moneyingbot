@@ -19,10 +19,17 @@
   - 독립 코드리뷰 **2라운드** 반영, 테스트 14개. 텔레그램 문구 평문화(`indexing`).
 - **무인 검증 완주 실증**: 스케줄러 **자동발화**(15:03, 사람 손 X) → 합성글 1청크 임베딩 → 테스트 Qdrant 적재(points=1) → 텔레그램 수신, 결과코드 0.
 
+**한 일 (후반 — PM 지시 4건)**
+- **텔레그램 토큰 재발급 완료**: 노출 토큰 `/revoke` → 구 토큰 401 확인, 새 토큰(`@moneying_rag_index_bot`) 실수신 재검증. 새 토큰은 `.env`에만 존재(채팅 미노출).
+- **main 병합 완료**: `agent/rag-ingest-boundary` 133커밋 → main (`0410f88`, 무충돌, 507 테스트 통과). 이후 생존신호 브랜치 병합(`c8892a3`, 512 테스트 통과). **main 직접 커밋 금지 규약 유지 — 변경은 항상 `agent/rag-*` 브랜치→승인→병합.**
+- **배포 기준점 태그 규약 신설(PM 확정)**: 태그 `deploy-baseline-20260705` = `c8892a3`. 향후 기준점 갱신도 `deploy-baseline-YYYYMMDD` 태그 표준.
+- **수집 생존 신호 구현(PM 요구)**: 색인 텔레그램 통지에 "마지막 수집글 작성일"(archive.db 읽기전용 probe) 포함 → "신규 0건"이 진짜 없음인지 수집 死인지 문면으로 구분. probe 실패 시 `확인불가`(무인 크래시 없음).
+- **Archive봇 협의 프롬프트 최종본 제출**: 세션 지속(storage_state)·만료 시 텔레그램 알림·무인 수집 스케줄·서킷브레이커 검토 + 결정 3건. **오너가 Archive봇 담당 세션에 전달할 것.**
+
 **미니PC가 이어받으려면**
-1. `git pull` (브랜치 `agent/rag-ingest-boundary`).
-2. `docs/DEPLOY_MINIPC.md` 그대로 수행.
-3. `.env` 필요값: `VOYAGE_API_KEY`, `RAG_TELEGRAM_BOT_TOKEN`, `RAG_TELEGRAM_CHAT_ID`(=`Rag-bot` 토큰 / 오너 chat_id). `data/qdrant/` + `data/rag_index_manifest.jsonl`(또는 seed ids) **수동 이관**(gitignore).
+1. `git pull` → **`main` 체크아웃** (배포 기준점: 태그 `deploy-baseline-20260705` = `c8892a3`).
+2. `docs/DEPLOY_MINIPC.md` 그대로 수행. **단, 미니PC 배포는 PM 지시로 대기 중** — trading-bot 모의투자 안정 가동(2~3일 관찰) 후 PM이 시점 지시.
+3. `.env` 필요값: `VOYAGE_API_KEY`, `RAG_TELEGRAM_BOT_TOKEN`, `RAG_TELEGRAM_CHAT_ID`(=`@moneying_rag_index_bot` 재발급 토큰 / 오너 chat_id). `data/qdrant/` + `data/rag_index_manifest.jsonl`(또는 seed ids) **수동 이관**(gitignore).
 
 **⚠️ 의존성 — Archive봇이 정상 작동해야 전체가 산다 (미해결, 내 소유 밖)**
 - 색인 봇은 `archive.db`에 **새 글이 쌓여야** 의미가 있다. 수집(크롤링·네이버 로그인)은 **Archive봇 소관**.
@@ -31,8 +38,10 @@
 - **→ PM / Archive봇 담당 액션 필요:** 네이버 로그인 **세션 지속(storage_state)** + 무인 수집 스케줄. 이게 되어야 색인 봇 알림이 진짜 의미를 가진다.
 
 **다음 작업**
-- 텔레그램 봇 토큰이 채팅에 노출됨 → BotFather `/revoke` 재발급 권장(선택).
-- 우선순위 4 완료. 미니PC 실제 배포는 하드웨어 도착 후 DEPLOY 문서로.
+- ~~텔레그램 토큰 재발급~~ → **완료** (후반 참고).
+- Archive봇 협의 회신 대기 → 인터페이스 합의까지가 RAG 역할 (수집 구현은 Archive봇 몫).
+- 미니PC 배포: **PM 지시 대기** (trading-bot 모의투자 안정화 후). 그 전까지 DEPLOY 문서 유지보수만.
+- 검색 API 구현·Phase 2 잔여 배치·대규모 리팩토링: 계속 보류(PM 지시).
 
 ---
 
