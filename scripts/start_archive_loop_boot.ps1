@@ -18,10 +18,9 @@ Set-Location $ProjectRoot
 # cp949 인코딩으로 봇이 조용히 죽는 것 방지 (한글 출력)
 $env:PYTHONUTF8 = "1"
 
-# 헤드리스 여부: 기본은 config 기본값(headed, 창 뜸)을 따른다. 5-A/5-B가 headed로 검증됨.
-# 헤드리스(창 없이) 무인 운영을 원하고 헤드리스 프로브가 (True, N rows)로 확인됐다면
-# 아래 주석을 해제한다. (로그인 재시드는 별도로 headed 필요)
-# $env:HEADLESS = "true"
+# 헤드리스로 무인 운영(창 없이). 2026-07-06 헤드리스 프로브 (True, 'ok (20 rows)') 확인 완료.
+# (로그인 세션 만료 시 재시드는 별도로 headed 수동 필요 — 그때만 이 값을 잠시 "false"로.)
+$env:HEADLESS = "true"
 
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) {
