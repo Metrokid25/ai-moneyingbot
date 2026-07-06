@@ -480,3 +480,40 @@ def test_batch_recollect_noninteractive_stops_cleanly_when_logged_out(monkeypatc
 
     assert rc == 2  # CircuitBreakerTripped → 깔끔한 중단
     assert wait_calls == []  # 무인: wait_for_login(콘솔 Enter 대기) 절대 호출 안 함
+
+
+def test_alert_on_session_expiry_sends_via_notify_telegram(tmp_path, monkeypatch):
+    """루프 배선: 멤버 API 프로브 False 확정 → notify_telegram(재사용)으로 [Archive] 알림."""
+    import member_api
+    import notify_telegram
+
+    config = _loop_config(
+        tmp_path,
+        list_url="https://cafe.naver.com/ca-fe/cafes/29082876/members/ABC_key-1",
+    )
+    monkeypatch.setattr(
+        member_api, "check_member_login",
+        lambda *_a, **_k: (False, "login_required: member_api code=0004 (로그인하지 않았습니다)"),
+    )
+    sent = []
+    monkeypatch.setattr(notify_telegram, "send_telegram", lambda text, **_k: (sent.append(text) or True))
+
+    res = archive_loop.alert_on_session_expiry(config, object(), datetime(2026, 7, 6, 9, 0, 0))
+
+    assert res["expired"] is True and res["alerted"] is True
+    assert len(sent) == 1
+    assert sent[0].splitlines()[0] == "[Archive] 세션 만료 감지"
+
+
+def test_alert_on_session_expiry_skips_non_member_url(tmp_path, monkeypatch):
+    """멤버 목록 URL이 아니면 프로브/알림 없이 스킵(오탐 방지)."""
+    import notify_telegram
+
+    config = _loop_config(tmp_path, list_url="https://cafe.naver.com/some/board")
+    sent = []
+    monkeypatch.setattr(notify_telegram, "send_telegram", lambda text, **_k: (sent.append(text) or True))
+
+    res = archive_loop.alert_on_session_expiry(config, object(), datetime(2026, 7, 6, 9, 0, 0))
+
+    assert res["alerted"] is False
+    assert sent == []

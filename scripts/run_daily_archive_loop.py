@@ -1014,6 +1014,35 @@ def print_run_summary(result: RunResult, log_path: Path) -> None:
     print(f"[archive_loop] log       : {log_path}")
 
 
+def _session_alert_state_path(config: LoopConfig) -> Path:
+    return config.status_file.parent / "session_alert.json"
+
+
+def alert_on_session_expiry(config: LoopConfig, session: object | None, now: datetime) -> dict:
+    """사이클이 차단/에러로 멈췄을 때 호출 — 멤버 API 프로브로 만료를 확정하면
+    RAG 텔레그램(재사용)으로 알림(1회 재프로브 + 중복 방지). 만료 아님/판별불가면 무시."""
+    from session_alert import maybe_alert_session_expiry  # noqa: WPS433
+    from member_api import parse_member_list_url, check_member_login  # noqa: WPS433
+
+    if session is None:
+        return {"expired": None, "alerted": False, "detail": "no session"}
+    member = parse_member_list_url(config.list_url)
+    if member is None:
+        return {"expired": None, "alerted": False, "detail": "not a member-list url"}
+    cafe_id, member_key = member
+    return maybe_alert_session_expiry(
+        lambda: check_member_login(session, cafe_id, member_key),
+        state_path=_session_alert_state_path(config),
+        now=now,
+    )
+
+
+def clear_session_alert(config: LoopConfig) -> None:
+    from session_alert import clear_alert_state  # noqa: WPS433
+
+    clear_alert_state(_session_alert_state_path(config))
+
+
 def run_loop(
     config: LoopConfig,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
@@ -1095,10 +1124,16 @@ def run_loop(
             print_run_summary(result, path)
 
             if stop_reason:
+                try:
+                    alert_on_session_expiry(config, loop_realtime_session, clock())
+                except Exception as exc:  # 알림 실패가 루프를 죽이면 안 됨
+                    print(f"[archive_loop] session-expiry alert skipped: {exc}")
                 print(f"[archive_loop] stopping: {stop_reason}")
                 finalize_status(config, status, stop_reason)
                 return 1 if result.returncode != 0 else 0
 
+            # 정상 사이클 = 로그인 상태 → 만료 알림 상태 리셋(복귀 시 다음 만료 즉시 재알림)
+            clear_session_alert(config)
             if run_number < max_runs:
                 sleeper(decision.interval_seconds)
 
