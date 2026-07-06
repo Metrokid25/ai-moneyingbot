@@ -18,6 +18,30 @@ def test_parse_member_list_url_rejects_non_member_urls():
     assert parse_member_list_url("https://cafe.naver.com/ArticleList.nhn?search.clubid=1") is None
 
 
+def test_is_block_error_only_true_for_human_intervention_cases():
+    assert member_api.is_block_error("login_required: member_api code=0004") is True
+    assert member_api.is_block_error("no_permission") is True
+    assert member_api.is_block_error("captcha") is True
+    assert member_api.is_block_error("age_verification") is True
+    # 일시적 네트워크/API 오류는 차단이 아님 → 상주 루프를 멈추면 안 됨
+    assert member_api.is_block_error("member_api_request_failed: socket hang up") is False
+    assert member_api.is_block_error("member_api_http_503") is False
+    assert member_api.is_block_error("member_api_bad_json: x") is False
+    assert member_api.is_block_error(None) is False
+    assert member_api.is_block_error("") is False
+
+
+def test_clean_error_strips_call_log_and_session_cookies():
+    exc = Exception(
+        "APIRequestContext.get: socket hang up\n"
+        "Call log:\n  - -> GET https://apis.naver.com/cafe-web/...\n"
+        "  - cookie: NID_AUT=SECRET_AUTH_VALUE; NID_SES=SECRET_SES_VALUE"
+    )
+    cleaned = member_api._clean_error(exc)
+    assert cleaned == "APIRequestContext.get: socket hang up"
+    assert "NID_AUT" not in cleaned and "SECRET" not in cleaned and "cookie" not in cleaned
+
+
 class _FakeResponse:
     def __init__(self, payload, status=200):
         self._payload = payload

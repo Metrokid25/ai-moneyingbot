@@ -43,6 +43,35 @@ def make_config(tmp_path, **overrides):
     return archive_loop.LoopConfig(**values)
 
 
+def test_redact_secrets_masks_naver_session_cookies():
+    text = "  - cookie: NID_AUT=abc123DEF; NID_SES=xyz789; NNB=FOO; keep=this"
+    red = archive_loop.redact_secrets(text)
+    assert "abc123DEF" not in red and "xyz789" not in red
+    assert "NID_AUT=<redacted>" in red and "NID_SES=<redacted>" in red
+    assert "keep=this" in red  # 비밀 아닌 값은 유지
+
+
+def test_append_log_redacts_session_cookies(tmp_path):
+    config = make_config(tmp_path)
+    now = datetime(2026, 7, 6, 9, 0, 0)
+    result = archive_loop.RunResult(
+        run_number=1,
+        started_at=now,
+        finished_at=now,
+        returncode=1,
+        stdout="[STOP] member_api_request_failed: cookie: NID_AUT=LIVE_SECRET; NID_SES=LIVE_SES",
+        stderr="",
+        commands=[["python", "x"]],
+        before_article_count=1,
+        after_article_count=1,
+        latest_article_id=100,
+    )
+    path = archive_loop.append_log(config, result)
+    content = path.read_text(encoding="utf-8")
+    assert "LIVE_SECRET" not in content and "LIVE_SES" not in content
+    assert "NID_AUT=<redacted>" in content
+
+
 def write_lock(path, *, updated_at=None, pid=99999):
     timestamp = updated_at or datetime.now().isoformat()
     path.parent.mkdir(parents=True, exist_ok=True)

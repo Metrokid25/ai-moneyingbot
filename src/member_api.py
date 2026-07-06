@@ -31,6 +31,27 @@ def parse_member_list_url(list_url: str) -> Optional[Tuple[str, str]]:
     return m.group(1), m.group(2)
 
 
+# 사람 개입이 필요한 '차단'(로그인/캡차/권한/본인인증). 이것만 상주 루프를 멈춰야 하고,
+# 네트워크/타임아웃/일시 API 오류는 다음 주기 재시도 대상(루프를 죽이면 안 됨).
+_BLOCK_ERROR_MARKERS = ("login_required", "captcha", "no_permission", "age_verification")
+
+
+def is_block_error(err) -> bool:
+    """err이 사람 개입 필요한 차단이면 True. 일시적 네트워크/API 오류면 False."""
+    if not err:
+        return False
+    return any(marker in str(err) for marker in _BLOCK_ERROR_MARKERS)
+
+
+def _clean_error(exc) -> str:
+    """Playwright 예외 문자열의 'Call log:' 이하(요청 헤더·세션 쿠키 포함)를 잘라낸다.
+
+    APIRequestContext 예외 str에는 요청 로그가 붙고 거기 cookie 헤더(NID_AUT/NID_SES 등)가
+    평문으로 들어있다 → 로그/에러 문자열에 세션 쿠키가 새지 않도록 첫 줄만 남긴다."""
+    msg = str(exc).split("Call log:")[0].strip()
+    return msg or type(exc).__name__
+
+
 def _format_posted_at(item: dict) -> Optional[str]:
     ts = item.get("writeDateTimestamp") or item.get("writedt")
     if isinstance(ts, (int, float)) and ts > 0:
@@ -75,7 +96,7 @@ def fetch_member_articles(
             timeout=timeout_ms,
         )
     except Exception as e:  # 네트워크/타임아웃
-        return None, f"member_api_request_failed: {e}"
+        return None, f"member_api_request_failed: {_clean_error(e)}"
 
     if resp.status in (401, 403):
         # 게이트웨이 레벨 인증 거부 — 대화형 로그인 재시도가 발동하도록 login_required로 분류
@@ -86,7 +107,7 @@ def fetch_member_articles(
     try:
         data = resp.json()
     except Exception as e:
-        return None, f"member_api_bad_json: {e}"
+        return None, f"member_api_bad_json: {_clean_error(e)}"
 
     message = data.get("message") or {}
     error = message.get("error") or {}
@@ -134,7 +155,7 @@ def check_member_login(session, cafe_id: str, member_key: str):
     try:
         rows, err = fetch_member_articles(session, cafe_id, member_key, 1)
     except Exception as e:
-        return None, f"probe_failed: {e}"
+        return None, f"probe_failed: {_clean_error(e)}"
     if err is None:
         return True, f"ok ({len(rows)} rows)"
     if err.startswith("login_required"):

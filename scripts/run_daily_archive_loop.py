@@ -215,6 +215,16 @@ def build_daily_archive_command(config: LoopConfig) -> list[str]:
     return build_index_tail_command(config)
 
 
+# 로그에 네이버 세션 쿠키/토큰이 평문으로 새지 않게 마스킹(세션 탈취 방지).
+_SECRET_RE = re.compile(
+    r"\b(NID_AUT|NID_SES|NID_JKL|NAC|NNB|NACT|BUC|nid_inf|SRT30|SRT5|ba\.secret)=[^\s;,\"']+"
+)
+
+
+def redact_secrets(text: str) -> str:
+    return _SECRET_RE.sub(lambda m: f"{m.group(1)}=<redacted>", text)
+
+
 def summarize(text: str, *, max_chars: int = 1200) -> str:
     cleaned = " ".join(text.split())
     if len(cleaned) <= max_chars:
@@ -267,6 +277,8 @@ def log_path_for(log_dir: Path, started_at: datetime) -> Path:
 def append_log(config: LoopConfig, result: RunResult, stop_reason: str | None = None) -> Path:
     config.log_dir.mkdir(parents=True, exist_ok=True)
     path = log_path_for(config.log_dir, result.started_at)
+    stdout = redact_secrets(result.stdout)
+    stderr = redact_secrets(result.stderr)
     lines = [
         "===",
         f"run_number: {result.run_number}",
@@ -278,12 +290,12 @@ def append_log(config: LoopConfig, result: RunResult, stop_reason: str | None = 
         f"archive_db_before_count: {display_status_value(result.before_article_count)}",
         f"archive_db_after_count: {display_status_value(result.after_article_count)}",
         f"latest_article_id: {display_status_value(result.latest_article_id)}",
-        f"stdout_summary: {summarize(result.stdout)}",
-        f"stderr_summary: {summarize(result.stderr)}",
+        f"stdout_summary: {summarize(stdout)}",
+        f"stderr_summary: {summarize(stderr)}",
     ]
     if stop_reason:
         lines.append(f"stop_reason: {stop_reason}")
-    lines.extend(["stdout:", result.stdout.rstrip(), "stderr:", result.stderr.rstrip(), ""])
+    lines.extend(["stdout:", stdout.rstrip(), "stderr:", stderr.rstrip(), ""])
     with path.open("a", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
         fh.write("\n")

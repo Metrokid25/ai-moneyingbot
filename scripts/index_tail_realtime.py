@@ -27,7 +27,7 @@ sys.path.insert(0, "src")
 from browser import BrowserSession, check_blocked, wait_for_login
 from db import get_conn, init_db, upsert_article, article_exists
 from indexer import build_page_url
-from member_api import NAVER_LOGIN_URL, fetch_member_articles, parse_member_list_url
+from member_api import NAVER_LOGIN_URL, fetch_member_articles, is_block_error, parse_member_list_url
 from models import Article
 from parser import parse_article_list
 
@@ -37,6 +37,7 @@ _SNAPSHOT_DIR = _PROJECT_ROOT / "data"
 SCAN_FORWARD_MAX = 15   # estimate에서 최대 전진 폭
 SCAN_BACKWARD_MAX = 50  # estimate에서 최대 후퇴 폭
 INTERACTIVE_LOGIN_RETRIES = 3
+MAX_TRANSIENT_FAILS = 3  # 네트워크 등 일시 오류 연속 허용 횟수 — 초과 시 이번 주기만 접고 루프 유지
 
 
 class _BlockStop(Exception):
@@ -190,6 +191,7 @@ def _collect_after_snapshot(
     total = 0
     page = 1
     empty_save_pages = 0
+    transient_fails = 0
     stop_err = None
     while True:
         page_url = build_page_url(list_url, page)
@@ -203,9 +205,21 @@ def _collect_after_snapshot(
             input_func=input_func,
         )
         if err:
-            print(f"  [STOP] 차단 감지: {err}")
-            stop_err = err
-            break
+            if is_block_error(err):
+                # 사람 개입 필요(로그인/캡차/권한) → 진짜 중단(호출부가 알림/재시작 처리)
+                print(f"  [STOP] 차단 감지: {err}")
+                stop_err = err
+                break
+            # 일시 오류(네트워크/타임아웃/일시 API) → 상주 루프를 죽이지 않는다:
+            # 같은 페이지 재시도하고, 지속되면 이번 주기만 접는다(stop_err 없이 → 다음 주기 재시도).
+            transient_fails += 1
+            print(f"  [WARN] 일시 오류({err}) — 재시도 {transient_fails}/{MAX_TRANSIENT_FAILS}")
+            if transient_fails >= MAX_TRANSIENT_FAILS:
+                print("  [after-snapshot] 일시 오류 지속 — 이번 주기만 접고 다음 주기 재시도(루프 유지)")
+                break
+            _sleep()
+            continue
+        transient_fails = 0
 
         if not rows:
             print(f"  [STOP] 빈 페이지 또는 파싱 실패")
@@ -384,9 +398,14 @@ def index_pages(
             input_func=input_func,
         )
         if err:
-            # 차단/로그인 필요 → 남은 페이지를 계속 두드리지 않고 즉시 중단(조용한 0건 성공 방지).
-            print(f"  [STOP] 차단 감지: {err}  (누적 {total}개)")
-            raise _BlockStop(err, total)
+            if is_block_error(err):
+                # 차단(로그인/캡차/권한) → 즉시 중단(예외로 호출부 통지).
+                print(f"  [STOP] 차단 감지: {err}  (누적 {total}개)")
+                raise _BlockStop(err, total)
+            # 일시 오류(네트워크 등) → 이 페이지만 스킵하고 계속.
+            print(f"  [WARN] 일시 오류({err}) — 이 페이지 스킵")
+            _sleep()
+            continue
         if not rows:
             print(f"  [WARN] 글 행 파싱 실패 또는 빈 페이지, 스킵")
             _sleep()

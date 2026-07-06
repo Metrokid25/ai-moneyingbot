@@ -120,3 +120,25 @@ def test_run_realtime_index_returns_nonzero_and_no_complete_on_block(monkeypatch
     assert rc == 1
     assert "complete" not in out
     assert "stopped: login_required" in out
+
+
+def test_realtime_collect_transient_error_does_not_stop_loop(monkeypatch):
+    """네트워크 등 일시 오류는 stop_err 없이 이번 회차만 접어야 한다(상주 루프 유지)."""
+    calls = []
+
+    def fake_fetch(_session, _list_url, page_num, **_kwargs):
+        calls.append(page_num)
+        return (None, "member_api_request_failed: socket hang up")
+
+    monkeypatch.setattr(index_tail_realtime, "_fetch_rows_with_interactive_login", fake_fetch)
+    monkeypatch.setattr(index_tail_realtime, "_sleep", lambda: None)
+
+    total, stop_err = index_tail_realtime._collect_after_snapshot(
+        FakeSession(),
+        "https://cafe.example/list",
+        min_id=1000,
+    )
+
+    assert total == 0
+    assert stop_err is None  # 일시 오류 → 차단으로 위장 안 함(루프 안 죽음)
+    assert len(calls) == index_tail_realtime.MAX_TRANSIENT_FAILS  # 재시도 후 회차 종료
