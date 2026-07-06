@@ -31,16 +31,27 @@ def parse_member_list_url(list_url: str) -> Optional[Tuple[str, str]]:
     return m.group(1), m.group(2)
 
 
-# 사람 개입이 필요한 '차단'(로그인/캡차/권한/본인인증). 이것만 상주 루프를 멈춰야 하고,
-# 네트워크/타임아웃/일시 API 오류는 다음 주기 재시도 대상(루프를 죽이면 안 됨).
-_BLOCK_ERROR_MARKERS = ("login_required", "captcha", "no_permission", "age_verification")
+# 사람 개입이 필요한 '차단'(로그인/캡차/권한/본인인증)의 err 접두어. 이것만 상주 루프를
+# 멈춰야 하고, 네트워크/타임아웃/5xx/파싱 등 일시 오류는 다음 주기 재시도 대상(루프 유지).
+_BLOCK_ERROR_PREFIXES = (
+    "login_required",          # 세션 만료(code 0004 / http 401·403) + HTML 로그인 마커
+    "no_permission",           # 권한 없음(HTML 경로 bare 마커)
+    "captcha",                 # 캡차
+    "age_verification",        # 본인인증
+    # API가 능동적으로 에러 코드 envelope을 반환 = 지속성 차단(권한/본인인증 등이 code 0004가
+    # 아닌 한글 메시지로 뭉개져 오는 경로). 일시 네트워크 실패가 아니므로 fail-safe로 멈춘다.
+    "member_api_error code=",
+)
 
 
 def is_block_error(err) -> bool:
-    """err이 사람 개입 필요한 차단이면 True. 일시적 네트워크/API 오류면 False."""
+    """err이 사람 개입 필요한 지속성 차단이면 True. 일시적 네트워크/서버(5xx)/파싱 오류면 False.
+
+    접두어(startswith)로만 판정한다 — member_api_unexpected가 담는 서버 응답 body에
+    'captcha' 같은 문자열이 우연히 들어가도 오탐하지 않도록."""
     if not err:
         return False
-    return any(marker in str(err) for marker in _BLOCK_ERROR_MARKERS)
+    return str(err).startswith(_BLOCK_ERROR_PREFIXES)
 
 
 def _clean_error(exc) -> str:

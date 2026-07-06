@@ -20,13 +20,18 @@ def test_parse_member_list_url_rejects_non_member_urls():
 
 def test_is_block_error_only_true_for_human_intervention_cases():
     assert member_api.is_block_error("login_required: member_api code=0004") is True
+    assert member_api.is_block_error("login_required: member_api_http_401") is True
     assert member_api.is_block_error("no_permission") is True
     assert member_api.is_block_error("captcha") is True
     assert member_api.is_block_error("age_verification") is True
-    # 일시적 네트워크/API 오류는 차단이 아님 → 상주 루프를 멈추면 안 됨
+    # API가 0004가 아닌 에러 코드 envelope으로 권한/본인인증 차단을 뭉개 반환해도 차단으로 잡아야 함
+    assert member_api.is_block_error("member_api_error code=9999 (가입한 회원만 이용할 수 있습니다)") is True
+    # 일시적 네트워크/서버(5xx)/파싱 오류는 차단이 아님 → 상주 루프를 멈추면 안 됨
     assert member_api.is_block_error("member_api_request_failed: socket hang up") is False
     assert member_api.is_block_error("member_api_http_503") is False
     assert member_api.is_block_error("member_api_bad_json: x") is False
+    # 서버 응답 body에 'captcha' 등 문자열이 우연히 들어가도 오탐하면 안 됨(substring 아님)
+    assert member_api.is_block_error("member_api_unexpected status=200 body={'captchaKey': 'z', 'login_required': 1}") is False
     assert member_api.is_block_error(None) is False
     assert member_api.is_block_error("") is False
 
