@@ -483,7 +483,7 @@ def test_batch_recollect_noninteractive_stops_cleanly_when_logged_out(monkeypatc
 
 
 def test_alert_on_session_expiry_sends_via_notify_telegram(tmp_path, monkeypatch):
-    """루프 배선: 멤버 API 프로브 False 확정 → notify_telegram(재사용)으로 [Archive] 알림."""
+    """루프 배선: 멤버 API 프로브 False 확정(재프로브 포함) → notify_telegram(재사용)으로 [Archive] 알림."""
     import member_api
     import notify_telegram
 
@@ -491,29 +491,95 @@ def test_alert_on_session_expiry_sends_via_notify_telegram(tmp_path, monkeypatch
         tmp_path,
         list_url="https://cafe.naver.com/ca-fe/cafes/29082876/members/ABC_key-1",
     )
-    monkeypatch.setattr(
-        member_api, "check_member_login",
-        lambda *_a, **_k: (False, "login_required: member_api code=0004 (로그인하지 않았습니다)"),
-    )
+    probe_calls = {"n": 0}
+
+    def fake_probe(*_a, **_k):
+        probe_calls["n"] += 1
+        return (False, "login_required: member_api code=0004 (로그인하지 않았습니다)")
+
+    monkeypatch.setattr(member_api, "check_member_login", fake_probe)
     sent = []
     monkeypatch.setattr(notify_telegram, "send_telegram", lambda text, **_k: (sent.append(text) or True))
 
     res = archive_loop.alert_on_session_expiry(config, object(), datetime(2026, 7, 6, 9, 0, 0))
 
     assert res["expired"] is True and res["alerted"] is True
+    assert probe_calls["n"] == 2  # 최초 + 순단 방어 재프로브
     assert len(sent) == 1
     assert sent[0].splitlines()[0] == "[Archive] 세션 만료 감지"
+    # dedup 상태가 config 유도 경로(status_file.parent/session_alert.json)에 실제로 기록됐는지
+    assert (config.status_file.parent / "session_alert.json").exists()
 
 
 def test_alert_on_session_expiry_skips_non_member_url(tmp_path, monkeypatch):
     """멤버 목록 URL이 아니면 프로브/알림 없이 스킵(오탐 방지)."""
+    import member_api
     import notify_telegram
 
     config = _loop_config(tmp_path, list_url="https://cafe.naver.com/some/board")
+    monkeypatch.setattr(
+        member_api, "check_member_login",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("probe must not run on non-member URL")),
+    )
     sent = []
     monkeypatch.setattr(notify_telegram, "send_telegram", lambda text, **_k: (sent.append(text) or True))
 
     res = archive_loop.alert_on_session_expiry(config, object(), datetime(2026, 7, 6, 9, 0, 0))
 
     assert res["alerted"] is False
+    assert res["detail"] == "not a member-list url"  # 스킵 사유가 URL 판정 때문임을 명시 확인
     assert sent == []
+
+
+def test_run_loop_calls_session_expiry_alert_on_stop(monkeypatch, tmp_path):
+    """배선 회귀 방지: 사이클이 차단/에러로 멈추면 run_loop이 alert_on_session_expiry를 부른다."""
+    session = FakeSession()
+    monkeypatch.setattr(archive_loop, "readonly_archive_summary", _archive_summary)
+    alert_calls = []
+    monkeypatch.setattr(
+        archive_loop, "alert_on_session_expiry",
+        lambda config, sess, now: (alert_calls.append((sess, now)) or {"alerted": True}),
+    )
+    config = _loop_config(tmp_path, market_schedule=True, realtime_index=True, max_runs=1)
+
+    rc = archive_loop.run_loop(
+        config,
+        sleeper=lambda _s: None,
+        clock=lambda: datetime(2026, 7, 6, 9, 0, 0),  # 장중(active)
+        realtime_browser_session_factory=lambda: session,
+        realtime_index_runner=lambda *_a, **_k: 1,  # 차단/에러 → stop_reason
+        batch_recollect_runner=lambda **_k: 0,
+    )
+
+    assert rc == 1
+    assert len(alert_calls) == 1
+    assert alert_calls[0][0] is session  # 루프의 realtime 세션으로 프로브
+
+
+def test_run_loop_clears_session_alert_on_successful_cycle(monkeypatch, tmp_path):
+    """정상 사이클이면 복귀 리셋(clear_session_alert) 호출, 알림은 안 함."""
+    session = FakeSession()
+    monkeypatch.setattr(archive_loop, "readonly_archive_summary", _archive_summary)
+    cleared = []
+    alerted = []
+    monkeypatch.setattr(archive_loop, "clear_session_alert", lambda config: cleared.append(True))
+    monkeypatch.setattr(archive_loop, "alert_on_session_expiry", lambda *_a, **_k: alerted.append(True) or {})
+
+    def ok_index(_url, _sess, **_k):
+        print("[index_tail] complete")
+        return 0
+
+    config = _loop_config(tmp_path, market_schedule=True, realtime_index=True, max_runs=1)
+
+    rc = archive_loop.run_loop(
+        config,
+        sleeper=lambda _s: None,
+        clock=lambda: datetime(2026, 7, 6, 9, 0, 0),
+        realtime_browser_session_factory=lambda: session,
+        realtime_index_runner=ok_index,
+        batch_recollect_runner=lambda **_k: 0,
+    )
+
+    assert rc == 0
+    assert cleared == [True]  # 정상 사이클 → 복귀 리셋
+    assert alerted == []      # 알림 안 함

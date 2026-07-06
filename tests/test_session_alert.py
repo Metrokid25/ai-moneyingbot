@@ -86,6 +86,22 @@ def test_transient_false_then_true_does_not_send(tmp_path):
     )
 
     assert res["expired"] is False and res["alerted"] is False
+    assert checker.calls == 2  # 순단 방어 재프로브가 실제로 돌았는지 잠금
+    assert sender.messages == []
+
+
+def test_none_on_reprobe_does_not_send(tmp_path):
+    # 첫 프로브 False, 재프로브 None(판별불가) → 만료 미확정 → 침묵(설계 의도). self-heal은 다음 재시작에서.
+    state_path = tmp_path / "session_alert.json"
+    checker = _Checker([(False, "login_required: code=0004"), (None, "probe_failed: net")])
+    sender = _Sender()
+
+    res = session_alert.maybe_alert_session_expiry(
+        checker, state_path=state_path, now=NOW, sender=sender
+    )
+
+    assert res["expired"] is False and res["alerted"] is False
+    assert checker.calls == 2
     assert sender.messages == []
 
 
@@ -152,20 +168,49 @@ def test_recovery_true_clears_state(tmp_path):
     assert sender.messages == []
 
 
-def test_send_failure_does_not_persist_state_so_it_retries(tmp_path):
-    # 발송 실패(예: 토큰 미설정)면 dedup 상태를 남기지 않아 다음에 재시도된다.
+def test_send_failure_records_attempt_and_floors_rapid_retry(tmp_path):
+    # 발송 실패(잘못된 토큰 등)여도 '시도'는 기록해 재시작마다 무한 스팸을 막고,
+    # 하한 간격이 지나면 재시도한다.
     state_path = tmp_path / "session_alert.json"
-    checker = _Checker([(False, "login_required: code=0004")])
-    failing_sender = _Sender(ok=False)
+    sender = _Sender(ok=False)
+
+    r1 = session_alert.maybe_alert_session_expiry(
+        _Checker([(False, "login_required: code=0004")]),
+        state_path=state_path, now=NOW, sender=sender,
+    )
+    assert r1["sent_ok"] is False and r1["alerted"] is False
+    assert len(sender.messages) == 1        # 시도는 함
+    assert state_path.exists()              # last_attempt_at 기록(성공 아님)
+
+    # 하한(30분) 안의 재시도는 억제 → 스팸 방지
+    r2 = session_alert.maybe_alert_session_expiry(
+        _Checker([(False, "login_required: code=0004")]),
+        state_path=state_path, now=NOW + timedelta(minutes=10), sender=sender,
+    )
+    assert r2["alerted"] is False
+    assert len(sender.messages) == 1        # 재발송 시도 없음
+
+    # 하한 경과 후에는 재시도
+    r3 = session_alert.maybe_alert_session_expiry(
+        _Checker([(False, "login_required: code=0004")]),
+        state_path=state_path, now=NOW + timedelta(minutes=31), sender=sender,
+    )
+    assert len(sender.messages) == 2        # 재시도 발생
+
+
+def test_tz_mixed_timestamp_does_not_crash(tmp_path):
+    # 상태에 tz-aware 타임스탬프가 있고 now는 naive여도 뺄셈 TypeError 없이 발송 허용.
+    state_path = tmp_path / "session_alert.json"
+    state_path.write_text('{"last_attempt_at": "2026-07-05T09:00:00+09:00"}', encoding="utf-8")
+    sender = _Sender()
 
     res = session_alert.maybe_alert_session_expiry(
-        checker, state_path=state_path, now=NOW, sender=failing_sender
+        _Checker([(False, "login_required: code=0004")]),
+        state_path=state_path, now=NOW, sender=sender,
     )
 
-    assert res["expired"] is True
-    assert res["sent_ok"] is False and res["alerted"] is False
-    assert len(failing_sender.messages) == 1  # 시도는 함
-    assert not state_path.exists()  # 그러나 미전달이라 dedup 기록 안 함 → 재시도 가능
+    assert res["alerted"] is True  # 크래시 없이 발송(보수적 허용)
+    assert len(sender.messages) == 1
 
 
 def test_clear_alert_state_missing_is_noop(tmp_path):

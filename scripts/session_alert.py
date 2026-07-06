@@ -20,6 +20,9 @@ from typing import Any, Callable, Optional
 
 ALERT_PREFIX = "[Archive] 세션 만료 감지"
 REMINDER_INTERVAL_HOURS = 24.0
+# 발송 실패(예: 잘못된 토큰) 시 재시작마다 무한 재시도되는 스팸을 막는 하한.
+# 순단성 실패는 이 간격 뒤 재시도되고, 지속 실패는 이 간격보다 자주 시도하지 않는다.
+FAILURE_RETRY_FLOOR_MINUTES = 30.0
 
 
 def _load_state(state_path: Path) -> dict[str, Any]:
@@ -45,21 +48,40 @@ def clear_alert_state(state_path: Path) -> None:
         return
 
 
+def _elapsed_at_least(ts: Optional[str], now: datetime, delta: timedelta) -> bool:
+    """ts(isoformat) 이후 delta 이상 경과했으면 True.
+
+    기록 없음/파싱 실패/타임존 불일치(aware vs naive 뺄셈 TypeError)는 모두 True로
+    처리한다 — 발송을 막기보다 허용하는 쪽이 안전(알림 누락 < 중복 한 번)."""
+    if not ts:
+        return True
+    try:
+        ts_dt = datetime.fromisoformat(str(ts))
+        return (now - ts_dt) >= delta
+    except (ValueError, TypeError):
+        return True
+
+
 def should_send(
     state: dict[str, Any],
     now: datetime,
     *,
     reminder_interval_hours: float = REMINDER_INTERVAL_HOURS,
+    failure_retry_floor_minutes: float = FAILURE_RETRY_FLOOR_MINUTES,
 ) -> bool:
-    """중복 방지 판정: 최초(기록 없음) 또는 마지막 발송 후 리마인더 간격 경과 시 True."""
-    last = state.get("last_alert_at")
-    if not last:
-        return True
-    try:
-        last_dt = datetime.fromisoformat(str(last))
-    except (ValueError, TypeError):
-        return True
-    return (now - last_dt) >= timedelta(hours=reminder_interval_hours)
+    """중복 방지 판정.
+
+    - 성공 발송(last_alert_at) 후 리마인더 간격 안이면 억제(최초 1회 + 24h 리마인더).
+    - 시도(last_attempt_at) 후 실패-백오프 하한 안이면 억제(잘못된 토큰 스팸 방지).
+    둘 다 통과해야 발송.
+    """
+    reminder_due = _elapsed_at_least(
+        state.get("last_alert_at"), now, timedelta(hours=reminder_interval_hours)
+    )
+    attempt_ok = _elapsed_at_least(
+        state.get("last_attempt_at"), now, timedelta(minutes=failure_retry_floor_minutes)
+    )
+    return reminder_due and attempt_ok
 
 
 def build_message(detail: Optional[str], now: datetime) -> str:
@@ -115,10 +137,11 @@ def maybe_alert_session_expiry(
     text = build_message(detail, now)
     sent_ok = bool(sender(text))
 
-    # 발송 성공 시에만 dedup 기록. 실패(토큰 미설정/네트워크)면 상태를 안 남겨
-    # 다음 주기에 재시도하게 한다(전달 안 된 알림을 24시간 침묵시키지 않음).
+    # 시도는 성공/실패 무관 항상 기록(last_attempt_at) → 실패 시 하한 간격 백오프.
+    # 성공 시에만 last_alert_at 기록 → 24h 리마인더 dedup의 기준.
+    state["last_attempt_at"] = now.isoformat()
     if sent_ok:
         state["last_alert_at"] = now.isoformat()
         state["last_detail"] = detail
-        _save_state(state_path, state)
+    _save_state(state_path, state)
     return {"expired": True, "alerted": sent_ok, "detail": detail, "sent_ok": sent_ok}
