@@ -23,8 +23,10 @@ from run_daily_archive_loop import DEFAULT_DB_FILE, DEFAULT_LOG_DIR, readonly_ar
 
 KST = timezone(timedelta(hours=9))
 ALERT_PREFIX = "[Archive] 일일 수집 요약"
-# 사이클 전체 델타 라인만 센다(스텝별 'title collection finished: saved_delta='와 중복 방지).
-_CYCLE_SAVED_RE = re.compile(r"cycle\s+\d+\s+finished:.*saved_delta=(\d+)")
+# 사이클 전체 델타 라인만 센다. 주의: append_log는 같은 내용을 축약한 'stdout_summary:'
+# 라인으로도 한 번 더 쓴다 → stdout 원문의 사이클 라인('[archive_loop] cycle N finished:')에
+# 앵커링(match)해 이중 카운트를 막는다. (스텝별 'title collection finished:'도 자연 제외.)
+_CYCLE_SAVED_RE = re.compile(r"\[archive_loop\]\s+cycle\s+\d+\s+finished:.*saved_delta=(\d+)")
 
 
 def today_saved_count(log_dir: Path, day: date) -> int:
@@ -34,7 +36,7 @@ def today_saved_count(log_dir: Path, day: date) -> int:
         return 0
     total = 0
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        m = _CYCLE_SAVED_RE.search(line)
+        m = _CYCLE_SAVED_RE.match(line.lstrip())
         if m:
             total += int(m.group(1))
     return total

@@ -19,13 +19,16 @@ def test_today_saved_count_sums_only_cycle_finished_deltas(tmp_path):
                 "[archive_loop] cycle 1 finished: returncode=0 saved_delta=2 latest_id=102",
                 "[archive_loop] market schedule inactive: market-closed-23-06",
                 "[archive_loop] title collection finished: saved_delta=5 latest_id=110",  # 스텝 델타(중복) — 세면 안 됨
+                # append_log가 같은 사이클을 축약해 쓰는 stdout_summary 라인 — 이중카운트 유발원.
+                # '[archive_loop] cycle'로 시작하지 않으므로(앵커) 세면 안 됨:
+                "stdout_summary: [archive_loop] step 1/2 ... cycle 9 finished: returncode=0 saved_delta=99 latest_id=999",
                 "[archive_loop] cycle 2 finished: returncode=0 saved_delta=3 latest_id=105",
                 "[archive_loop] cycle 3 finished: returncode=1 saved_delta=0 latest_id=105",
             ]
         ),
         encoding="utf-8",
     )
-    # cycle-finished 라인만: 2 + 3 + 0 = 5 (title-step의 5는 제외)
+    # cycle-finished 원문 라인만: 2 + 3 + 0 = 5 (title-step 5, stdout_summary의 99 모두 제외)
     assert dcs.today_saved_count(tmp_path, day) == 5
 
 
