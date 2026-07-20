@@ -7,6 +7,25 @@
 
 ---
 
+## 2026-07-18 · 미니PC · main `7d01def` (Archive봇 — 무인 운영 안착)
+
+**한 일 (07-06~18, 상세는 `docs/ARCHIVE_MINIPC_OPERATIONS.md` — Archive 운영 기준 문서 신설)**
+- **미니PC 무인 수집 라이브**: 상주 루프를 작업 스케줄러 3태스크로 배포 — `Archive-CollectLoop`(로그온·헤드리스·market schedule), `Archive-Watchdog`(1시간, 사망 시 안전 재기동), `Archive-DailySummary`(매일 20:00 수집량 텔레그램).
+- **세션만료 텔레그램 알림**(`scripts/session_alert.py`): code-0004 확정+재프로브 → `[Archive] 세션 만료 감지`. RAG 텔레그램 재사용(전용봇 신설 안 함 — PM 결정, `.env`의 RAG_TELEGRAM_* 재사용). dedup 24h+실패 30분 하한. 실발송 검증 완료.
+- **루프 리질리언스**: 네트워크 순단을 차단으로 오분류해 루프가 죽던 문제 → `member_api.is_block_error()`(prefix 분류) 도입, 일시오류는 재시도 후 루프 유지. 8일 연속 무중단 실증.
+- **보안**: Playwright 예외의 세션쿠키(NID_AUT/NID_SES) 로그 평문 유출 차단(`_clean_error`+`redact_secrets`) + 과거 로그 스크럽.
+- **07-15 사고**: 0xC000013A(세션 kill)로 봇 3일 사망(일일요약 "0건"이 신호였음) → 복구 + 워치독 신설. 이후 리뷰에서 워치독 이중인스턴스 위험 등 3건 발견·수정(`7d01def`).
+- 테스트 기준선 **667 통과**(PYTHONUTF8=1 필수).
+
+**미니PC가 이어받으려면**
+1. `git fetch` + `docs/ARCHIVE_MINIPC_OPERATIONS.md` 정독(아키텍처 결정 이유·환경 함정·사건 이력 포함).
+2. 사람 개입은 둘뿐: 재부팅 후 Windows 로그인 / `[Archive] 세션 만료 감지` 수신 시 headed 재로그인 1회.
+
+**다음 작업 (보류 중, 급하지 않음)**
+- index_tail 포크 통합 · find_tail/_create_snapshot 일시오류 분류 · Enter-wait 4중복 정리 (운영 문서 §8).
+
+---
+
 ## 2026-07-05 · 미니PC · 브랜치 `integrate/collection-into-main` (Archive봇)
 
 **한 일**
