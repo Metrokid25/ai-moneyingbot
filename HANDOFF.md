@@ -7,6 +7,31 @@
 
 ---
 
+## 2026-07-20 · 미니PC · RAG 운영 세션 (오너 지시로 이 항목만 추가 — 코드 무변경·커밋 없음)
+
+**전체 상태 스냅샷 (2026-07-20 15:27 실측 — 인수인계 기준점)**
+- `main` = `origin/main` = `7d01def` (0/0 동기화). 배포 기준점 태그 `deploy-baseline-20260705` = `c8892a3`(512 테스트 통과 시점).
+- **Archive봇(수집): 무인화 완료·가동 중.** 스케줄 태스크 `Archive-CollectLoop`(Running) / `Archive-DailySummary`(매일 20:00 요약) / `Archive-Watchdog`(매시 생존확인·자동재시작). `archive.db` 16GB, WAL이 분 단위로 갱신 중(수집 살아있음 실측). 07-05 핸드오프의 "무인 수집 미구현" 병목은 **해소됨** (`bd06136`~`7d01def`: REST 수집 병합→부팅 런처→HEADLESS→세션만료 알림→루프 내성→시크릿 스크럽→워치독).
+- **RAG봇(색인): 미배포·PM 지시 대기.** `RAG-IncrementalIndex` 태스크 미등록 상태 확인. 코드·러너는 main에 완성돼 있음.
+- **trading-bot: 별도 repo, 이 대장 범위 밖** (모의투자 forward 2026-07-06 시작, 안정 관찰 중).
+
+**한 일 (07-06~07-20, 미니PC RAG 운영 담당 — 전부 읽기 전용 + worktree 1개 생성)**
+- PM 승인 하에 **RAG 배포 사전점검** 수행: `C:\projects\naver_cafe_archive_rag`에 git worktree(detached @ `c8892a3`) 생성. 본 리포·Archive봇 작업물 무변경.
+- 사전점검 결과: Python 3.12.10 OK / requirements·.env.example·스크립트 4종(register_rag_index_schedule.ps1, run_rag_incremental_notify.py, notify_telegram.py, update_rag_index_incremental.py) 존재 OK. **배포일에만 할 것**: `.env` 3값(VOYAGE_API_KEY, RAG_TELEGRAM_BOT_TOKEN, RAG_TELEGRAM_CHAT_ID) 입력 + `data/qdrant/`(≈600MB)·`data/rag_index_manifest.jsonl`(또는 embeddings_phase2_ids.npy) 수동 이관(누락 시 5만 청크 재임베딩 대량 과금) + 스케줄 등록(`-DbPath "C:\projects\naver_cafe_archive\data\archive.db"`).
+- Archive봇 수집 생존 실측 확인(파일시각·WAL 기준). 수집 死 아님.
+
+**⚠️ 주의 (인수인계 필독)**
+- `scripts/_step3_verify_v2.py` — **미추적 WIP** (RAG 평가용 합성쿼리 v1 vs v2 비교·자가검증 스크립트). 원 작성 세션/담당 미확인. **git clean 등으로 지우지 말 것.** 소유 확인 후 브랜치로 편입하거나 이관할 것.
+- 이 항목은 미니PC에서 작성됨(오너 지시에 따른 문서 갱신). **커밋/푸시는 오너 승인 필요.** 미커밋 상태가 길어지면 미니PC `git pull`과 충돌 가능 → 빠른 승인·처리 요망.
+
+**다음 작업**
+- 미니PC RAG 색인 배포: **PM 지시 대기** (trading-bot 안정 확인 후). 배포 기준점을 태그 `c8892a3`로 갈지 당시 최신 main으로 갈지 **PM 미결** — 배포 지시 때 확정 필요.
+- 배포 후 일상 운영: 매일 텔레그램 통지 확인(✅/🔴 + "마지막 수집글 작성일" 생존신호), `Get-ScheduledTaskInfo -TaskName RAG-IncrementalIndex`.
+- 리포 공유 정리(미니PC 한 체크아웃을 Archive봇·RAG봇이 공유 중): 전 봇 안정화 후 별도 세션에서 논의(PM 방침).
+- 검색 API·Phase 2 잔여 배치·대규모 리팩토링: 계속 보류(PM 지시 시 착수).
+
+---
+
 ## 2026-07-18 · 미니PC · main `7d01def` (Archive봇 — 무인 운영 안착)
 
 **한 일 (07-06~18, 상세는 `docs/ARCHIVE_MINIPC_OPERATIONS.md` — Archive 운영 기준 문서 신설)**
