@@ -17,10 +17,11 @@
   pull/reset/clean/stash 없이 중단·보고하도록 고정한다.
 
 **현재 권위 상태**
-- `origin/main = d8c806c` — Archive index-tail 통합까지 반영됐고, 직전 `082a24c`의 fail-closed RAG
-  배포 자산 안전 게이트도 포함한다.
+- 이 작업의 기준점은 `d8c806c`이며, 본 인수인계 변경은 그 위에 이어진다. 수신자는 고정 해시를 최신값으로
+  가정하지 말고 `git fetch origin` 후 실측한 `origin/main`을 권위값으로 사용한다.
+- 기준점에는 Archive index-tail 통합과 직전 `082a24c`의 fail-closed RAG 배포 자산 안전 게이트가 포함된다.
 - 실제 미니PC RAG 배포와 `RAG-IncrementalIndex` 등록은 미수행.
-- 개발 PC 기본 worktree `C:\projects\naver_cafe_archive`는 로컬 main이 2커밋 뒤이고, 원격과 내용이 같은
+- 개발 PC 기본 worktree `C:\projects\naver_cafe_archive`는 로컬 main이 원격보다 뒤처져 있고, 원격과 내용이 같은
   7개 파일이 modified로 표시되며 미추적 `scripts/_step3_verify_v2.py`가 있다. 별도 정리 전 건드리지 않는다.
 - 깨끗한 RAG worktree는 `C:\projects\rag_predeploy_guard_20260722`이다.
 
