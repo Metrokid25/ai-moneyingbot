@@ -4,6 +4,7 @@
 > 가리키는 그 문서). 대상: 미니PC(24/7 운영+개발 겸용, Windows 11) `C:\projects\naver_cafe_archive`.
 > 작성 2026-07-18 · 기준 커밋 `7d01def`.
 > **작업 전 필독**: 요약·문서(이 문서 포함)를 믿지 말고 코드로 재확인하라. 시작하면 `git fetch origin` 먼저.
+> **현재 미니PC 작업 시작점**: `docs/ARCHIVE_MINIPC_HANDOFF.md`를 먼저 실행한 뒤 이 러너북을 참조한다.
 
 ---
 
@@ -67,10 +68,9 @@ $env:PYTHONUTF8 = "1"
 Get-ScheduledTask Archive-CollectLoop, Archive-Watchdog, Archive-DailySummary | Select TaskName, State
 Get-Content state\archive_loop_status.json | ConvertFrom-Json | Select last_schedule_label, next_interval_seconds, last_return_code, last_saved, is_running, stop_reason
 
-# 코드 배포 후 재시작(반영엔 재시작 필수) — 잔여 프로세스 정리 포함
-Stop-ScheduledTask Archive-CollectLoop; Start-Sleep 3
-Get-Process python, chrome-headless-shell -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
-Start-ScheduledTask Archive-CollectLoop
+# 코드 배포 후 재시작(반영엔 재시작 필수)
+# 모든 Python/Chrome을 이름만으로 종료하면 RAG 작업까지 죽을 수 있으므로 금지.
+# docs/ARCHIVE_MINIPC_HANDOFF.md §4의 watchdog 일시차단 + Archive PID/자식 Chrome 선택 정리 절차를 실행한다.
 
 # 네이버 재로그인 (세션만료 알림 왔을 때, headed 1회. "로그인 상태 유지" 체크 필수)
 .\.venv\Scripts\python.exe scripts\daily_archive.py --login --login-check-retries 1 `

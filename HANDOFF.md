@@ -7,6 +7,24 @@
 
 ---
 
+## 2026-07-22 · 개발 PC · 브랜치 `agent/archive-minipc-handoff-20260722` (pull 기반 Archive 인수인계)
+
+**한 일**
+- 별도 txt/채팅 복붙 없이 미니PC 담당자가 Git만으로 이어받도록
+  `docs/ARCHIVE_MINIPC_HANDOFF.md`를 **현재 Archive 작업 정본**으로 신설했다.
+- 담당자는 `git fetch` → tracked dirty 확인 → `main` ff-only → `d8c806c` 포함 검증 → 배포 전 healthcheck →
+  Archive PID만 보호적으로 정리해 CollectLoop 재시작 → 배포 후 healthcheck 순서로 실행한다.
+- RAG Python 보호, 미추적 `_step3_verify_v2.py` 보존, 실패 시 반복 재시작 금지와 보고 형식을 문서에 고정했다.
+
+**미니PC 담당자의 지금 할 일**
+- `git fetch origin` 후 `docs/ARCHIVE_MINIPC_HANDOFF.md`만 순서대로 실행한다. 문서의 dirty 검사 전 pull 금지.
+- 성공 기준은 배포 후 `HEALTHY`, 종료코드 0, controller 1개, `LIVE VERIFIED` 보고다.
+
+**다음 작업**
+- 라이브 검증 성공 후 `find_tail`/`_create_snapshot` 일시 오류 분류 개선을 별도 세션에서 진행.
+
+---
+
 ## 2026-07-22 · 개발 PC · 브랜치 `agent/rag-minipc-handoff-20260722` (복붙 없는 RAG 인수인계 정리)
 
 **한 일**
