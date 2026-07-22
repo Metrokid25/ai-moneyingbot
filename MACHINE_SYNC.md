@@ -4,7 +4,15 @@
 > 실제로 2026-06-27 `daily_archive` 기능이 양쪽에서 평행 구현돼 충돌이 났다 (아래 "사례" 참고).
 > **이 문서는 양쪽 기계에 동일하게 둔다.** 작업 시작 전에 먼저 읽고, 끝나면 갱신한다.
 
-**최종 갱신:** 2026-06-30 (PC: mentor.db 코퍼스 DB 노트북 이관 결정) · 2026-06-30 (PC: recall 실측 — rerank가 recall@1 0.40→0.80) · 2026-06-30 (PC: eval gold셋 40개 생성) / **기준 브랜치:** `agent/rag-ingest-boundary`
+**최종 갱신:** 2026-07-22 (RAG 미니PC 인수인계 정본 연결) / **권위 기준:** `origin/main` + `HANDOFF.md` 최신 항목
+
+> **2026-07-22 우선 적용:** 이 문서의 과거 기계별 상태·건수·브랜치 설명보다 `HANDOFF.md` 최신 항목과
+> `docs/OWNERSHIP.md`가 우선한다. RAG 미니PC 담당자는 채팅 프롬프트를 복사하지 말고
+> [`docs/RAG_MINIPC_PREFLIGHT.md`](docs/RAG_MINIPC_PREFLIGHT.md)에 따라 읽기 전용 사전점검부터 수행한다.
+> 실제 배포는 PM이 점검 보고를 확인해 commit/tag와 배포를 명시 승인한 뒤에만
+> [`docs/DEPLOY_MINIPC.md`](docs/DEPLOY_MINIPC.md)를 따른다.
+> 현재 소유권은 Archive봇=`archive.db` 쓰기, RAG봇=`archive.db` 읽기 전용+Qdrant 색인,
+> trading-bot=별도 저장소의 매매 상태이며, 연동은 `article_id`와 API/JSONL 경계로만 한다.
 
 ---
 

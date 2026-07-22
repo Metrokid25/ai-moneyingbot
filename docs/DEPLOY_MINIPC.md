@@ -9,6 +9,17 @@
 
 ---
 
+## 인수인계 시작점 — 먼저 읽기 전용 사전점검
+
+새 RAG 담당자는 채팅에서 받은 프롬프트를 기준으로 배포하지 않는다. 저장소를 `git fetch`한 뒤
+[`RAG_MINIPC_PREFLIGHT.md`](RAG_MINIPC_PREFLIGHT.md)에 따라 Git/worktree/스케줄/자산 상태를
+읽기 전용으로 실측해 오너에게 보고한다.
+
+PM이 그 보고를 확인하고 **배포 commit/tag와 실제 배포를 명시 승인한 뒤에만** 아래 0단계부터 진행한다.
+dirty worktree에서는 `pull`, `reset`, `checkout`, `clean`, `stash`로 상태를 바꾸지 않는다.
+
+---
+
 ## 0. 준비물 체크리스트
 
 - [ ] 미니PC에 Python **3.12** 설치 (`py -3.12 --version`으로 확인)
@@ -25,10 +36,14 @@
 cd C:\projects
 git clone https://github.com/Metrokid25/ai-moneyingbot.git ai_moneyingbot_rag_agent
 cd C:\projects\ai_moneyingbot_rag_agent
-# 배포는 main 기준. 배포 기준점 = 태그 deploy-baseline-20260705 (생존신호 포함 병합 커밋)
+# 이 단계는 PM이 배포 commit/tag를 명시 승인한 뒤에만 실행한다.
 git checkout main
-# 기준점 확인: git log -1 deploy-baseline-20260705
+git pull --ff-only
+git log -1 --oneline --decorate
 ```
+
+> `deploy-baseline-20260705`는 과거 기준점이다. 최신 main 또는 새 배포 태그 선택은 PM 결정이며,
+> 담당자가 기존 태그를 현재 배포 승인으로 간주하거나 임의로 이동하지 않는다.
 
 ## 2. venv 생성 + 의존성 설치
 

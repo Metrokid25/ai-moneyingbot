@@ -7,6 +7,37 @@
 
 ---
 
+## 2026-07-22 · 개발 PC · 브랜치 `agent/rag-minipc-handoff-20260722` (복붙 없는 RAG 인수인계 정리)
+
+**한 일**
+- RAG 담당자가 채팅 프롬프트를 복사하지 않고 `git fetch` 후 바로 이어받도록
+  `docs/RAG_MINIPC_PREFLIGHT.md`를 인수인계·배포 전 사전점검 정본으로 신설했다.
+- `docs/DEPLOY_MINIPC.md`와 `MACHINE_SYNC.md`의 시작점이 새 정본을 가리키도록 정리했다.
+- 새 정본은 Git/worktree/스케줄/자산/.env 키 존재 여부를 읽기 전용으로 실측하고, dirty 상태에서는
+  pull/reset/clean/stash 없이 중단·보고하도록 고정한다.
+
+**현재 권위 상태**
+- `origin/main = d8c806c` — Archive index-tail 통합까지 반영됐고, 직전 `082a24c`의 fail-closed RAG
+  배포 자산 안전 게이트도 포함한다.
+- 실제 미니PC RAG 배포와 `RAG-IncrementalIndex` 등록은 미수행.
+- 개발 PC 기본 worktree `C:\projects\naver_cafe_archive`는 로컬 main이 2커밋 뒤이고, 원격과 내용이 같은
+  7개 파일이 modified로 표시되며 미추적 `scripts/_step3_verify_v2.py`가 있다. 별도 정리 전 건드리지 않는다.
+- 깨끗한 RAG worktree는 `C:\projects\rag_predeploy_guard_20260722`이다.
+
+**검증**
+- 신규 정본의 PowerShell 예제 4블록 구문 검사: `powershell_parse_errors=0`, rc=0.
+- 인수인계·기존 운영문서·focused runner 관련 테스트: `34 passed in 0.13s`, rc=0.
+- `scripts/run_rag_focused_tests.py`: 신규 문서 계약 테스트 5개를 포함해 전체 PASS, rc=0.
+- `git diff --check` 통과. 실제 배포·DB/Qdrant/.env/스케줄러 쓰기 없음.
+
+**다음 작업**
+- 미니PC RAG 담당자는 `docs/RAG_MINIPC_PREFLIGHT.md`만 따라 읽기 전용 실측 보고를 제출하고 대기한다.
+- PM이 보고를 확인해 배포 commit/tag와 실제 배포를 별도로 승인하기 전까지 pull, 데이터 이관, `.env` 변경,
+  스케줄 등록·실행을 금지한다.
+- 검색 API·Phase 2 잔여 배치·대규모 리팩토링은 계속 보류한다.
+
+---
+
 ## 2026-07-22 · 개발 PC · 브랜치 `agent/archive-index-tail-unify-20260722` (Archive 포크 통합)
 
 **한 일**
