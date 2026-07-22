@@ -7,6 +7,33 @@
 
 ---
 
+## 2026-07-22 · PC · 브랜치 `agent/archive-healthcheck-20260722` (Archive 통합 상태 점검기)
+
+**한 일**
+- `scripts/archive_healthcheck.py` 신설 — Git, 16GB DB의 `MAX(article_id)`, DB/WAL 시각, 루프 상태·락,
+  세션만료 상태, 최근 원본 사이클, Windows 태스크 3종, Archive 프로세스를 한 번에 **논리적 읽기 전용** 진단
+  (라이브 WAL 조회 시 SQLite가 기존 `-shm`을 갱신할 수 있음).
+- 판정/종료코드: `HEALTHY=0`, `DEGRADED=1`, `STOPPED=2`; 자동화용 `--json`, 개발환경용
+  `--skip-system`, 활동 재측정용 `--observe-seconds` 지원. 원본 로그·프로세스 명령줄은 출력하지 않고 상태
+  문자열의 쿠키·텔레그램·Authorization 값도 레닥션.
+- 16GB DB 보호를 테스트로 고정: `COUNT(*)`/`saved_at` 조회 금지, read-only URI + `query_only` +
+  `MAX(article_id)`만 허용. 최근 3개 로그/시간대별 신선도와 Python 부모-자식 관계 기반 중복 수집기 판정 포함.
+- `docs/ARCHIVE_MINIPC_OPERATIONS.md` §4에 실행법·종료코드·안전 경계 추가.
+
+**검증/관찰**
+- `PYTHONUTF8=1 .venv\Scripts\python.exe -m pytest -q` 전체 **685 passed**, healthcheck 전용 **18 passed**.
+  독립 리뷰 2회에서 stale-liveness·중복 수집기·장외 로그·WAL 문서 문제를 수정했고 최종 P1/P2 없음 승인.
+- 이 PC(`DESKTOP-UQSM459`) 실실행은 `STOPPED`: Archive 태스크 3종/프로세스 없음, DB max id 172569,
+  상태·최근 사이클은 07-04 실패에서 정지. 운영 미니PC가 아닌 개발 PC라는 기존 판단과 일치.
+- 작업 도중 별도 RAG 변경이 같은 워킹트리에 나타남. RAG 소유 파일은 수정하지 않았고 Archive 파일만
+  명시적으로 다룬다. 기존 `scripts/_step3_verify_v2.py`도 그대로 보존.
+
+**다음 작업**
+- 오너 확인 후 Archive 파일만 명시적으로 커밋·푸시하고 main에 ff-only 반영.
+- 실제 운영 미니PC에서 `archive_healthcheck.py`를 실행해 `HEALTHY` 기준선과 태스크 출력 실증.
+
+---
+
 ## 2026-07-20 · 미니PC · RAG 운영 세션 (오너 지시로 이 항목만 추가 — 코드 무변경·커밋 없음)
 
 **전체 상태 스냅샷 (2026-07-20 15:27 실측 — 인수인계 기준점)**
