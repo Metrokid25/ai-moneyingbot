@@ -854,7 +854,7 @@ def run_once_realtime_session(
 
         browser_session_factory = BrowserSession
     if realtime_index_runner is None:
-        from index_tail_realtime import run_realtime_index
+        from index_tail import run_realtime_index
 
         realtime_index_runner = run_realtime_index
     if batch_recollect_runner is None:

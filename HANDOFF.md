@@ -7,6 +7,37 @@
 
 ---
 
+## 2026-07-22 · 개발 PC · 브랜치 `agent/archive-index-tail-unify-20260722` (Archive 포크 통합)
+
+**한 일**
+- 556줄 이상 중복되던 `scripts/index_tail.py`/`scripts/index_tail_realtime.py` 포크를 통합.
+  `index_tail.py`가 수동 양산·collect-after-snapshot·`run_realtime_index`의 단일 정본이다.
+- `index_tail_realtime.py`는 기존 스크립트 경로와 import 계약을 보존하는 20여 줄 호환 shim으로 축소.
+  top-level import/직접 파일 실행뿐 아니라 package import/`python -m`도 지원하며, import 시 정본과 동일한
+  모듈 객체를 반환해 기존 monkeypatch/private helper 계약을 유지한다.
+- 무인 상주 루프는 `run_realtime_index`를 호환 shim이 아니라 `index_tail` 정본에서 직접 import한다.
+- `tests/test_index_tail_shared_module.py` 신설: 동일 모듈 객체, shim 내 함수/클래스 재분기 금지,
+  무인 루프 정본 import, 두 CLI 옵션 계약, package import/모듈 실행을 고정.
+- 운영 러너북 §6의 양쪽 동시 수정 규칙을 단일 정본 규칙으로 교체하고 포크 중복을 잔여 이슈에서 제거.
+
+**검증/리뷰**
+- 관련 테스트 **86 passed**. 격리 worktree는 실제 16GB DB 대신 `src.db.init_db()`로 최소 테스트 스키마를
+  만든 뒤 전체 suite **709 passed**를 검증했다.
+- 독립 리뷰에서 package import/`python -m scripts.index_tail_realtime` 실패 P2를 발견해 dual-context
+  import와 회귀 테스트를 추가. 재리뷰 최종 P0~P3 없음 승인, `git diff --check` 통과.
+- 작업 기준점 `origin/main 082a24c`. 기본 체크아웃의 RAG 미커밋 변경을 보호하기 위해
+  `C:\tmp\naver_cafe_archive_archivefork` 별도 worktree에서 작업.
+
+**배포 시 필수**
+- 무인 루프의 실제 import 대상이 바뀌는 운영 코드다. main 반영 후 미니PC에서 CollectLoop를 안전 재시작하고
+  healthcheck `--observe-seconds 60`으로 `HEALTHY` 및 단일 controller/DB 활동을 라이브 확인한다.
+
+**다음 작업**
+- `find_tail`/`_create_snapshot`의 일시 오류 분류 개선(수동 양산 모드만 해당).
+- Enter-wait 중복·죽은 코드 정리는 후순위.
+
+---
+
 ## 2026-07-22 · 개발 PC · 브랜치 `agent/rag-predeploy-guard-20260722` (RAG 배포 안전 게이트)
 
 **한 일 (코드·문서 변경 — 독립 재리뷰 PASS, 오너 승인으로 반영 절차 수행)**
