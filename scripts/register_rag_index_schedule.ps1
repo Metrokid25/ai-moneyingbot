@@ -26,6 +26,8 @@ param(
   [string]$Time        = "16:30",
   [string]$DbPath      = "",
   [string]$QdrantPath  = "",
+  [string]$ManifestPath = "",
+  [string]$SeedIdsPath  = "",
   [string]$Collection  = "",
   [string]$TaskName    = "RAG-IncrementalIndex"
 )
@@ -34,14 +36,31 @@ $ErrorActionPreference = "Stop"
 
 $python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $script = Join-Path $ProjectRoot "scripts\run_rag_incremental_notify.py"
+$assetChecker = Join-Path $ProjectRoot "scripts\check_rag_deploy_assets.py"
 
 if (-not (Test-Path $python)) { throw "venv python not found: $python (create .venv first)" }
 if (-not (Test-Path $script)) { throw "wrapper not found: $script" }
+if (-not (Test-Path $assetChecker)) { throw "asset checker not found: $assetChecker" }
+
+# Refuse to register an unattended execute task unless the read-only asset gate
+# proves that Qdrant and its manifest/seed baseline are the same snapshot.
+$checkArgs = @($assetChecker)
+if ($DbPath)      { $checkArgs += @("--db-path", $DbPath) }
+if ($QdrantPath)  { $checkArgs += @("--qdrant-path", $QdrantPath) }
+if ($ManifestPath){ $checkArgs += @("--manifest-path", $ManifestPath) }
+if ($SeedIdsPath) { $checkArgs += @("--seed-ids-path", $SeedIdsPath) }
+if ($Collection)  { $checkArgs += @("--collection", $Collection) }
+& $python @checkArgs
+if ($LASTEXITCODE -ne 0) {
+  throw "RAG deployment asset preflight failed; scheduled task was not registered"
+}
 
 # Build the argument list for the wrapper.
 $argList = @("`"$script`"")
 if ($DbPath)     { $argList += @("--db-path", "`"$DbPath`"") }
 if ($QdrantPath) { $argList += @("--qdrant-path", "`"$QdrantPath`"") }
+if ($ManifestPath) { $argList += @("--manifest-path", "`"$ManifestPath`"") }
+if ($SeedIdsPath)  { $argList += @("--seed-ids-path", "`"$SeedIdsPath`"") }
 if ($Collection) { $argList += @("--collection", "`"$Collection`"") }
 $arguments = $argList -join " "
 

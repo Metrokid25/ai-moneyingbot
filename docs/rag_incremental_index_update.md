@@ -17,6 +17,10 @@
 ## 사용법
 
 ```powershell
+# 배포 자산 정합성 확인 (읽기 전용, Voyage/Qdrant 쓰기 없음)
+.\.venv\Scripts\python.exe scripts\check_rag_deploy_assets.py `
+  --db-path "C:\projects\naver_cafe_archive\data\archive.db"
+
 # 신규 chunk 수만 확인 (임베딩/적재 없음, 무료)
 .\.venv\Scripts\python.exe scripts\update_rag_index_incremental.py `
   --db-path "C:\projects\naver_cafe_archive\data\archive.db" --dry-run
@@ -29,6 +33,11 @@
 옵션: `--manifest-path`, `--seed-ids-path`, `--qdrant-path`, `--collection`, `--embed-model`, `--embed-batch-size`, `--upsert-batch-size`, `--limit`.
 
 `--dry-run`과 `--execute` 중 하나는 반드시 줘야 한다(아무것도 안 주면 거부). 신규가 0건이면 `--execute`라도 임베딩/적재 없이 즉시 종료한다.
+
+무인 래퍼 `run_rag_incremental_notify.py`는 실행 전에 위 안전 게이트를 자동 호출한다.
+Qdrant points와 manifest/seed unique IDs의 개수 또는 deterministic UUID5 ID 집합이 다르면
+색인기를 시작하지 않고 종료코드 1로 차단한다.
+커스텀 기준선은 `--manifest-path` / `--seed-ids-path`로 래퍼에 전달할 수 있다.
 
 ## Boundary
 

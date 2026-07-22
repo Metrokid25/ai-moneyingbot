@@ -7,6 +7,50 @@
 
 ---
 
+## 2026-07-22 · 개발 PC · 브랜치 `agent/rag-predeploy-guard-20260722` (RAG 배포 안전 게이트)
+
+**한 일 (코드·문서 변경 — 독립 재리뷰 PASS, 오너 승인으로 반영 절차 수행)**
+- 신규 읽기 전용 검사기 `scripts/check_rag_deploy_assets.py`: Qdrant `meta.json` + collection SQLite를
+  `mode=ro/query_only`로 검사하고, points 수와 manifest(우선) 또는 seed unique IDs 수가 같을 때만 PASS.
+  collection=`goodmorning_chunks`, vector=1024, distance=Cosine, archive.db read-only 접근도 함께 검증.
+- `run_rag_incremental_notify.py`가 매 실행 전 위 안전 게이트를 호출하도록 연결. 실패 시 색인기를 시작하지 않고
+  rc=1. `--manifest-path`/`--seed-ids-path` 전달 지원. dry-run 문구를 `신규 N청크 감지 (미반영)`으로 수정.
+- `register_rag_index_schedule.ps1`도 등록 전에 안전 게이트를 실행하고 실패 시 태스크 등록/덮어쓰기를 차단.
+- 배포·증분색인 문서와 focused runner/테스트 갱신. Archive DB/Qdrant/.env/스케줄러 쓰기 없음.
+
+**실측 검증**
+- 최신 개발 자산: Qdrant points=50,583 / manifest rows=unique=50,583 / 1024-Cosine → `status=PASS`,
+  deterministic UUID5 point ID 집합 완전 일치(`point_ids_match_baseline=true`), `write_performed=false`;
+  wrapper dry-run rc=0, `현재 50,645 / 반영 50,583 / 신규 62 감지(미반영)`.
+- 의도적 구형 seed 조합: points=50,583 vs seed unique=50,131 → 안전 게이트 `status=FAIL`, wrapper rc=1,
+  색인기 미실행.
+- 안전 게이트+래퍼 타깃 테스트: `38 passed`; RAG focused runner: PASS(rc=0).
+- 데이터가 있는 공유 작업트리에서 당시 전체 suite `687 passed in 27.56s`(동시 Archive 세션 신규 테스트 포함).
+  분리 worktree 전체 suite는 로컬 `data/archive.db` 부재로 Archive 테스트 1건이
+  `sqlite3.OperationalError: no such table: articles`로 실패하고 최종 `685 passed`; RAG 변경 관련 실패 아님.
+- PowerShell parse OK, `git diff --check` OK, Python 3.12.10.
+
+**독립 리뷰 반영**
+- 1차 리뷰 FAIL: 동일 개수·다른 ID 집합이 PASS하는 P1, 비문자/비계약 chunk_id 허용 P2,
+  child rc=0인데 summary가 없거나 불완전해도 성공 처리하는 P2 확인.
+- 수정: Qdrant SQLite stored ID를 pickle 실행 없이 안전 파싱 → `rag_qdrant.chunk_id_to_point_id()`의 UUID5
+  집합과 완전 비교, chunk_id 계약(`<article_id>:<chunk_index>`) 검증, rc=0 summary 필수 필드·모드 검증.
+- 동일 개수·다른 ID / 손상 chunk_id / 불완전 성공 summary 회귀 테스트 추가.
+- 2차 독립 재리뷰: 코드 정확성 리뷰 PASS + 운영/보안 리뷰 PASS. 추가 P0~P3 없음, 승인 가능.
+  잔여 리스크는 고정된 qdrant-client 로컬 저장 포맷이 향후 바뀌면 fail-closed로 중단될 수 있다는 호환성뿐.
+
+**작업 격리/주의**
+- 동시 Archive 세션이 기본 작업트리를 `agent/archive-healthcheck-20260722`로 전환해,
+  RAG 변경은 `C:\projects\rag_predeploy_guard_20260722` 별도 worktree로 분리했다.
+- 기존 미추적 `scripts/_step3_verify_v2.py`는 수정·복사·삭제·스테이징하지 않았다.
+
+**다음 작업**
+- 독립 리뷰 승인 기준을 충족해 작업 브랜치에 반영. `main` 병합과 실제 미니PC 배포는 PM 승인 전 금지.
+- PM이 실제 미니PC 배포를 승인하면 최신 Qdrant+manifest 한 쌍 이관 → 안전 게이트 PASS → dry-run →
+  스케줄 등록 순서. 검색 API·Phase 2 잔여 배치·대규모 리팩토링은 계속 보류.
+
+---
+
 ## 2026-07-22 · PC · 브랜치 `agent/archive-healthcheck-20260722` (Archive 통합 상태 점검기)
 
 **한 일**

@@ -56,6 +56,8 @@ def test_focused_runner_uses_only_explicit_rag_commands():
         "pytest tests/test_rag_no_context_answer_contract.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_answer_grounding_eval.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_qdrant.py --basetemp=.tmp/rag_focused_pytest",
+        "pytest tests/test_check_rag_deploy_assets.py --basetemp=.tmp/rag_focused_pytest",
+        "pytest tests/test_run_rag_incremental_notify.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_agent_next_task.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_autorunner_docs.py --basetemp=.tmp/rag_focused_pytest",
         "pytest tests/test_rag_review_pipeline.py --basetemp=.tmp/rag_focused_pytest",

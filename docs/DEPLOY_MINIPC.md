@@ -82,6 +82,29 @@ Expand-Archive -Path <복사한_rag_data.zip 경로> -DestinationPath data\ -For
 > `manifest`가 아직 없던 시점의 스냅샷이면 대신 `data\embeddings_phase2_ids.npy`를 옮긴다 (첫 실행이 이걸로 베이스라인을 1회 시드한다).
 > **archive.db(16GB)는 이 문서 범위 밖** — Archive 봇 배포 문서대로 옮기고, 그 경로를 5단계 `-DbPath`에 넣는다.
 
+### 4.1 배포 자산 안전 게이트 (읽기 전용·무과금)
+
+스케줄 등록 전에 Qdrant와 매니페스트/seed가 같은 스냅샷인지 확인한다. 이 검사는
+Qdrant를 클라이언트로 열지 않고 `meta.json`과 `storage.sqlite`를 SQLite `mode=ro`로만 읽으며,
+Voyage·텔레그램을 호출하거나 어떤 파일도 쓰지 않는다.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\check_rag_deploy_assets.py `
+  --db-path "C:\projects\naver_cafe_archive\data\archive.db"
+```
+
+정상 조건:
+
+- `status = PASS`, `write_performed = false`
+- collection = `goodmorning_chunks`, vector size = `1024`, distance = `Cosine`
+- Qdrant `points_count` = 매니페스트(또는 seed) `unique_ids_count`
+- 각 chunk_id의 deterministic UUID5와 실제 Qdrant point ID 집합이 완전히 일치 (`point_ids_match_baseline = true`)
+- archive.db `sqlite_query_only = true`
+
+매니페스트가 존재하면 그것이 권위값이다. 매니페스트가 손상됐을 때 구형 seed로 조용히
+fallback하지 않고 실패한다. Qdrant/기준선 개수가 다르거나 둘 다 없으면 **배포 중단** 후
+올바른 한 쌍을 다시 이관한다.
+
 ## 5. 스케줄 등록 (하루 1회, 장 마감 후)
 
 archive.db 경로를 `-DbPath`로 지정한다 (Archive 봇이 배포한 실제 경로).
@@ -94,6 +117,8 @@ cd C:\projects\ai_moneyingbot_rag_agent
 - 기본 태스크명 `RAG-IncrementalIndex`, 매일 16:30(로컬=KST) 실행.
 - 재실행하면 기존 태스크를 덮어쓴다(idempotent).
 - Qdrant 경로가 기본(`data/qdrant/`)과 다르면 `-QdrantPath`로 지정.
+- 등록 스크립트는 4.1 안전 게이트를 다시 실행한다. 실패하면 태스크를 등록·덮어쓰기 전에 중단한다.
+- 커스텀 기준선 경로는 `-ManifestPath` / `-SeedIdsPath`로 지정하며, 같은 경로가 예약 작업 래퍼에도 전달된다.
 
 ## 6. 동작 확인
 
@@ -111,6 +136,7 @@ Get-ScheduledTaskInfo -TaskName "RAG-IncrementalIndex" | Select-Object LastRunTi
 
 정상이면 텔레그램에 `✅ RAG 증분색인 …` 또는 `신규 0건 (인덱스 최신)` 통지가 온다.
 실패 시 `🔴 RAG 증분색인 실패 …` 통지에 사유가 담긴다.
+dry-run은 `신규 N청크 감지 (미반영)`으로 출력되며 실제 임베딩·upsert·매니페스트 갱신은 없다.
 
 ---
 
@@ -123,6 +149,9 @@ Get-ScheduledTaskInfo -TaskName "RAG-IncrementalIndex" | Select-Object LastRunTi
 - **첫 실행이 오래 걸린다 / 2시간 제한에 걸린다:** 4단계에서 manifest(또는 seed ids)를 **반드시** 옮겨
   베이스라인을 잡아야 한다. 안 그러면 첫 실행이 5만 청크를 전부 신규로 보고 재임베딩하다 `-ExecutionTimeLimit`(2h)에
   걸려 중단될 수 있다. 정상 일일 델타는 수 분이다.
+- **`deployment asset preflight failed` / count 또는 point ID set mismatch:** Qdrant와 manifest/seed가 서로 다른
+  스냅샷이다. 실행·등록은 안전하게 차단된 상태다. 임의로 파일을 생성하거나 개수를 맞추지 말고,
+  개발 PC에서 검증된 Qdrant+manifest 한 쌍을 다시 이관한 뒤 4.1을 재실행한다.
 - **부팅 직후 실행돼 네트워크 미연결로 실패통지가 온다:** 시간트리거(16:30)라 드물지만, 절전복귀 직후면
   가능하다. 재시도(기본 3회·30초)가 다 실패하면 실패통지가 온다 — 인덱스는 안전(멱등)하니 다음 주기에 반영된다.
 

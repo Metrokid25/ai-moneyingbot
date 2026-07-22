@@ -167,6 +167,14 @@ FOCUSED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("pytest", "tests/test_rag_qdrant.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),
     (
+        f"pytest tests/test_check_rag_deploy_assets.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_check_rag_deploy_assets.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
+        f"pytest tests/test_run_rag_incremental_notify.py --basetemp={PYTEST_BASETEMP}",
+        ("pytest", "tests/test_run_rag_incremental_notify.py", f"--basetemp={PYTEST_BASETEMP}"),
+    ),
+    (
         f"pytest tests/test_rag_agent_next_task.py --basetemp={PYTEST_BASETEMP}",
         ("pytest", "tests/test_rag_agent_next_task.py", f"--basetemp={PYTEST_BASETEMP}"),
     ),

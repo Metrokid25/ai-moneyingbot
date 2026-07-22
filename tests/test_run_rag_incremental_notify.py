@@ -3,9 +3,12 @@
 No subprocess, no network: run_indexer_once and send_telegram are monkeypatched.
 """
 
+import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
@@ -15,6 +18,17 @@ for _p in (str(SCRIPTS_DIR),):
 
 import notify_telegram  # noqa: E402
 import run_rag_incremental_notify as wrapper  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _asset_preflight_passes(monkeypatch):
+    monkeypatch.setattr(
+        wrapper,
+        "run_asset_check_once",
+        lambda **kwargs: subprocess.CompletedProcess(
+            args=["check"], returncode=0, stdout='{"status":"PASS"}', stderr=""
+        ),
+    )
 
 
 # ── parse_summary ──────────────────────────────────────────────────────────
@@ -57,6 +71,15 @@ def test_success_message_handles_zero_new():
     msg = wrapper.build_success_message({"new_chunks": 0}, timestamp="t")
     assert "신규 0건" in msg
     assert "최신" in msg
+
+
+def test_success_message_labels_dry_run_as_detected_not_added():
+    msg = wrapper.build_success_message(
+        {"new_chunks": 5, "dry_run": True}, timestamp="t"
+    )
+    assert "신규 5청크 감지" in msg
+    assert "미반영" in msg
+    assert "추가" not in msg
 
 
 def test_success_message_includes_collection_liveness():
@@ -133,6 +156,19 @@ def _fake_proc(returncode, stdout="", stderr=""):
     return subprocess.CompletedProcess(args=["x"], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
+def _summary_stdout(*, new_chunks=0, dry_run=False):
+    return json.dumps(
+        {
+            "new_chunks": new_chunks,
+            "current_chunks": 100,
+            "indexed_chunks": 100 - new_chunks,
+            "collection": "goodmorning_chunks",
+            "dry_run": dry_run,
+            "execute": not dry_run,
+        }
+    )
+
+
 def test_main_success_on_first_attempt_sends_success(monkeypatch):
     sent = []
     monkeypatch.setattr(wrapper, "send_telegram", lambda text, **k: sent.append(text) or True)
@@ -140,7 +176,7 @@ def test_main_success_on_first_attempt_sends_success(monkeypatch):
     monkeypatch.setattr(
         wrapper,
         "run_indexer_once",
-        lambda **k: _fake_proc(0, stdout='{"new_chunks": 2, "collection": "c"}'),
+        lambda **k: _fake_proc(0, stdout=_summary_stdout(new_chunks=2)),
     )
     rc = wrapper.main(["--max-attempts", "3", "--backoff-seconds", "0"])
     assert rc == 0
@@ -199,10 +235,70 @@ def test_notify_warns_when_delivery_fails(monkeypatch, capsys):
 def test_main_no_telegram_flag_skips_send(monkeypatch):
     sent = []
     monkeypatch.setattr(wrapper, "send_telegram", lambda text, **k: sent.append(text) or True)
-    monkeypatch.setattr(wrapper, "run_indexer_once", lambda **k: _fake_proc(0, stdout='{"new_chunks": 0}'))
+    monkeypatch.setattr(
+        wrapper, "run_indexer_once", lambda **k: _fake_proc(0, stdout=_summary_stdout())
+    )
     rc = wrapper.main(["--no-telegram"])
     assert rc == 0
     assert sent == []
+
+
+def test_main_rejects_rc0_without_required_summary(monkeypatch, capsys):
+    sent = []
+    monkeypatch.setattr(wrapper, "send_telegram", lambda text, **kwargs: sent.append(text) or True)
+    monkeypatch.setattr(
+        wrapper,
+        "run_indexer_once",
+        lambda **kwargs: _fake_proc(0, stdout='{"new_chunks": 2, "collection": "c"}'),
+    )
+
+    rc = wrapper.main(["--max-attempts", "3", "--backoff-seconds", "0"])
+
+    assert rc == 1
+    assert len(sent) == 1
+    assert "invalid indexer success output" in sent[0]
+    assert "invalid summary" in capsys.readouterr().out
+
+
+def test_main_preflight_failure_blocks_indexer(monkeypatch, capsys):
+    called = []
+    monkeypatch.setattr(
+        wrapper,
+        "run_asset_check_once",
+        lambda **kwargs: _fake_proc(1, stdout='{"status":"FAIL","error":"count mismatch"}'),
+    )
+    monkeypatch.setattr(wrapper, "run_indexer_once", lambda **kwargs: called.append(kwargs))
+
+    rc = wrapper.main(["--no-telegram"])
+
+    assert rc == 1
+    assert called == []
+    assert "deployment asset preflight failed" in capsys.readouterr().out
+
+
+def test_run_indexer_once_passes_baseline_paths(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _fake_proc(0, stdout="{}")
+
+    monkeypatch.setattr(wrapper.subprocess, "run", fake_run)
+    wrapper.run_indexer_once(
+        python_exe="python",
+        db_path=tmp_path / "archive.db",
+        qdrant_path=tmp_path / "qdrant",
+        manifest_path=tmp_path / "manifest.jsonl",
+        seed_ids_path=tmp_path / "seed.npy",
+        collection="goodmorning_chunks",
+        dry_run=True,
+    )
+
+    cmd = captured["cmd"]
+    assert cmd[0] == "python"
+    assert "--dry-run" in cmd
+    assert cmd[cmd.index("--manifest-path") + 1].endswith("manifest.jsonl")
+    assert cmd[cmd.index("--seed-ids-path") + 1].endswith("seed.npy")
 
 
 # ── telegram payload ───────────────────────────────────────────────────────

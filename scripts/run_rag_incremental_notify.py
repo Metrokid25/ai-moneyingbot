@@ -43,6 +43,7 @@ from notify_telegram import send_telegram  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
 INDEXER = SCRIPTS_DIR / "update_rag_index_incremental.py"
+ASSET_CHECKER = SCRIPTS_DIR / "check_rag_deploy_assets.py"
 # Same default the child indexer uses, so the liveness probe looks at the same DB.
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "archive.db"
 DEFAULT_MAX_ATTEMPTS = 3
@@ -62,6 +63,14 @@ def now_kst_str() -> str:
 # Keys the indexer always puts in its summary; used to tell the real summary
 # apart from stray JSON-looking library/telemetry output on stdout.
 _SUMMARY_KEYS = ("new_chunks", "current_chunks", "collection")
+_REQUIRED_SUMMARY_KEYS = {
+    "new_chunks",
+    "current_chunks",
+    "indexed_chunks",
+    "collection",
+    "dry_run",
+    "execute",
+}
 
 
 def parse_summary(stdout: str) -> dict | None:
@@ -85,6 +94,31 @@ def parse_summary(stdout: str) -> dict | None:
         if isinstance(obj, dict) and any(k in obj for k in _SUMMARY_KEYS):
             found = obj
     return found
+
+
+def validate_summary(summary: dict | None, *, expected_dry_run: bool) -> dict:
+    """Reject rc=0 child output that cannot prove what the indexer actually did."""
+    if not isinstance(summary, dict):
+        raise ValueError("indexer returned rc=0 without a parseable JSON summary")
+    missing = sorted(_REQUIRED_SUMMARY_KEYS - set(summary))
+    if missing:
+        raise ValueError(f"indexer summary missing required keys: {missing}")
+    for key in ("new_chunks", "current_chunks", "indexed_chunks"):
+        value = summary[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"indexer summary {key} must be a non-negative integer")
+    if not isinstance(summary["collection"], str) or not summary["collection"].strip():
+        raise ValueError("indexer summary collection must be a non-empty string")
+    if summary["dry_run"] is not expected_dry_run:
+        raise ValueError(
+            f"indexer summary dry_run mismatch: expected={expected_dry_run}, actual={summary['dry_run']}"
+        )
+    expected_execute = not expected_dry_run
+    if summary["execute"] is not expected_execute:
+        raise ValueError(
+            f"indexer summary execute mismatch: expected={expected_execute}, actual={summary['execute']}"
+        )
+    return summary
 
 
 def get_last_collected(db_path: Path) -> str | None:
@@ -120,7 +154,11 @@ def build_success_message(
     summary: dict, *, timestamp: str, last_collected: str | None = None
 ) -> str:
     new_chunks = summary.get("new_chunks", 0)
-    if new_chunks:
+    if summary.get("dry_run") and new_chunks:
+        head = f"✅ RAG indexing 점검 · 신규 {new_chunks}청크 감지 (미반영)"
+    elif summary.get("dry_run"):
+        head = "✅ RAG indexing 점검 · 신규 0건 (미반영)"
+    elif new_chunks:
         head = f"✅ RAG indexing 완료 · 신규 {new_chunks}청크 추가"
     else:
         head = "✅ RAG indexing · 신규 0건 (최신 상태)"
@@ -154,6 +192,8 @@ def run_indexer_once(
     python_exe: str,
     db_path: Path | None,
     qdrant_path: Path | None,
+    manifest_path: Path | None,
+    seed_ids_path: Path | None,
     collection: str | None,
     dry_run: bool,
 ) -> subprocess.CompletedProcess:
@@ -162,11 +202,41 @@ def run_indexer_once(
         cmd += ["--db-path", str(db_path)]
     if qdrant_path is not None:
         cmd += ["--qdrant-path", str(qdrant_path)]
+    if manifest_path is not None:
+        cmd += ["--manifest-path", str(manifest_path)]
+    if seed_ids_path is not None:
+        cmd += ["--seed-ids-path", str(seed_ids_path)]
     if collection:
         cmd += ["--collection", collection]
     # errors="replace": a non-UTF-8 byte from the child (native lib output, a
     # cp949 traceback on Windows) must never raise UnicodeDecodeError and crash
     # the unattended run before we can report failure.
+    return subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
+
+
+def run_asset_check_once(
+    *,
+    python_exe: str,
+    db_path: Path | None,
+    qdrant_path: Path | None,
+    manifest_path: Path | None,
+    seed_ids_path: Path | None,
+    collection: str | None,
+) -> subprocess.CompletedProcess:
+    """Run the deterministic read-only asset gate before any indexer launch."""
+    cmd = [python_exe, str(ASSET_CHECKER)]
+    if db_path is not None:
+        cmd += ["--db-path", str(db_path)]
+    if qdrant_path is not None:
+        cmd += ["--qdrant-path", str(qdrant_path)]
+    if manifest_path is not None:
+        cmd += ["--manifest-path", str(manifest_path)]
+    if seed_ids_path is not None:
+        cmd += ["--seed-ids-path", str(seed_ids_path)]
+    if collection:
+        cmd += ["--collection", collection]
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
     )
@@ -179,6 +249,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--python", default=sys.executable, help="Python interpreter for the child indexer")
     parser.add_argument("--db-path", type=Path, default=None)
     parser.add_argument("--qdrant-path", type=Path, default=None)
+    parser.add_argument("--manifest-path", type=Path, default=None)
+    parser.add_argument("--seed-ids-path", type=Path, default=None)
     parser.add_argument("--collection", default=None)
     parser.add_argument("--dry-run", action="store_true", help="pass-through: detect new chunks only")
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_MAX_ATTEMPTS)
@@ -208,6 +280,32 @@ def main(argv: list[str] | None = None) -> int:
     telegram_enabled = not args.no_telegram
     max_attempts = max(1, args.max_attempts)
 
+    try:
+        preflight = run_asset_check_once(
+            python_exe=args.python,
+            db_path=args.db_path,
+            qdrant_path=args.qdrant_path,
+            manifest_path=args.manifest_path,
+            seed_ids_path=args.seed_ids_path,
+            collection=args.collection,
+        )
+    except Exception as exc:  # noqa: BLE001 - report launch failures without running the indexer
+        detail = f"deployment asset preflight failed to launch: {exc}"
+        notify(
+            build_failure_message(attempts=1, detail=detail, timestamp=now_kst_str()),
+            enabled=telegram_enabled,
+        )
+        return 1
+    if preflight.returncode != 0:
+        detail = "deployment asset preflight failed: " + (
+            (preflight.stderr or "") + (preflight.stdout or "")
+        ).strip()
+        notify(
+            build_failure_message(attempts=1, detail=detail, timestamp=now_kst_str()),
+            enabled=telegram_enabled,
+        )
+        return 1
+
     last_detail = ""
     attempts_used = 0
     for attempt in range(1, max_attempts + 1):
@@ -217,6 +315,8 @@ def main(argv: list[str] | None = None) -> int:
                 python_exe=args.python,
                 db_path=args.db_path,
                 qdrant_path=args.qdrant_path,
+                manifest_path=args.manifest_path,
+                seed_ids_path=args.seed_ids_path,
                 collection=args.collection,
                 dry_run=args.dry_run,
             )
@@ -228,7 +328,17 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         if proc.returncode == 0:
-            summary = parse_summary(proc.stdout) or {}
+            try:
+                summary = validate_summary(
+                    parse_summary(proc.stdout), expected_dry_run=args.dry_run
+                )
+            except ValueError as exc:
+                last_detail = f"invalid indexer success output: {exc}; stdout={proc.stdout.strip()}"
+                print(
+                    f"[run_rag_incremental_notify] attempt {attempt}/{max_attempts} "
+                    "returned rc=0 with an invalid summary"
+                )
+                break
             last_collected = get_last_collected(args.db_path or DEFAULT_DB_PATH)
             notify(
                 build_success_message(
