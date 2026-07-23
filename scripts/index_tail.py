@@ -38,6 +38,7 @@ SCAN_FORWARD_MAX = 15   # estimate에서 최대 전진 폭
 SCAN_BACKWARD_MAX = 50  # estimate에서 최대 후퇴 폭
 INTERACTIVE_LOGIN_RETRIES = 3
 MAX_TRANSIENT_FAILS = 3  # 네트워크 등 일시 오류 연속 허용 횟수 — 초과 시 이번 주기만 접고 루프 유지
+MANUAL_SCAN_MAX_RETRIES = 3  # 수동 snapshot/tail: 최초 시도 이후 같은 페이지 재시도 횟수
 
 
 class _BlockStop(Exception):
@@ -117,6 +118,50 @@ def _fetch_rows_with_interactive_login(
         print(f"[index_tail] 같은 브라우저 세션으로 page {page_num} 재확인 ({attempts}/{max_retries})")
 
 
+def _fetch_rows_for_manual_scan(
+    session: "BrowserSession",
+    list_url: str,
+    page_num: int,
+    *,
+    context: str,
+    interactive_login: bool = False,
+    input_func=None,
+):
+    """수동 snapshot/tail 탐색에서 같은 페이지의 일시 오류만 제한 재시도한다.
+
+    로그인 만료·권한·CAPTCHA 등 사람 개입이 필요한 오류는 재시도하지 않는다.
+    재시도 한도를 소진하면 마지막 오류를 그대로 반환해 호출자가 추정 결과를
+    성공으로 사용하지 못하게 한다. 무인 realtime 경로는 이 helper를 사용하지 않는다.
+    """
+    transient_retries = 0
+    while True:
+        rows, err = _fetch_rows_with_interactive_login(
+            session,
+            list_url,
+            page_num,
+            interactive_login=interactive_login,
+            input_func=input_func,
+        )
+        if not err:
+            return rows, None
+        if is_block_error(err):
+            print(f"[{context}] 차단 감지: {err} — 재시도하지 않음")
+            return rows, err
+
+        if transient_retries >= MANUAL_SCAN_MAX_RETRIES:
+            print(
+                f"[{context}] 일시 오류 지속({err}) — "
+                f"재시도 {transient_retries}/{MANUAL_SCAN_MAX_RETRIES} 소진, 탐색 중단"
+            )
+            return rows, err
+        transient_retries += 1
+        print(
+            f"[{context}] 일시 오류({err}) — 같은 page {page_num} 재시도 "
+            f"{transient_retries}/{MANUAL_SCAN_MAX_RETRIES}"
+        )
+        _sleep()
+
+
 def _get_db_max_id() -> Optional[int]:
     conn = get_conn()
     try:
@@ -134,10 +179,11 @@ def _create_snapshot(
     input_func=None,
 ) -> Optional[dict]:
     """페이지 1 fetch → 최고 article_id 스냅샷 생성 후 data/snapshot_<ts>.json 저장."""
-    rows, err = _fetch_rows_with_interactive_login(
+    rows, err = _fetch_rows_for_manual_scan(
         session,
         list_url,
         1,
+        context="snapshot",
         interactive_login=interactive_login,
         input_func=input_func,
     )
@@ -308,10 +354,11 @@ def find_tail(
     """끝페이지 번호 반환 (None=감지 실패)."""
     print(f"\n[tail_scan] estimate={estimate} 에서 탐색 시작...")
 
-    rows, err = _fetch_rows_with_interactive_login(
+    rows, err = _fetch_rows_for_manual_scan(
         session,
         list_url,
         estimate,
+        context=f"tail_scan page {estimate}",
         interactive_login=interactive_login,
         input_func=input_func,
     )
@@ -327,16 +374,17 @@ def find_tail(
             if page < 1:
                 break
             _sleep()
-            rows, err = _fetch_rows_with_interactive_login(
+            rows, err = _fetch_rows_for_manual_scan(
                 session,
                 list_url,
                 page,
+                context=f"tail_scan page {page}",
                 interactive_login=interactive_login,
                 input_func=input_func,
             )
             if err:
-                print(f"[tail_scan] page {page} 에러: {err}, 계속 후퇴...")
-                continue
+                print(f"[tail_scan] page {page} 에러 지속: {err}, 탐색 중단")
+                return None
             if rows:
                 print(f"[tail_scan] 끝페이지 확정: {page} ({len(rows)}건)")
                 return page
@@ -350,16 +398,17 @@ def find_tail(
     for fwd in range(1, SCAN_FORWARD_MAX + 1):
         page = estimate + fwd
         _sleep()
-        rows, err = _fetch_rows_with_interactive_login(
+        rows, err = _fetch_rows_for_manual_scan(
             session,
             list_url,
             page,
+            context=f"tail_scan page {page}",
             interactive_login=interactive_login,
             input_func=input_func,
         )
         if err:
-            print(f"[tail_scan] page {page} 에러: {err}, 여기서 중단")
-            break
+            print(f"[tail_scan] page {page} 에러 지속: {err}, 탐색 중단")
+            return None
         if not rows:
             print(f"[tail_scan] page {page} 빈 결과 → 끝페이지 확정: {last_good}")
             return last_good
