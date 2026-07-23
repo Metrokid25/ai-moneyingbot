@@ -7,6 +7,28 @@
 
 ---
 
+## 2026-07-23 · 개발 PC + 미니PC · 브랜치 `agent/archive-watchdog-self-filter-20260723` (Archive 라이브 배포 완료)
+
+**한 일**
+- 미니PC `main`을 ff-only로 `6b2f064 → b5c939a` 갱신하고 `d8c806c` index-tail 단일 정본을 운영에 반영했다.
+- 첫 재시작은 배포 문서의 워치독 잔류 검사기가 maintenance PowerShell 자기 자신을
+  `archive_watchdog.ps1`로 오인해 안전 중단했다. 현재 `$PID`만 제외하도록 수정하고 실제 워치독 탐지는 유지했다.
+- 수정은 PowerShell 5 모의 필터(실제 watchdog PID만 탐지), 5개 블록 구문 검사, 계약 테스트 6개,
+  전체 suite 720개 통과 후 독립 리뷰 P0~P3 없음으로 승인됐다.
+
+**미니PC 라이브 검증 (2026-07-23 09:28 KST)**
+- 배포 전·후 healthcheck 모두 `HEALTHY`, rc=0. 최종 HEAD와 `origin/main`은
+  `b5c939a6c9d2f455221210ad0a22991340be3a2f`로 일치한다.
+- `Archive-CollectLoop=Running`, controller instance 1개, 새 loop lock 정상, 세션 경고 없음.
+- Archive Python 2개와 Archive Chrome 5개만 정리했고 비Archive Python 종료는 0개다.
+- Watchdog은 enabled/`Ready`, DailySummary는 `Ready`. 최근 cycle rc=0, saved delta=3, latest article id=173369.
+- 알려진 미추적 `scripts/_step3_verify_v2.py`는 SHA-256 전후 동일하게 보존됐다.
+
+**다음 작업**
+- `find_tail`/`_create_snapshot`의 일시 오류 분류 개선(수동 양산 모드만 해당)을 별도 브랜치에서 진행한다.
+
+---
+
 ## 2026-07-22 · 개발 PC · 브랜치 `agent/archive-minipc-handoff-20260722` (pull 기반 Archive 인수인계)
 
 **한 일**
