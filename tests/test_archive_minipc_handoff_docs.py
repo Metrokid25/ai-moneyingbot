@@ -63,6 +63,7 @@ def test_archive_restart_targets_only_commandline_matched_archive_pids():
     assert "finally" in text
     assert "$watchdog.Settings.Enabled" in text
     assert 'Stop-ScheduledTask -TaskName "Archive-Watchdog" -ErrorAction Stop' in text
+    assert '$_.ProcessId -ne $PID' in text
     assert "archive_watchdog\\.ps1" in text
     assert "Archive-Watchdog did not stop cleanly" in text
 

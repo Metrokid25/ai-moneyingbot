@@ -90,6 +90,9 @@ try {
     $watchdogProcesses = @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
+            # 이 maintenance 블록을 실행하는 powershell.exe의 명령줄에도
+            # 아래 검색 문자열이 들어간다. 자기 자신을 watchdog으로 오인하지 않는다.
+            $_.ProcessId -ne $PID -and
             $_.Name -in @("powershell.exe", "pwsh.exe") -and
             $_.CommandLine -and
             $_.CommandLine -match 'archive_watchdog\.ps1'
