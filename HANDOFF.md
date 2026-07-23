@@ -23,9 +23,15 @@
 - 관련 테스트 31개, 당시 전체 suite 727개 통과. 독립 리뷰에서 실제 재시도 횟수 off-by-one P2를 발견해
   최초 1회+재시도 3회로 수정했고, 재리뷰 최종 P0~P3 없음 승인.
 
-**배포 상태/다음 작업**
-- 개발·리뷰 완료. main 반영 후 미니PC ff-only 갱신 및 운영 코드 라이브 검증이 필요하다.
-- 다음 후보는 Enter-wait 중복·죽은 코드 정리 또는 `--estimate` 페이지당 건수 재보정이다.
+**미니PC 라이브 검증 (2026-07-23 09:52 KST)**
+- `main`을 `64e4724 → 6e07916`으로 ff-only 갱신. 배포 전·후 healthcheck 모두 `HEALTHY`, rc=0.
+- CollectLoop 재시작 전·후 `Running`, controller instance 1개, 새 loop lock 정상, 세션 경고 없음.
+- Archive Python 2개와 Archive Chrome 5개만 정리했고 비Archive Python 종료는 0개다.
+- Watchdog은 enabled/`Ready`, DailySummary는 `Ready`, latest article id=173371.
+- 알려진 미추적 `scripts/_step3_verify_v2.py`는 SHA-256 전후 동일하게 보존됐다. 최종 결론 `LIVE VERIFIED`.
+
+**다음 작업**
+- Enter-wait 중복·죽은 코드 정리 또는 `--estimate` 페이지당 건수 재보정을 별도 브랜치에서 진행한다.
 
 ---
 
