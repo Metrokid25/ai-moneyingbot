@@ -1,6 +1,8 @@
 import inspect
 import sys
 
+import pytest
+
 
 sys.path.insert(0, "scripts")
 
@@ -139,3 +141,55 @@ def test_manual_retry_helper_is_not_used_by_realtime_collection():
 
     assert "_fetch_rows_for_manual_scan" not in source
     assert "_fetch_rows_with_interactive_login" in source
+
+
+def test_default_estimate_recalculates_legacy_15_rows_for_api_20_rows():
+    assert index_tail.LEGACY_ESTIMATE == 2828
+    assert index_tail.LEGACY_PER_PAGE == 15
+    assert index_tail.DEFAULT_PER_PAGE == 20
+    assert index_tail.MEMBER_API_DEFAULT_ESTIMATE == 2121
+    assert (
+        index_tail.MEMBER_API_DEFAULT_ESTIMATE
+        == (
+            index_tail.LEGACY_ESTIMATE * index_tail.LEGACY_PER_PAGE
+            + index_tail.DEFAULT_PER_PAGE
+            - 1
+        )
+        // index_tail.DEFAULT_PER_PAGE
+    )
+
+
+def test_estimate_default_depends_on_url_and_custom_value_wins():
+    member_url = "https://cafe.naver.com/ca-fe/cafes/29082876/members/KEY"
+    html_url = "https://cafe.naver.com/ArticleList.nhn?search.clubid=29082876"
+
+    assert index_tail._resolve_estimate(member_url, None) == 2121
+    assert index_tail._resolve_estimate(html_url, None) == 2828
+    assert index_tail._resolve_estimate(member_url, 77) == 77
+    assert index_tail._resolve_estimate(html_url, 77) == 77
+
+
+def test_cli_help_reports_url_specific_default_estimates(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["index_tail.py", "--help"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        index_tail.main()
+
+    assert excinfo.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "멤버 REST API 2121" in help_text
+    assert "기존 HTML 2828" in help_text
+
+
+def test_find_tail_forward_limit_fails_instead_of_returning_unconfirmed_page(monkeypatch):
+    calls = []
+
+    def always_has_rows(_session, _list_url, page_num, **_kwargs):
+        calls.append(page_num)
+        return ROWS, None
+
+    monkeypatch.setattr(index_tail, "_fetch_rows_with_interactive_login", always_has_rows)
+    monkeypatch.setattr(index_tail, "_sleep", lambda: None)
+
+    assert index_tail.find_tail(FakeSession(), "https://example.test/list", 100) is None
+    assert calls == list(range(100, 100 + index_tail.SCAN_FORWARD_MAX + 1))

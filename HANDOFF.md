@@ -7,6 +7,29 @@
 
 ---
 
+## 2026-07-24 · 개발 PC · 브랜치 `agent/archive-estimate-recalibration-20260724` (URL별 tail estimate 보정)
+
+**한 일**
+- 수동 `index_tail.py`의 미지정 `--estimate`를 URL별로 계산한다. 멤버 REST API는 기존
+  `2828×15건`을 API 20건/페이지로 올림 환산한 `2121`, 기존 HTML fallback은 `2828`을 유지한다.
+- 사용자가 `--estimate`를 명시하면 URL 종류와 관계없이 그 값을 우선한다.
+- estimate부터 전진 15페이지가 모두 유효할 때 마지막 확인 페이지를 실제 tail로 오판하던 동작을 제거하고,
+  빈 페이지 경계를 확인하지 못했으므로 `None`으로 안전 실패하게 했다.
+- 운영 문서의 잘못된 `batch_recollect --estimate` 표기를 실제 소유자인 `index_tail.py` 기준으로 정정하고
+  완료된 보류 항목을 제거했다.
+
+**검증/리뷰**
+- REST 2121/HTML 2828/custom 우선, CLI 도움말, 전진 한계 안전 실패 회귀 테스트를 추가했다.
+- 관련 테스트 35개, 전체 suite 731개 통과, py_compile·`git diff --check` 통과.
+- 독립 리뷰에서 전역 2121이 HTML fallback을 깨뜨리는 P2를 발견해 URL별 기본값으로 수정했다.
+  재리뷰 최종 P0~P3 없음 승인.
+
+**배포 상태/다음 작업**
+- 수동 양산 코드 변경이다. main 반영 후 미니PC ff-only 갱신과 운영 코드 라이브 검증이 필요하다.
+- 다음 후보는 Enter-wait 중복·죽은 코드 정리. 완전 로그오프 사각지대 개선은 운영 구조 변경이라 후순위다.
+
+---
+
 ## 2026-07-23 · 개발 PC · 브랜치 `agent/archive-manual-scan-retry-20260723` (수동 tail 탐색 일시 오류 개선)
 
 **한 일**

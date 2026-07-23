@@ -1,7 +1,7 @@
 """scripts/index_tail.py — 끝페이지 자동 감지 후 tail N페이지 인덱싱.
 
 사용법:
-    python scripts/index_tail.py "<목록_URL>" [--estimate 2828] [--tail 3]
+    python scripts/index_tail.py "<목록_URL>" [--estimate N] [--tail 3]
     python scripts/index_tail.py "<목록_URL>" --collect-after-snapshot
 
 끝페이지 탐색 알고리즘:
@@ -27,7 +27,13 @@ sys.path.insert(0, "src")
 from browser import BrowserSession, check_blocked, wait_for_login
 from db import get_conn, init_db, upsert_article, article_exists
 from indexer import build_page_url
-from member_api import NAVER_LOGIN_URL, fetch_member_articles, is_block_error, parse_member_list_url
+from member_api import (
+    DEFAULT_PER_PAGE,
+    NAVER_LOGIN_URL,
+    fetch_member_articles,
+    is_block_error,
+    parse_member_list_url,
+)
 from models import Article
 from parser import parse_article_list
 
@@ -39,6 +45,11 @@ SCAN_BACKWARD_MAX = 50  # estimate에서 최대 후퇴 폭
 INTERACTIVE_LOGIN_RETRIES = 3
 MAX_TRANSIENT_FAILS = 3  # 네트워크 등 일시 오류 연속 허용 횟수 — 초과 시 이번 주기만 접고 루프 유지
 MANUAL_SCAN_MAX_RETRIES = 3  # 수동 snapshot/tail: 최초 시도 이후 같은 페이지 재시도 횟수
+LEGACY_ESTIMATE = 2828
+LEGACY_PER_PAGE = 15
+MEMBER_API_DEFAULT_ESTIMATE = (
+    LEGACY_ESTIMATE * LEGACY_PER_PAGE + DEFAULT_PER_PAGE - 1
+) // DEFAULT_PER_PAGE
 
 
 class _BlockStop(Exception):
@@ -52,6 +63,15 @@ class _BlockStop(Exception):
         super().__init__(err)
         self.err = err
         self.total = total
+
+
+def _resolve_estimate(list_url: str, requested: Optional[int]) -> int:
+    """명시값 우선, 그 외에는 URL의 실제 페이지 크기에 맞는 기본값 선택."""
+    if requested is not None:
+        return requested
+    if parse_member_list_url(list_url) is not None:
+        return MEMBER_API_DEFAULT_ESTIMATE
+    return LEGACY_ESTIMATE
 
 
 # ── 스냅샷 유틸 ───────────────────────────────────────────────────────────────
@@ -415,8 +435,11 @@ def find_tail(
         last_good = page
         print(f"[tail_scan] page {page} 존재 ({len(rows)}건), 계속 전진...")
 
-    print(f"[tail_scan] 전진 한계 도달. 마지막 확인 페이지: {last_good}")
-    return last_good
+    print(
+        f"[tail_scan] 전진 한계({SCAN_FORWARD_MAX}) 도달. "
+        f"마지막 확인 페이지 {last_good}은 실제 tail로 확정할 수 없어 탐색 실패"
+    )
+    return None
 
 
 def index_pages(
@@ -541,8 +564,12 @@ def main() -> int:
     )
     ap.add_argument("url", help="굿머닝 작성글 목록 URL (page=N 파라미터 포함 형태)")
     ap.add_argument(
-        "--estimate", type=int, default=2828,
-        help="끝페이지 추정값 (기본값: 2828)",
+        "--estimate", type=int, default=None,
+        help=(
+            "끝페이지 추정값 (미지정 시 URL별 자동: "
+            f"멤버 REST API {MEMBER_API_DEFAULT_ESTIMATE}, "
+            f"기존 HTML {LEGACY_ESTIMATE})"
+        ),
     )
     ap.add_argument(
         "--tail", type=int, default=3,
@@ -565,6 +592,7 @@ def main() -> int:
         help="Realtime mode: stop after N consecutive pages save 0 new articles.",
     )
     args = ap.parse_args()
+    estimate = _resolve_estimate(args.url, args.estimate)
 
     print(f"[index_tail] url     : {args.url}")
 
@@ -582,12 +610,12 @@ def main() -> int:
             )
 
         # ── 정상 양산 모드 ────────────────────────────────────────────────
-        print(f"[index_tail] estimate: {args.estimate}")
+        print(f"[index_tail] estimate: {estimate}")
         print(f"[index_tail] tail    : {args.tail}")
 
         # 로그인 트리거 — estimate 페이지로 직진 (멤버 목록 URL은 API 수집이라 생략)
         if parse_member_list_url(args.url) is None:
-            trigger_url = build_page_url(args.url, args.estimate)
+            trigger_url = build_page_url(args.url, estimate)
             print(f"\n[index_tail] 브라우저 진입: {trigger_url}")
             session.goto(trigger_url)
             if args.interactive_login:
@@ -609,7 +637,7 @@ def main() -> int:
         tail = find_tail(
             session,
             args.url,
-            args.estimate,
+            estimate,
             interactive_login=args.interactive_login,
         )
         if tail is None:
