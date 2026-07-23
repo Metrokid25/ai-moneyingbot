@@ -30,6 +30,34 @@
 
 ---
 
+## 2026-07-23 · 미니PC · 로컬 커밋 `91dc050` (Archive 노트북 인수인계 기록 보존)
+
+> 이 항목은 미니PC가 `34cb669` 위에 로컬로 작성한 `docs: complete Archive laptop handoff`의
+> 내용을 원격 대장에 보존한 것이다. 원본 커밋은 미니PC에서 백업 ref 생성 전까지 삭제하지 않는다.
+
+**당시 권위 상태**
+- Archive 수동 snapshot/tail 일시 오류 재시도 변경은 `6e07916`에 반영됐고, 라이브 검증 기록은
+  후속 문서 커밋 `34cb669`에 반영됐다.
+- `scripts/index_tail.py`의 실제 diff를 재검토했다. 변경은 수동 `_create_snapshot`/`find_tail`의
+  동일 페이지 재시도와 재시도 소진 시 fail-closed 반환에 한정되며 무인 realtime 경로는 그대로였다.
+- 미니PC 배포는 완료 상태였다. 배포 전·후 healthcheck `HEALTHY`/rc=0, controller instance 1개,
+  최종 `LIVE VERIFIED`였으므로 당시 추가 배포·재시작은 필요하지 않았다.
+
+**당시 인수인계 검증**
+- index-tail 표적 테스트 4파일: `23 passed in 2.78s`.
+- Archive 미니PC 문서 계약 테스트: `6 passed in 0.07s`.
+- `scripts/index_tail.py`와 신규 회귀 테스트 AST parse PASS, `6e07916^..6e07916` `git diff --check` PASS.
+- 운영 DB·수집·서비스·스케줄·시크릿은 조회·변경·재시작하지 않았다. RAG·Trading 저장소에도 접근하지 않았다.
+- 기존 미추적 `scripts/_step3_verify_v2.py`는 SHA-256
+  `56CBA94517054572A8148F3A9EAB6218628884AC1103DF2F88488CF85719A2EA` 그대로 보존했다.
+
+**당시 노트북 인계 지시**
+1. 저장소 `main`에서 ff-only로 최신 HANDOFF를 받는다.
+2. `git status --short --branch`와 `git log -1 --oneline`으로 clean tracked 상태를 확인한다.
+3. 다음 후보는 Enter-wait 중복·죽은 코드 정리 또는 `--estimate` 재보정이었다.
+
+---
+
 ## 2026-07-23 · 개발 PC · 브랜치 `agent/archive-manual-scan-retry-20260723` (수동 tail 탐색 일시 오류 개선)
 
 **한 일**
