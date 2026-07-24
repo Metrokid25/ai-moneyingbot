@@ -24,9 +24,17 @@
 - 독립 리뷰에서 전역 2121이 HTML fallback을 깨뜨리는 P2를 발견해 URL별 기본값으로 수정했다.
   재리뷰 최종 P0~P3 없음 승인.
 
-**배포 상태/다음 작업**
-- 수동 양산 코드 변경이다. main 반영 후 미니PC ff-only 갱신과 운영 코드 라이브 검증이 필요하다.
-- 다음 후보는 Enter-wait 중복·죽은 코드 정리. 완전 로그오프 사각지대 개선은 운영 구조 변경이라 후순위다.
+**미니PC 배포·라이브 검증 (2026-07-24 09:53 KST)**
+- 미니PC 로컬 HANDOFF 커밋 `91dc050` 때문에 원격과 분기된 상태를 발견해 즉시 ff-only 배포를 중단했다.
+  그 26줄 기록을 이 대장에 보존하고, 미니PC에는
+  `backup/archive-minipc-handoff-91dc050-20260724` ref로 원본 커밋을 보존했다.
+- tracked clean과 보호 파일 해시를 확인한 뒤 미니PC `main`을 당시 `origin/main=52def4d`로 안전 재정렬하고
+  CollectLoop를 정본 절차로 재시작했다. 최종 HEAD와 로컬 `origin/main`은 `52def4d`로 일치했다.
+- 최종 60초 healthcheck `HEALTHY`, rc=0, controller instance 1개, latest article id=173441,
+  세션 경고 없음. CollectLoop `Running`, Watchdog/DailySummary `Ready`. 최종 결론 `LIVE VERIFIED`.
+
+**다음 작업**
+- Enter-wait 중복·죽은 코드 정리. 완전 로그오프 사각지대 개선은 운영 구조 변경이라 후순위다.
 
 ---
 
