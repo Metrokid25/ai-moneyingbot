@@ -7,6 +7,52 @@
 
 ---
 
+## 2026-07-24 · 개발 PC · 브랜치 `agent/rag-ops-hardening-20260724` (RAG 운영 하드닝)
+
+**상태**
+- 최신 기준점: `origin/main` = `52def4d2cb3fa1947ee0b49907d38b3d3055ae71`.
+- 오너가 검증 결과를 확인하고 작업 브랜치 커밋·푸시 진행을 승인했다.
+- 이 변경은 작업 브랜치에만 반영하며 미니PC 코드, 작업 스케줄, 데이터, 시크릿은 변경하지 않는다.
+
+**변경 내용**
+1. `scripts/register_rag_index_schedule.ps1`
+   - SSH 접속 시 `$env:USERDOMAIN`이 `WORKGROUP`으로 잡혀 Task Scheduler 계정 SID 해석이 실패하는 문제를 수정했다.
+   - `WindowsIdentity.GetCurrent().Name`으로 현재 인증 토큰의 정규 계정명(`MACHINE\user` 또는 `DOMAIN\user`)을 사용한다.
+   - 계정명이 비었거나 qualified 형식이 아니면 작업 등록 전에 중단하는 fail-closed 동작을 추가했다.
+2. `scripts/run_rag_incremental_notify.py`
+   - 마지막 수집글 생존신호 조회를 `saved_at DESC`에서 `article_id DESC`로 변경했다.
+   - `article_id`는 Naver의 단조 증가 글 번호이자 Archive DB의 `INTEGER PRIMARY KEY`이므로 forward 수집 경계를 나타낸다.
+   - 과거 글 재수집/백필에 따른 `saved_at` 왜곡과 16GB 테이블 전체 정렬을 제거했다.
+   - Archive DB는 계속 SQLite `mode=ro`로만 읽고, RAG 쪽에서 인덱스나 데이터를 쓰지 않는다.
+3. 회귀 테스트와 `docs/DEPLOY_MINIPC.md`를 위 계약에 맞게 갱신했다.
+
+**실측 검증**
+- 표적 테스트: `40 passed`, rc=0.
+- RAG 관련 통합 테스트: `469 passed in 11.81s`, rc=0.
+- HANDOFF 갱신 후 문서 계약 테스트: `14 passed in 0.05s`, rc=0.
+- 최신 `origin/main` 재배치 후 RAG·문서 표적 테스트: `54 passed in 0.63s`, rc=0.
+- 최신 기준 전체 suite: `732 passed, 1 failed in 16.37s`, rc=1. 실패는
+  `tests/test_batch_recollect.py::test_batch_login_check_uses_article_list_page_one`의
+  `sqlite3.OperationalError: no such table: articles`이며, 깨끗한 `origin/main`에서도 동일 테스트가
+  `1 failed in 0.20s`, rc=1로 재현되어 이번 RAG 변경과 무관한 기준선/환경 문제임을 확인했다.
+- PowerShell AST: `powershell_parse_errors=0`.
+- `git diff --check`: rc=0 (CRLF 변환 경고만 있음).
+- 미니PC read-only 실DB 조회: 최신 `article_id=173413`, 작성일 `2026-07-23 22:07:42`,
+  `elapsed_ms=1.717`, `query_only=1`, rc=0. `article_id`는 `INTEGER PRIMARY KEY`이고 별도 인덱스는 없다.
+- 미니PC read-only 계정 확인: 환경값은 `USERDOMAIN=WORKGROUP`이지만 인증 토큰 해석값은
+  `DESKTOP-NFN1RCA\미니PC`; 동일 계정으로 `S4U / Limited` principal 생성 성공, rc=0.
+- 독립 코드 리뷰: PASS, P0-P2 없음.
+- 독립 운영 리뷰: PASS, P0-P3 없음.
+
+**다음 단계**
+1. 작업 브랜치를 커밋·푸시한 뒤 정식 절차로 병합한다.
+2. 배포 승인을 별도로 확인한 뒤 미니PC의 깨끗한 RAG checkout만 승인 커밋으로 갱신한다.
+3. 자산 안전 게이트 PASS를 재확인하고 스케줄을 재등록한다.
+4. `Start-ScheduledTask` 실제 실행, `LastTaskResult=0`, 텔레그램 수신을 확인한다.
+5. 마지막 글 날짜 정체만으로 Archive 수집 사망을 단정하지 말고 Archive healthcheck와 일일요약을 함께 확인한다.
+
+---
+
 ## 2026-07-24 · 개발 PC · 브랜치 `agent/archive-estimate-recalibration-20260724` (URL별 tail estimate 보정)
 
 **한 일**

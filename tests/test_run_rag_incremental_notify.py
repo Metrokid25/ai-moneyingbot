@@ -111,20 +111,52 @@ def _make_archive_db(path, rows):
 
 def test_get_last_collected_returns_latest_body_collected(tmp_path):
     db = tmp_path / "a.db"
-    # Deliberately DE-correlated columns: the row with the newest saved_at
-    # (article 1) has the LOWEST article_id and an OLDER posted_at, so ordering
-    # by article_id/rowid/posted_at instead of saved_at would return the wrong
-    # row and fail this test.
+    # Deliberately de-correlate saved_at from article_id. The liveness signal is
+    # the newest forward-collected cafe article, identified by Naver's monotonic
+    # article_id, not the most recently re-saved/backfilled old article.
     _make_archive_db(
         db,
         [
-            (1, "2026.07.02. 08:00", "2026-07-05T00:00:00Z", "BODY_COLLECTED"),  # newest saved_at
+            (1, "2026.07.02. 08:00", "2026-07-05T00:00:00Z", "BODY_COLLECTED"),
             (2, "2026.07.04. 09:10", "2026-07-01T00:00:00Z", "BODY_COLLECTED"),
             (3, "2026.07.05. 10:00", "2026-07-06T00:00:00Z", "INDEXED"),  # not collected yet
         ],
     )
-    # Latest by saved_at among BODY_COLLECTED is article 1; article 3 is excluded.
-    assert wrapper.get_last_collected(db) == "2026.07.02. 08:00"
+    assert wrapper.get_last_collected(db) == "2026.07.04. 09:10"
+
+
+def test_get_last_collected_query_uses_primary_key_order(tmp_path, monkeypatch):
+    db = tmp_path / "plan.db"
+    _make_archive_db(
+        db,
+        [
+            (1, "old", "2026-07-05T00:00:00Z", "BODY_COLLECTED"),
+            (2, "new", "2026-07-01T00:00:00Z", "BODY_COLLECTED"),
+        ],
+    )
+    real_connect = wrapper.sqlite3.connect
+    executed = []
+
+    class TracedConnection:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def execute(self, sql, *args):
+            executed.append(sql)
+            return self._inner.execute(sql, *args)
+
+        def close(self):
+            self._inner.close()
+
+    def traced_connect(*args, **kwargs):
+        return TracedConnection(real_connect(*args, **kwargs))
+
+    monkeypatch.setattr(wrapper.sqlite3, "connect", traced_connect)
+
+    assert wrapper.get_last_collected(db) == "new"
+    query = next(sql for sql in executed if "FROM articles" in sql)
+    assert "ORDER BY article_id DESC" in query
+    assert "ORDER BY saved_at" not in query
 
 
 def test_get_last_collected_falls_back_to_saved_at_when_posted_at_null(tmp_path):
