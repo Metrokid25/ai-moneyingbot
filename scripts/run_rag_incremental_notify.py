@@ -122,12 +122,20 @@ def validate_summary(summary: dict | None, *, expected_dry_run: bool) -> dict:
 
 
 def get_last_collected(db_path: Path) -> str | None:
-    """Posted date of the most recently collected article in archive.db (read-only).
+    """Posted date of the newest collected cafe article in archive.db (read-only).
 
     Collection-liveness signal (PM 2026-07-05): lets the operator tell "truly no
     new articles" apart from "the Archive bot's collection silently died" from
     the notification text alone. Never raises — an unattended notify run must
     not fail because the probe did; returns None and the message says 확인불가.
+
+    ``article_id`` is Naver's monotonically increasing article identifier and
+    the table's INTEGER PRIMARY KEY. Reading the highest collected ID therefore
+    represents forward collection liveness and uses the primary-key order.
+    Ordering by ``saved_at`` instead scans the full 16 GB table because the
+    Archive-owned database has no saved_at/status index; it delayed every
+    successful notification by many minutes on the mini PC. RAG must not add an
+    index to Archive's database, so this probe deliberately uses article_id.
     """
     try:
         # Percent-escape the path: SQLite's URI parser decodes %HH and truncates
@@ -137,7 +145,7 @@ def get_last_collected(db_path: Path) -> str | None:
         try:
             row = conn.execute(
                 "SELECT posted_at, saved_at FROM articles "
-                "WHERE status = 'BODY_COLLECTED' ORDER BY saved_at DESC LIMIT 1"
+                "WHERE status = 'BODY_COLLECTED' ORDER BY article_id DESC LIMIT 1"
             ).fetchone()
         finally:
             conn.close()

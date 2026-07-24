@@ -74,9 +74,16 @@ $settings  = New-ScheduledTaskSettingsSet -StartWhenAvailable `
 # mini-PC is headless / logged off), without storing a password. It can reach
 # outbound internet (Voyage, Telegram) but not authenticated network shares,
 # which this task does not need.
-# Qualify the user as ".\<name>" so a bare username can't misresolve on a
-# renamed/domain-joined machine (standalone mini-PC: ".\" = the local account).
-$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U -RunLevel Limited
+# Resolve the canonical account name from the authenticated Windows identity.
+# SSH sessions on a standalone machine can expose USERDOMAIN=WORKGROUP even
+# though Task Scheduler needs COMPUTERNAME\<user>; composing the name from
+# environment variables therefore fails SID mapping (HRESULT 0x80070534).
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$taskUserId = [string]$currentIdentity.Name
+if ([string]::IsNullOrWhiteSpace($taskUserId) -or -not $taskUserId.Contains([string][char]92)) {
+  throw "cannot resolve the current Windows identity to a qualified task user"
+}
+$principal = New-ScheduledTaskPrincipal -UserId $taskUserId -LogonType S4U -RunLevel Limited
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
   -Settings $settings -Principal $principal -Force | Out-Null

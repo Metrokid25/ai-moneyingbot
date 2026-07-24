@@ -217,3 +217,13 @@ def test_schedule_registration_runs_gate_before_registering_task():
     assert 'throw "RAG deployment asset preflight failed' in script
     assert '"--manifest-path"' in script
     assert '"--seed-ids-path"' in script
+
+
+def test_schedule_registration_uses_authenticated_windows_identity():
+    script = (ROOT / "scripts" / "register_rag_index_schedule.ps1").read_text(encoding="utf-8")
+
+    assert "[Security.Principal.WindowsIdentity]::GetCurrent()" in script
+    assert "New-ScheduledTaskPrincipal -UserId $taskUserId" in script
+    assert "$env:USERDOMAIN\\$env:USERNAME" not in script
+    assert "$taskUserId.Contains([string][char]92)" in script
+    assert "cannot resolve the current Windows identity" in script
