@@ -7,6 +7,26 @@
 
 ---
 
+## 2026-07-26 · 노트북 · 브랜치 `agent/archive-notebook-handoff-20260726` (노트북 개발 인수인계 정본)
+
+**한 일**
+- 노트북 작업자가 채팅 전문 없이 Git만으로 이어받도록 `docs/ARCHIVE_NOTEBOOK_HANDOFF.md`를 신설했다.
+- Archive 전용 clean worktree `C:\tmp\naver_cafe_archive_archivefork`와 RAG 변경이 남은
+  `C:\projects\naver_cafe_archive`를 구분하고, 후자에서 pull/reset/clean/stash/checkout을 금지했다.
+- 첫 fetch·dirty 검사, 완료된 운영 상태, 다음 작업(Enter-wait 중복·죽은 코드), 소유권,
+  전체 개발 사이클, 미니PC 공용 브리지 승인 게이트와 보고 형식을 한 문서에 고정했다.
+
+**노트북 작업자의 지금 할 일**
+1. `docs/ARCHIVE_NOTEBOOK_HANDOFF.md`를 처음부터 끝까지 읽는다.
+2. Archive 전용 clean worktree에서 `git fetch origin` 후 `origin/main`과 clean 상태를 재확인한다.
+3. 새 브랜치/worktree에서 Enter-wait 중복·죽은 코드 정리를 테스트 우선으로 진행한다.
+
+**주의**
+- 기본 저장소의 RAG 변경 7개와 미추적 `scripts/_step3_verify_v2.py`를 보존한다.
+- 미니PC pull·재시작·태스크 변경은 오너의 정확한 승인 전 금지한다.
+
+---
+
 ## 2026-07-24 · 개발 PC · 브랜치 `agent/archive-estimate-recalibration-20260724` (URL별 tail estimate 보정)
 
 **한 일**

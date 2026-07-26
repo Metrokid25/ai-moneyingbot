@@ -5,6 +5,7 @@
 > 작성 2026-07-18 · 기준 커밋 `7d01def`.
 > **작업 전 필독**: 요약·문서(이 문서 포함)를 믿지 말고 코드로 재확인하라. 시작하면 `git fetch origin` 먼저.
 > **현재 미니PC 작업 시작점**: `docs/ARCHIVE_MINIPC_HANDOFF.md`를 먼저 실행한 뒤 이 러너북을 참조한다.
+> **현재 노트북 개발 시작점**: `docs/ARCHIVE_NOTEBOOK_HANDOFF.md`를 먼저 실행한 뒤 이 러너북을 참조한다.
 
 ---
 
