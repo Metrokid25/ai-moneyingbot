@@ -11,6 +11,23 @@
 
 ---
 
+## 2026-07-27 · 노트북 · 브랜치 `agent/archive-console-enter-eof-hardening-20260727` (원격 통합 후 EOF 안전 종료 보강)
+
+**한 일**
+- 원격 `main`에 먼저 반영된 `3105869`의 Enter-wait 통합을 기준으로 재검토하고, 중복 구현을 병합하지 않았다.
+- 공용 helper가 비Windows stdin EOF를 로그인 완료로 오인하던 동작을
+  `ConsoleInputClosedError`로 fail-closed 처리했다.
+- headed 수동 로그인과 상주 루프 준비 중 EOF는 traceback 대신 rc=2로 종료하며,
+  브라우저 세션과 loop lock을 정리한다.
+- 기존 프롬프트 인자, Windows `msvcrt`, interactive/noninteractive, API `code-0004` 권위는 유지했다.
+
+**검증/승인**
+- 관련 테스트 `126 passed`, 전체 suite `743 passed`, compileall과 `git diff --check` 통과.
+- 2026-07-27 오너가 기능 브랜치 push·리뷰와 main 반영까지 승인했다.
+- 미니PC pull·재시작·패치는 별도 지시까지 계속 보류한다.
+
+---
+
 ## 2026-07-26 · 노트북 · 브랜치 `agent/archive-console-enter-wait-cleanup-20260726` (Enter 대기 통합·죽은 코드 제거)
 
 **한 일**

@@ -25,7 +25,7 @@ if str(SRC_DIR) not in sys.path:
 from db import article_exists, init_db, upsert_article  # noqa: E402
 from models import Article, Status  # noqa: E402
 from config import DEFAULT_BROWSER_PROFILE_DIR  # noqa: E402
-from console_io import wait_for_console_enter  # noqa: E402
+from console_io import ConsoleInputClosedError, wait_for_console_enter  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
 DEFAULT_STATE_DIR = PROJECT_ROOT / "state"
@@ -478,6 +478,9 @@ def prepare_manual_login(
 
         print("[daily_archive] ERROR: manual login verification failed")
         print("[daily_archive] next step: rerun --login --login-url and confirm the article-list page is visible")
+        return 2
+    except ConsoleInputClosedError as exc:
+        print(f"[daily_archive] ERROR: interactive login input unavailable: {exc}", file=sys.stderr)
         return 2
     finally:
         session.close()

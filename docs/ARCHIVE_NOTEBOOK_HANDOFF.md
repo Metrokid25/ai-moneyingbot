@@ -54,6 +54,7 @@ git status --short --branch
   사용자가 `--estimate`를 명시하면 그 값이 우선한다.
 - Enter 대기는 `src/console_io.py` 단일 helper를 사용하며, 구형
   `daily_archive.fetch_list_rows`와 `build_daily_archive_command`는 제거됐다.
+- stdin EOF는 확인 완료로 통과하지 않고 rc=2로 중단하며, headed 브라우저와 loop lock을 정리한다.
 - 최근 미니PC 라이브 검증은 `HEALTHY`, rc=0, controller instance 1개였다.
 - 미니PC의 과거 로컬 HANDOFF 커밋 `91dc050`은
   `backup/archive-minipc-handoff-91dc050-20260724`에 보존돼 있다.
@@ -63,8 +64,9 @@ git status --short --branch
 ## 4. 다음 개발 작업
 
 - Enter-wait 중복과 죽은 코드 정리는 개발 PC 검증까지 완료됐다.
+- EOF 안전 종료 보강까지 전체 pytest `743 passed`로 검증했고 main 반영 승인을 받았다.
 - 운영 코드 import 변경이므로 미니PC pull·재시작·60초 healthcheck가 남아 있으나,
-  2026-07-26 오너 지시로 나중 패치 단계까지 보류한다.
+  오너 지시대로 나중 패치 단계까지 보류한다.
 - 그 외 남은 Archive 운영 이슈는 완전 로그오프 사각지대다. 작업 스케줄러와 로그인 세션 구조를
   바꾸는 별도 설계 작업이므로 오너 승인 전 착수하지 않는다.
 

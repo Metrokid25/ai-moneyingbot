@@ -127,6 +127,7 @@ Windows 시스템 진단이 불필요한 환경에서는 `--skip-system`을 사�
 | 07-23 | 수동 snapshot/tail 탐색이 일시 오류 한 번에 포기하거나 오류 페이지를 건너뛰어 잘못된 tail을 반환할 수 있었음 | 같은 페이지 3회 재시도, 차단 즉시 중단, 소진 시 추정값 대신 실패 반환 |
 | 07-24 | HTML 15건/페이지 기준 `--estimate 2828`을 REST 20건 경로에도 그대로 사용 | URL별 자동 기본값(REST 2121/HTML 2828)으로 분리. 전진 한계에서는 추정 tail 대신 실패 |
 | 07-26 | Enter-wait 4중 복제와 구형 미사용 수집·명령 helper가 남아 있었음 | `src/console_io.py`로 통합하고 호출자 없는 `fetch_list_rows`·`build_daily_archive_command` 제거. 미니PC 반영은 오너 지시로 보류 |
+| 07-27 | 비Windows stdin EOF가 수동 로그인 확인으로 통과할 수 있었음 | `ConsoleInputClosedError`, rc=2, headed 브라우저·loop lock 정리로 fail-closed |
 
 ## 8. 알려진 잔여 이슈 (검토됐고 의도적 보류 — 재발견에 시간 쓰지 마라)
 

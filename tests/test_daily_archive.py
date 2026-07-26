@@ -8,6 +8,7 @@ import pytest
 sys.path.insert(0, "scripts")
 
 import daily_archive
+from console_io import ConsoleInputClosedError
 
 
 KST = timezone(timedelta(hours=9))
@@ -872,6 +873,37 @@ def test_login_mode_without_login_url_keeps_safe_default(tmp_path, monkeypatch, 
     assert ("goto", "https://nid.naver.com/nidlogin.login") in calls
     assert "카페 접근 확인을 위해 --login-url 사용 권장" in captured.out
     assert "recommended: use --login-url to confirm Cafe access" in captured.out
+
+
+def test_login_mode_stops_cleanly_and_closes_browser_on_stdin_eof(tmp_path, monkeypatch, capsys):
+    calls = []
+
+    class FakeSession:
+        def __init__(self, **_kwargs):
+            calls.append("open")
+
+        def goto(self, url):
+            calls.append(("goto", url))
+            return url, None
+
+        def close(self):
+            calls.append("close")
+
+    fake_browser = types.ModuleType("browser")
+    fake_browser.BrowserSession = FakeSession
+    monkeypatch.setitem(sys.modules, "browser", fake_browser)
+    monkeypatch.setattr(
+        daily_archive,
+        "wait_for_manual_confirmation",
+        lambda: (_ for _ in ()).throw(ConsoleInputClosedError("stdin closed")),
+    )
+
+    rc = daily_archive.main(["--login", "--browser-profile-dir", str(tmp_path / "profile")])
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "interactive login input unavailable: stdin closed" in captured.err
+    assert calls[-1] == "close"
 
 
 def test_login_mode_retries_and_fails_when_login_url_stays_blocked(tmp_path, monkeypatch, capsys):

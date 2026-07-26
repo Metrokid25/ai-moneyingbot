@@ -31,7 +31,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from console_io import wait_for_console_enter  # noqa: E402
+from console_io import ConsoleInputClosedError, wait_for_console_enter  # noqa: E402
 
 DEFAULT_INTERVAL_SECONDS = 600
 DEFAULT_DURATION_HOURS = 24.0
@@ -1140,6 +1140,10 @@ def run_loop(
         finalize_status(config, status, "keyboard interrupt")
         print("[archive_loop] stopping: keyboard interrupt")
         return 130
+    except ConsoleInputClosedError as exc:
+        finalize_status(config, status, "interactive console input closed")
+        print(f"[archive_loop] stopping: interactive console input closed ({exc})")
+        return 2
     finally:
         if loop_realtime_session is not None:
             try:

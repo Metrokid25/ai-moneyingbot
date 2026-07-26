@@ -301,8 +301,7 @@ def wait_for_login(page: Page) -> None:
     """로그인 페이지면 사용자가 엔터를 칠 때까지 무한 대기.
 
     이미 로그인된 세션이면 즉시 반환.
-    Windows PowerShell에서 input()이 stdin EOF를 받아 즉시 통과하는 문제를
-    msvcrt.getwch()로 콘솔 직접 읽기(CONIN$)로 우회.
+    공용 콘솔 helper가 Windows 입력과 stdin EOF를 안전하게 처리한다.
     """
     if _is_login_page(page) != "login_required":
         return

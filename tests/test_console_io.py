@@ -2,6 +2,8 @@ import io
 import sys
 import types
 
+import pytest
+
 sys.path.insert(0, "src")
 
 import console_io
@@ -31,7 +33,7 @@ def test_wait_for_console_enter_prints_prompt(monkeypatch, capsys):
     assert capsys.readouterr().out == "press enter\n"
 
 
-def test_wait_for_console_enter_returns_on_stdin_eof(monkeypatch):
+def test_wait_for_console_enter_rejects_stdin_eof(monkeypatch):
     class EofStream(io.StringIO):
         def __init__(self):
             super().__init__("")
@@ -45,6 +47,18 @@ def test_wait_for_console_enter_returns_on_stdin_eof(monkeypatch):
 
     monkeypatch.setattr(console_io.sys, "platform", "linux")
 
-    console_io.wait_for_console_enter(stdin=stdin)
+    with pytest.raises(console_io.ConsoleInputClosedError, match="stdin closed"):
+        console_io.wait_for_console_enter(stdin=stdin)
 
     assert stdin.readline_calls == 1
+
+
+def test_wait_for_console_enter_supports_injected_windows_key_reader():
+    keys = iter(["x", "\x00", "\r"])
+
+    console_io.wait_for_console_enter(
+        platform="win32",
+        key_reader=lambda: next(keys),
+    )
+
+    assert list(keys) == []

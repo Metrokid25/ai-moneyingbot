@@ -88,6 +88,28 @@ def test_browser_session_accepts_headless_override(tmp_path, monkeypatch):
     ]
 
 
+def test_wait_for_login_uses_shared_enter_waiter(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(browser, "_is_login_page", lambda _page: "login_required")
+    monkeypatch.setattr(browser, "wait_for_console_enter", lambda: calls.append("enter"))
+    monkeypatch.setattr(browser.time, "sleep", lambda seconds: calls.append(seconds))
+
+    browser.wait_for_login(object())
+
+    assert calls == ["enter", 3]
+    assert "브라우저에서 로그인을 완료한 뒤" in capsys.readouterr().out
+
+
+def test_wait_for_login_skips_enter_when_page_is_not_login(monkeypatch):
+    calls = []
+    monkeypatch.setattr(browser, "_is_login_page", lambda _page: None)
+    monkeypatch.setattr(browser, "wait_for_console_enter", lambda: calls.append("enter"))
+
+    browser.wait_for_login(object())
+
+    assert calls == []
+
+
 def test_not_logged_in_error_with_article_list_marker_is_not_login_required():
     html = """
     <html>
