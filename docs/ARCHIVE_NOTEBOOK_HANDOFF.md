@@ -54,7 +54,8 @@ git status --short --branch
   사용자가 `--estimate`를 명시하면 그 값이 우선한다.
 - 최근 미니PC 라이브 검증은 `HEALTHY`, rc=0, controller instance 1개였다.
 - `agent/archive-enter-wait-cleanup-20260726`에서 Enter 대기를 공용 helper로 통합하고
-  stdin EOF 오통과 및 죽은 수집/명령 wrapper를 제거했다. 전체 pytest는 `741 passed`다.
+  stdin EOF 오통과 및 죽은 수집/명령 wrapper를 제거했다. EOF 시 수동 로그인과 상주 루프는
+  브라우저/lock을 정리하고 rc=2로 종료한다. 전체 pytest는 `743 passed`다.
 - 미니PC의 과거 로컬 HANDOFF 커밋 `91dc050`은
   `backup/archive-minipc-handoff-91dc050-20260724`에 보존돼 있다.
 

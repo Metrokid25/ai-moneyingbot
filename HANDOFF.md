@@ -16,12 +16,14 @@
 **한 일**
 - Windows Enter 대기를 `src/console_io.py`의 공용 helper로 통합하고 stdin EOF가 로그인 확인으로
   잘못 통과하지 않도록 명시적인 `ConsoleInputClosedError`로 중단하게 했다.
+- headed 수동 로그인과 상주 루프 준비 중 stdin EOF는 traceback 대신 rc=2로 종료하며,
+  브라우저 세션과 loop lock이 `finally`에서 정리되는 회귀 테스트를 추가했다.
 - `browser.py`, `index_tail.py`, `daily_archive.py`, `run_daily_archive_loop.py`의 기존 사용자 메시지와
   interactive/noninteractive 분기를 유지했다. 로그인 판별 권위인 멤버 API `code-0004` 경로는 변경하지 않았다.
 - 호출자가 테스트뿐이던 `daily_archive.fetch_list_rows`와 호출자가 전혀 없던
   `build_daily_archive_command`를 제거했다.
 - clean clone에서 실제 DB에 의존하던 `test_batch_recollect`에 가짜 연결을 주입해 테스트를 격리했다.
-- `PYTHONUTF8=1` 전체 테스트 `741 passed`, `compileall`, `git diff --check`, 호출자 `rg` 검사를 통과했다.
+- `PYTHONUTF8=1` 전체 테스트 `743 passed`, `compileall`, `git diff --check`, 호출자 `rg` 검사를 통과했다.
 
 **다음 작업**
 - 운영 코드 import가 바뀌었으므로 main 반영은 리뷰·오너 승인 후에만 수행한다.

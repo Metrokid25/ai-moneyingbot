@@ -11,6 +11,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 import batch_recollect
 import index_tail_realtime
 import run_daily_archive_loop as archive_loop
+from console_io import ConsoleInputClosedError
 
 
 class FakeSession:
@@ -230,6 +231,33 @@ def test_market_realtime_interactive_login_prepares_before_inactive_skip(monkeyp
     assert "[archive_loop] interactive login preparation finished" in out
     assert session.closed is True
     assert session.close_count == 1
+
+
+def test_interactive_login_stdin_eof_closes_session_and_releases_lock(monkeypatch, tmp_path, capsys):
+    session = FakeSession()
+    monkeypatch.setattr(archive_loop, "readonly_archive_summary", _archive_summary)
+    config = _loop_config(
+        tmp_path,
+        market_schedule=True,
+        realtime_index=True,
+        interactive_login=True,
+        max_runs=1,
+    )
+
+    rc = archive_loop.run_loop(
+        config,
+        realtime_browser_session_factory=lambda: session,
+        interactive_login_enter_waiter=lambda: (_ for _ in ()).throw(
+            ConsoleInputClosedError("stdin closed")
+        ),
+    )
+
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "stopping: interactive console input closed (stdin closed)" in out
+    assert session.closed is True
+    assert session.close_count == 1
+    assert not config.lock_file.exists()
 
 
 def test_market_realtime_interactive_login_reuses_prepared_session_when_active(monkeypatch, tmp_path):
