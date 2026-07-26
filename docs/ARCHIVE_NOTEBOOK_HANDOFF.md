@@ -3,7 +3,8 @@
 > 노트북의 Archive 개발 작업 시작 정본이다. 채팅 요약만 믿지 말고 이 문서,
 > `HANDOFF.md` 최신 항목, `docs/OWNERSHIP.md`,
 > `docs/ARCHIVE_MINIPC_OPERATIONS.md`를 읽은 뒤 코드로 재확인한다.
-> 고정 커밋을 최신값으로 가정하지 않으며 `git fetch origin` 후 `origin/main`을 권위값으로 사용한다.
+> 별도 채팅 프롬프트는 필요 없다. 고정 커밋을 최신값으로 가정하지 않으며
+> `git pull --ff-only origin main` 후 `origin/main`을 권위값으로 사용한다.
 
 ## 1. 노트북 작업 공간
 
@@ -26,17 +27,22 @@ cd C:\tmp\naver_cafe_archive_archivefork
 $dirty = @(git status --porcelain=v1)
 if ($LASTEXITCODE -ne 0) { throw "git status failed" }
 if ($dirty.Count -ne 0) { throw "tracked, staged, or untracked changes exist; stop" }
-git fetch origin
-if ($LASTEXITCODE -ne 0) { throw "git fetch origin failed" }
+git pull --ff-only origin main
+if ($LASTEXITCODE -ne 0) { throw "git pull --ff-only origin main failed" }
+$dirtyAfter = @(git status --porcelain=v1)
+if ($LASTEXITCODE -ne 0) { throw "post-pull git status failed" }
+if ($dirtyAfter.Count -ne 0) { throw "worktree became dirty after pull; stop" }
+$headCommit = (git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw "git rev-parse HEAD failed" }
+$mainCommit = (git rev-parse origin/main).Trim()
+if ($LASTEXITCODE -ne 0) { throw "git rev-parse origin/main failed" }
+if ($headCommit -ne $mainCommit) { throw "HEAD does not equal origin/main; stop" }
 git status --short --branch
-git rev-parse HEAD
-git rev-parse origin/main
-git rev-list --left-right --count HEAD...origin/main
 ```
 
 - tracked/staged/untracked 변경이 있으면 merge로 덮거나 `git reset`, `git clean`, `git stash`로
   숨기지 말고 파일 목록을 보고한다.
-- 기존 브랜치가 `origin/main`과 다르면 원인을 확인하기 전 새 작업을 시작하지 않는다.
+- pull 후 worktree가 dirty이거나 `HEAD`가 `origin/main`과 다르면 원인을 확인하기 전 새 작업을 시작하지 않는다.
 - 개발은 항상 `origin/main`에서 새 `agent/archive-*` 브랜치 또는 Codex의 새 worktree로 시작한다.
 - `main` force push, `git add -A`, `Co-Authored-By`를 금지한다.
 
@@ -77,7 +83,7 @@ git rev-list --left-right --count HEAD...origin/main
 
 ## 6. 작업 사이클
 
-1. `git fetch origin`과 clean 확인
+1. `git pull --ff-only origin main`과 clean 확인
 2. 별도 브랜치/worktree
 3. 테스트로 기존 계약 고정
 4. 구현

@@ -4,6 +4,24 @@
 > 이 파일만 읽으면 "직전에 뭘 했고, 산출물이 어디 있고, 다음에 뭘 할지"를 안다.
 > - 규칙: 데이터/정책 = MACHINE_SYNC.md, 세션별 진행 = 이 파일, 결과물 상세 = `docs/*.md`.
 > - 이 파일과 `docs/`는 git-tracked → commit+push 해야 다른 기계가 본다. (`data/`의 mentor.db·qdrant는 수동 이관)
+>
+> **노트북 Archive 작업자 시작점**: 별도 채팅 프롬프트는 필요 없다. Archive 전용 worktree에서
+> `git status --porcelain=v1`이 비어 있는지 먼저 확인하고 `git pull --ff-only origin main`을 실행한 뒤,
+> `docs/ARCHIVE_NOTEBOOK_HANDOFF.md`를 처음부터 끝까지 읽고 따른다. 출력이 있거나 pull이 실패하면 멈춘다.
+
+---
+
+## 2026-07-26 · 노트북 · 브랜치 `agent/archive-notebook-pull-entry-20260726` (Git pull 기반 인수인계)
+
+**한 일**
+- 노트북 작업자가 별도 전달 프롬프트 없이 Git 문서만으로 인수인계받도록 이 대장 상단에 영구 시작점을 추가했다.
+- Archive 전용 worktree의 clean 상태를 먼저 확인하고 `git pull --ff-only origin main`을 실행한 뒤
+  `docs/ARCHIVE_NOTEBOOK_HANDOFF.md`를 읽는 단일 진입 절차로 정리했다.
+- 일반 `git pull` 대신 fast-forward 전용으로 제한해 로컬 분기나 예상치 못한 merge가 있으면 안전하게 멈춘다.
+- 정본의 pull 후 clean 검사와 `HEAD == origin/main` 게이트도 통과해야 개발을 시작할 수 있다.
+
+**다음 작업**
+- 정본 문서 §4에 따라 Enter-wait 중복과 죽은 코드 정리를 테스트 우선으로 진행한다.
 
 ---
 
@@ -18,7 +36,7 @@
 
 **노트북 작업자의 지금 할 일**
 1. `docs/ARCHIVE_NOTEBOOK_HANDOFF.md`를 처음부터 끝까지 읽는다.
-2. Archive 전용 clean worktree에서 `git fetch origin` 후 `origin/main`과 clean 상태를 재확인한다.
+2. Archive 전용 clean worktree에서 `git pull --ff-only origin main` 후 `origin/main`과 clean 상태를 재확인한다.
 3. 새 브랜치/worktree에서 Enter-wait 중복·죽은 코드 정리를 테스트 우선으로 진행한다.
 
 **주의**
