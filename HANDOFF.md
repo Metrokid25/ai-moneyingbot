@@ -7,6 +7,33 @@
 
 ---
 
+## 2026-07-26 · 노트북 · 브랜치 `agent/rag-laptop-sync-20260726` (Git 문서형 RAG 인수인계)
+
+**한 일**
+- 기존 dirty `main` checkout을 건드리지 않고 최신 `origin/main=dc5c252`에서
+  `C:\projects\ai_moneyingbot_laptop_sync` clean worktree를 준비했다.
+- 새 노트북 RAG 작업자가 채팅이나 복사 프롬프트 없이 이어받도록
+  `docs/RAG_LAPTOP_HANDOFF.md`를 단일 시작점으로 추가했다.
+- 문서 안에 바로 실행할 착수 절차, 실측 경로/브랜치/커밋, 소유권 경계,
+  보호 대상 checkout, 첫 점검 명령과 보고 형식을 고정했다.
+
+**현재 상태**
+- clean 시작점: `agent/rag-laptop-sync-20260726`, HEAD=`origin/main=dc5c252`.
+- 이 인수인계 변경은 `agent/rag-laptop-sync-20260726` 작업 브랜치에 커밋·푸시한다.
+- 미병합 RAG 하드닝: `origin/agent/rag-ops-hardening-20260724`,
+  commit=`3821e23`, 독립 코드·운영 리뷰 PASS, 원격 푸시 완료.
+- 보호 대상 `C:\projects\naver_cafe_archive`에는 추적 수정 7개와
+  미추적 `scripts/_step3_verify_v2.py`가 있어 pull/reset/stash/clean 금지.
+- `C:\projects\ai_moneyingbot_rag_agent`는 `agent/rag-ingest-boundary` 전용이므로 별도 지시 없이 수정 금지.
+- 미니PC 코드·스케줄·데이터·시크릿은 변경하지 않았다.
+
+**새 작업자의 시작점**
+1. 이 브랜치를 pull한 뒤 `docs/RAG_LAPTOP_HANDOFF.md` 전체를 읽는다.
+2. 문서의 읽기 전용 착수 점검을 실행하고 현재 상태부터 보고한다.
+3. 병합·배포·새 코드 변경은 오너의 별도 지시 전까지 실행하지 않는다.
+
+---
+
 ## 2026-07-26 · 노트북 · 브랜치 `agent/archive-notebook-handoff-20260726` (노트북 개발 인수인계 정본)
 
 **한 일**
@@ -24,7 +51,6 @@
 **주의**
 - 기본 저장소의 RAG 변경 7개와 미추적 `scripts/_step3_verify_v2.py`를 보존한다.
 - 미니PC pull·재시작·태스크 변경은 오너의 정확한 승인 전 금지한다.
-
 ---
 
 ## 2026-07-24 · 개발 PC · 브랜치 `agent/archive-estimate-recalibration-20260724` (URL별 tail estimate 보정)
