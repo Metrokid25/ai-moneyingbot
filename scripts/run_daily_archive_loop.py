@@ -31,6 +31,8 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from console_io import wait_for_console_enter
+
 DEFAULT_INTERVAL_SECONDS = 600
 DEFAULT_DURATION_HOURS = 24.0
 DEFAULT_LIMIT = 10
@@ -208,11 +210,6 @@ def build_batch_recollect_command(config: LoopConfig) -> list[str]:
 
 def is_index_tail_command(command: list[str]) -> bool:
     return len(command) >= 2 and Path(command[1]).name in {"index_tail.py", "index_tail_realtime.py"}
-
-
-def build_daily_archive_command(config: LoopConfig) -> list[str]:
-    """Compatibility wrapper; the loop now uses the proven index_tail path."""
-    return build_index_tail_command(config)
 
 
 # 로그에 네이버 세션 쿠키/토큰이 평문으로 새지 않게 마스킹(세션 탈취 방지).
@@ -779,15 +776,7 @@ def _capture_function_call(func: Callable[..., int], *args, **kwargs) -> tuple[i
 
 
 def _wait_for_interactive_login_enter() -> None:
-    if sys.platform == "win32":
-        import msvcrt
-
-        while True:
-            ch = msvcrt.getwch()
-            if ch in ("\r", "\n"):
-                break
-    else:
-        sys.stdin.readline()
+    wait_for_console_enter()
 
 
 def prepare_interactive_login_session(

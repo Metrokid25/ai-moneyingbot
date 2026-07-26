@@ -25,6 +25,7 @@ from typing import Optional
 sys.path.insert(0, "src")
 
 from browser import BrowserSession, check_blocked, wait_for_login
+from console_io import wait_for_console_enter
 from db import get_conn, init_db, upsert_article, article_exists
 from indexer import build_page_url
 from member_api import (
@@ -84,17 +85,9 @@ def _is_login_required_error(err) -> bool:
 
 
 def _console_enter_wait(prompt: str) -> None:
-    """콘솔 안전 Enter 대기. Windows PowerShell에서 input()이 stdin EOF로
-    즉시 통과하는 문제(browser.wait_for_login과 동일)를 msvcrt로 우회."""
+    """Print the existing prompt and delegate to the shared console helper."""
     print(prompt, flush=True)
-    if sys.platform == "win32":
-        import msvcrt
-        while True:
-            ch = msvcrt.getwch()
-            if ch in ("\r", "\n"):
-                break
-    else:
-        sys.stdin.readline()
+    wait_for_console_enter()
 
 
 def _wait_for_interactive_login(input_func=None) -> None:

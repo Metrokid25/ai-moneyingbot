@@ -730,11 +730,6 @@ def test_collect_execute_articles_uses_index_tail_based_api(monkeypatch):
     fake_browser.BrowserSession = FakeSession
     fake_archive_indexing = types.ModuleType("archive_indexing")
     fake_archive_indexing.collect_index_rows = fake_collect_index_rows
-    monkeypatch.setattr(
-        daily_archive,
-        "fetch_list_rows",
-        lambda *_args: pytest.fail("deprecated fetch_list_rows should not be used by execute"),
-    )
     monkeypatch.setitem(sys.modules, "browser", fake_browser)
     monkeypatch.setitem(sys.modules, "archive_indexing", fake_archive_indexing)
 
@@ -775,12 +770,6 @@ def test_collect_execute_articles_headed_passes_headless_false(monkeypatch):
     fake_archive_indexing.collect_index_rows = lambda *_args, **_kwargs: []
     monkeypatch.setitem(sys.modules, "browser", fake_browser)
     monkeypatch.setitem(sys.modules, "archive_indexing", fake_archive_indexing)
-    monkeypatch.setattr(
-        daily_archive,
-        "fetch_list_rows",
-        lambda *_args: pytest.fail("deprecated fetch_list_rows should not be used by execute"),
-    )
-
     rows, notes = daily_archive.collect_execute_articles(
         list_url="https://example.test/list",
         limit=1,
@@ -793,145 +782,8 @@ def test_collect_execute_articles_headed_passes_headless_false(monkeypatch):
     assert session_kwargs[0]["headless"] is False
 
 
-def test_fetch_list_rows_waits_until_article_marker_appears(monkeypatch):
-    monkeypatch.setattr(daily_archive, "LIST_PAGE_READY_DELAY_SECONDS", 0)
-    page_url = "https://cafe.naver.com/f-e/cafes/1/members/example?page=1"
-    htmls = [
-        '<html><script>window.e="NotLoggedInError"</script></html>',
-        """
-        <div class="article-board">
-          <table><tbody><tr>
-            <td class="td_article"><a href="/ArticleRead.nhn?articleid=123">ready</a></td>
-            <td class="td_date">2026.05.31</td>
-          </tr></tbody></table>
-        </div>
-        """,
-    ]
-
-    class FakePage:
-        url = page_url
-
-        def title(self):
-            return ""
-
-    class FakeSession:
-        page = FakePage()
-
-        def __init__(self):
-            self.html_calls = 0
-
-        def goto(self, url):
-            assert url == page_url
-            return url, "login_required"
-
-        def get_frame_html(self):
-            html = htmls[self.html_calls]
-            self.html_calls += 1
-            return html, None
-
-    session = FakeSession()
-
-    rows, err = daily_archive.fetch_list_rows(
-        session,
-        "https://cafe.naver.com/f-e/cafes/1/members/example",
-        1,
-    )
-
-    assert err is None
-    assert [row["article_id"] for row in rows] == [123]
-    assert session.html_calls == 2
-
-
-def test_fetch_list_rows_rechecks_ambiguous_empty_title_page(monkeypatch):
-    monkeypatch.setattr(daily_archive, "LIST_PAGE_READY_DELAY_SECONDS", 0)
-    page_url = "https://cafe.naver.com/f-e/cafes/1/members/example?page=1"
-    htmls = [
-        "<html></html>",
-        "<html><body>loading</body></html>",
-        """
-        <div class="article-board">
-          <table><tbody><tr>
-            <td class="td_article"><a href="/ArticleRead.nhn?articleid=456">ready</a></td>
-          </tr></tbody></table>
-        </div>
-        """,
-    ]
-
-    class FakePage:
-        url = page_url
-
-        def title(self):
-            return ""
-
-    class FakeSession:
-        page = FakePage()
-
-        def __init__(self):
-            self.html_calls = 0
-
-        def goto(self, url):
-            return url, None
-
-        def get_frame_html(self):
-            html = htmls[self.html_calls]
-            self.html_calls += 1
-            return html, None
-
-    session = FakeSession()
-
-    rows, err = daily_archive.fetch_list_rows(
-        session,
-        "https://cafe.naver.com/f-e/cafes/1/members/example",
-        1,
-    )
-
-    assert err is None
-    assert [row["article_id"] for row in rows] == [456]
-    assert session.html_calls == 3
-
-
-def test_fetch_list_rows_reports_safe_login_diagnostics(monkeypatch, capsys):
-    monkeypatch.setattr(daily_archive, "LIST_PAGE_READY_DELAY_SECONDS", 0)
-    page_url = "https://cafe.naver.com/f-e/cafes/1/members/example?page=1"
-
-    class FakePage:
-        url = page_url
-
-        def title(self):
-            return "Naver Login"
-
-    class FakeSession:
-        page = FakePage()
-
-        def __init__(self):
-            self.html_calls = 0
-
-        def goto(self, url):
-            return url, None
-
-        def get_frame_html(self):
-            self.html_calls += 1
-            return '<form><input id="id"><input type="password"></form>', None
-
-    session = FakeSession()
-
-    rows, err = daily_archive.fetch_list_rows(
-        session,
-        "https://cafe.naver.com/f-e/cafes/1/members/example",
-        1,
-    )
-
-    captured = capsys.readouterr()
-    assert rows is None
-    assert err == "login_required"
-    assert session.html_calls == 1
-    assert "article_markers_found=false" in captured.out
-    assert "login_markers_found=true" in captured.out
-    assert "password_input_found=true" in captured.out
-    assert "current_url_is_login=false" in captured.out
-    assert "cookie" not in captured.out.lower()
-    assert "session" not in captured.out.lower()
-    assert "<form" not in captured.out
+def test_deprecated_local_list_fetch_path_is_removed():
+    assert not hasattr(daily_archive, "fetch_list_rows")
 
 
 def test_login_mode_opens_profile_without_collecting_or_writing(tmp_path, monkeypatch, capsys):

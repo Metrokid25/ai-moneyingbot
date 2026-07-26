@@ -25,6 +25,7 @@ if str(SRC_DIR) not in sys.path:
 from db import article_exists, init_db, upsert_article  # noqa: E402
 from models import Article, Status  # noqa: E402
 from config import DEFAULT_BROWSER_PROFILE_DIR  # noqa: E402
+from console_io import wait_for_console_enter  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
 DEFAULT_STATE_DIR = PROJECT_ROOT / "state"
@@ -39,8 +40,6 @@ DEFAULT_LOGIN_URL = "https://nid.naver.com/nidlogin.login"
 # member API 행에는 author 키가 없다. RAG export(scripts/export_archive_articles.py)는
 # author가 비면 글을 통째로 드롭하므로, index_tail.py와 동일하게 기본 저자로 채운다.
 DEFAULT_AUTHOR = "굿머닝"
-LIST_PAGE_READY_RETRIES = 3
-LIST_PAGE_READY_DELAY_SECONDS = 1.0
 
 
 @dataclass
@@ -216,9 +215,7 @@ def collect_execute_articles(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Collect article list rows in execute mode with strict bounds.
 
-    Execute mode intentionally delegates list-page collection to the
-    index_tail-style archive indexing API instead of the experimental local
-    fetch_list_rows() path.
+    Execute mode delegates list-page collection to the proven index-tail API.
     """
     if not list_url:
         return [], ["execute mode skipped: --list-url was not provided"]
@@ -244,123 +241,6 @@ def collect_execute_articles(
     return rows, ["execute: using proven index_tail-style list indexing path"]
 
 
-def fetch_list_rows(
-    session: Any,
-    list_url: str,
-    page_num: int,
-) -> tuple[list[dict[str, Any]] | None, str | None]:
-    """Deprecated fallback for the old local execute list-page experiment."""
-    import time  # noqa: WPS433
-
-    from browser import (  # noqa: WPS433
-        check_blocked,
-        detect_login_state,
-        has_article_list_marker,
-    )
-    from parser import parse_article_list  # noqa: WPS433
-
-    page_url = build_page_url(list_url, page_num)
-    final_url, err = session.goto(page_url)
-    if err and err != "login_required":
-        return None, err
-
-    last_error = err
-    last_detection = None
-    last_title = _safe_page_title(session)
-    current_url = _safe_current_url(session, final_url)
-    for attempt in range(1, LIST_PAGE_READY_RETRIES + 1):
-        html, frame_err = session.get_frame_html()
-        current_url = _safe_current_url(session, final_url)
-        last_title = _safe_page_title(session)
-        if frame_err and frame_err != "login_required":
-            return None, frame_err
-        if html is None:
-            last_error = frame_err or "frame_load_failed"
-            if frame_err == "login_required":
-                page_html = _safe_page_content(session)
-                if page_html:
-                    last_detection = detect_login_state(current_url, page_html)
-                    if _is_definite_login_required(last_detection):
-                        _print_login_required_diagnostics(current_url, last_title, last_detection)
-                        return None, frame_err
-        else:
-            last_detection = detect_login_state(current_url, html)
-            if has_article_list_marker(html):
-                return parse_article_list(html, current_url), None
-
-            blocked = check_blocked(current_url, html)
-            if blocked and _is_definite_login_required(last_detection):
-                _print_login_required_diagnostics(current_url, last_title, last_detection)
-                return None, blocked
-            if blocked:
-                last_error = blocked
-            else:
-                rows = parse_article_list(html, current_url)
-                if rows:
-                    return rows, None
-                last_error = frame_err
-
-        if attempt < LIST_PAGE_READY_RETRIES:
-            time.sleep(LIST_PAGE_READY_DELAY_SECONDS)
-
-    if last_detection is not None and last_error == "login_required":
-        _print_login_required_diagnostics(current_url, last_title, last_detection)
-    if last_error is None:
-        return [], None
-    return None, last_error
-
-
-def _safe_page_title(session: Any) -> str:
-    page = getattr(session, "page", None)
-    title = getattr(page, "title", None)
-    if not callable(title):
-        return "-"
-    try:
-        return str(title())
-    except Exception:
-        return "-"
-
-
-def _safe_current_url(session: Any, fallback: str) -> str:
-    page = getattr(session, "page", None)
-    return str(getattr(page, "url", None) or fallback)
-
-
-def _safe_page_content(session: Any) -> str:
-    page = getattr(session, "page", None)
-    content = getattr(page, "content", None)
-    if not callable(content):
-        return ""
-    try:
-        return str(content())
-    except Exception:
-        return ""
-
-
-def _is_definite_login_required(detection: Any) -> bool:
-    return bool(
-        detection
-        and detection.reason == "login_required"
-        and (
-            detection.current_url_is_login
-            or detection.password_input_found
-            or detection.detail == "login form detected"
-            or detection.detail == "redirected to login url"
-            or detection.detail == "redirected to login path"
-        )
-    )
-
-
-def _print_login_required_diagnostics(url: str, title: str, detection: Any) -> None:
-    from browser import format_login_detection_summary  # noqa: WPS433
-
-    print(
-        "[DEBUG] login_required detected: "
-        f"{detection.detail}; url={url}; title={title}; "
-        f"{format_login_detection_summary(detection)}"
-    )
-
-
 def build_page_url(base_url: str, page: int) -> str:
     parsed = urlparse(base_url)
     qs = parse_qs(parsed.query, keep_blank_values=True)
@@ -383,15 +263,7 @@ def collect_article_body(article_id: int) -> tuple[str, str | None]:
 
 
 def wait_for_manual_confirmation() -> None:
-    if sys.platform == "win32":
-        import msvcrt  # noqa: WPS433
-
-        while True:
-            ch = msvcrt.getwch()
-            if ch in ("\r", "\n"):
-                return
-    else:
-        sys.stdin.readline()
+    wait_for_console_enter()
 
 
 def is_duplicate(article_id: int, seen_ids: set[int], *, dry_run: bool) -> bool:

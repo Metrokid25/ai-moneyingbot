@@ -11,6 +11,17 @@ class FakeArticle:
     article_id = 123
 
 
+class FakeConn:
+    def execute(self, *_args, **_kwargs):
+        return self
+
+    def fetchone(self):
+        return [0]
+
+    def close(self):
+        pass
+
+
 def test_batch_login_check_uses_article_list_page_one(monkeypatch):
     class FakeSession:
         def __init__(self):
@@ -34,6 +45,7 @@ def test_batch_login_check_uses_article_list_page_one(monkeypatch):
     monkeypatch.setattr(batch_recollect, "BrowserSession", fake_browser_session)
     monkeypatch.setattr(batch_recollect, "wait_for_login", lambda _page: None)
     monkeypatch.setattr(batch_recollect, "get_articles_by_status", lambda _status: [FakeArticle()])
+    monkeypatch.setattr(batch_recollect, "get_conn", FakeConn)
     monkeypatch.setattr(batch_recollect, "_open_logfile", lambda: (Path("test.log"), FakeLog()))
     monkeypatch.setattr(batch_recollect, "_write_log_header", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(batch_recollect, "_write_final_report", lambda *_args, **_kwargs: None)

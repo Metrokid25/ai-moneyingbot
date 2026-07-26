@@ -1,4 +1,3 @@
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +8,7 @@ from playwright.sync_api import (
     Error as PlaywrightError,
 )
 from config import BROWSER_TIMEOUT_MS, DEFAULT_BROWSER_PROFILE_DIR, HEADLESS
+from console_io import wait_for_console_enter
 
 _BLOCK_URL: list[Tuple[str, str]] = [
     ("login_required", "nid.naver.com"),
@@ -301,20 +301,12 @@ def wait_for_login(page: Page) -> None:
     """로그인 페이지면 사용자가 엔터를 칠 때까지 무한 대기.
 
     이미 로그인된 세션이면 즉시 반환.
-    Windows PowerShell에서 input()이 stdin EOF를 받아 즉시 통과하는 문제를
-    msvcrt.getwch()로 콘솔 직접 읽기(CONIN$)로 우회.
+    공용 콘솔 helper가 Windows PowerShell의 stdin EOF 오탐을 막는다.
     """
     if _is_login_page(page) != "login_required":
         return
     print("[LOGIN] 브라우저에서 로그인을 완료한 뒤, 이 콘솔에서 엔터를 눌러주세요.", flush=True)
-    if sys.platform == "win32":
-        import msvcrt
-        while True:
-            ch = msvcrt.getwch()
-            if ch in ("\r", "\n"):
-                break
-    else:
-        sys.stdin.readline()
+    wait_for_console_enter()
     print("[LOGIN] 진행합니다")
     print("[LOGIN] 세션 안정화를 위해 3초 대기")
     time.sleep(3)
