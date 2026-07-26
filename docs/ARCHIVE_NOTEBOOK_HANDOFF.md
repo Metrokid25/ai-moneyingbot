@@ -52,6 +52,8 @@ git status --short --branch
 - 수동 snapshot/tail 일시 오류는 같은 페이지에서 최대 3회 재시도하며 차단 오류는 즉시 중단한다.
 - 수동 tail estimate 미지정 기본값은 멤버 REST URL `2121`, 기존 HTML URL `2828`이며
   사용자가 `--estimate`를 명시하면 그 값이 우선한다.
+- Enter 대기는 `src/console_io.py` 단일 helper를 사용하며, 구형
+  `daily_archive.fetch_list_rows`와 `build_daily_archive_command`는 제거됐다.
 - 최근 미니PC 라이브 검증은 `HEALTHY`, rc=0, controller instance 1개였다.
 - 미니PC의 과거 로컬 HANDOFF 커밋 `91dc050`은
   `backup/archive-minipc-handoff-91dc050-20260724`에 보존돼 있다.
@@ -60,16 +62,11 @@ git status --short --branch
 
 ## 4. 다음 개발 작업
 
-다음 우선순위는 Enter-wait 중복과 죽은 코드 정리다.
-
-1. `msvcrt` 기반 Enter 대기 구현의 실제 호출부를 전부 조사한다.
-2. headed 수동 로그인, interactive/noninteractive, stdin EOF 동작을 테스트로 먼저 고정한다.
-3. 공용 helper로 통합하되 API `code-0004` 로그인 권위와 기존 사용자 메시지는 유지한다.
-4. `daily_archive.fetch_list_rows`와 `build_daily_archive_command`의 호출자가 정말 없는지
-   `rg`, import 검사, 전체 테스트로 증명한 뒤에만 제거한다.
-5. `browser.py` 로그인 HTML 휴리스틱의 테스트로 잠긴 동작은 수정하지 않는다.
-
-기능 변경 없는 정리 작업이라도 운영 코드 import에 영향을 주면 미니PC 재시작·라이브 검증 대상이다.
+- Enter-wait 중복과 죽은 코드 정리는 개발 PC 검증까지 완료됐다.
+- 운영 코드 import 변경이므로 미니PC pull·재시작·60초 healthcheck가 남아 있으나,
+  2026-07-26 오너 지시로 나중 패치 단계까지 보류한다.
+- 그 외 남은 Archive 운영 이슈는 완전 로그오프 사각지대다. 작업 스케줄러와 로그인 세션 구조를
+  바꾸는 별도 설계 작업이므로 오너 승인 전 착수하지 않는다.
 
 ## 5. 소유권과 절대 규칙
 

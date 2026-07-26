@@ -11,6 +11,29 @@
 
 ---
 
+## 2026-07-26 · 노트북 · 브랜치 `agent/archive-console-enter-wait-cleanup-20260726` (Enter 대기 통합·죽은 코드 제거)
+
+**한 일**
+- Windows 콘솔 Enter 대기를 `src/console_io.py`의 공용 helper로 통합하고
+  `browser.py`, `daily_archive.py`, `index_tail.py`, `run_daily_archive_loop.py`의 중복 구현을 제거했다.
+- headed 수동 로그인과 interactive/noninteractive 동작, Windows `msvcrt`, 프롬프트,
+  비Windows stdin EOF 계약을 테스트로 고정했다.
+- 호출자 검색과 전체 테스트를 거쳐 미사용 `daily_archive.fetch_list_rows`,
+  `build_daily_archive_command` 및 전용 보조 코드·테스트를 제거했다.
+- 기존 로그인 메시지, `member_api.check_member_login()`의 API `code-0004` 권위,
+  `browser.py` HTML 로그인 휴리스틱은 유지했다.
+- 실제 기본 DB에 암묵적으로 의존하던 `test_batch_recollect` 한 건을 가짜 연결로 격리했다.
+
+**검증**
+- 관련 테스트 `134 passed`, 전체 suite `738 passed`, compileall과 `git diff --check` 통과.
+- RAG 소유 파일, trading-bot, 운영 DB/Qdrant, 미니PC는 접근·변경하지 않았다.
+
+**배포/다음 작업**
+- 오너 지시로 미니PC pull·재시작·라이브 healthcheck는 나중 패치 단계로 보류한다.
+- 남은 Archive 운영 이슈는 완전 로그오프 사각지대이며 구조 변경이므로 별도 설계·승인 전 착수하지 않는다.
+
+---
+
 ## 2026-07-26 · 노트북 · 브랜치 `agent/archive-notebook-pull-entry-20260726` (Git pull 기반 인수인계)
 
 **한 일**

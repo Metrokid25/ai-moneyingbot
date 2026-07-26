@@ -25,6 +25,7 @@ from typing import Optional
 sys.path.insert(0, "src")
 
 from browser import BrowserSession, check_blocked, wait_for_login
+from console_io import wait_for_console_enter
 from db import get_conn, init_db, upsert_article, article_exists
 from indexer import build_page_url
 from member_api import (
@@ -83,27 +84,13 @@ def _is_login_required_error(err) -> bool:
     return "login_required" in text or "login" in text or "로그인" in str(err)
 
 
-def _console_enter_wait(prompt: str) -> None:
-    """콘솔 안전 Enter 대기. Windows PowerShell에서 input()이 stdin EOF로
-    즉시 통과하는 문제(browser.wait_for_login과 동일)를 msvcrt로 우회."""
-    print(prompt, flush=True)
-    if sys.platform == "win32":
-        import msvcrt
-        while True:
-            ch = msvcrt.getwch()
-            if ch in ("\r", "\n"):
-                break
-    else:
-        sys.stdin.readline()
-
-
 def _wait_for_interactive_login(input_func=None) -> None:
     print("[index_tail] login_required detected.")
     print("[index_tail] 브라우저에 연 네이버 로그인 페이지에서 직접 로그인하세요.")
     print("[index_tail] CAPTCHA/본인인증이 뜨면 사용자가 직접 처리해야 합니다.")
     print("[index_tail] 로그인이 완료되면 PowerShell에서 Enter를 누르세요.")
     if input_func is None:
-        input_func = _console_enter_wait
+        input_func = wait_for_console_enter
     input_func("[index_tail] Enter를 누르면 같은 브라우저 세션으로 다시 확인합니다...")
 
 

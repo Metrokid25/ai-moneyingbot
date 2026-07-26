@@ -31,6 +31,8 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from console_io import wait_for_console_enter  # noqa: E402
+
 DEFAULT_INTERVAL_SECONDS = 600
 DEFAULT_DURATION_HOURS = 24.0
 DEFAULT_LIMIT = 10
@@ -208,11 +210,6 @@ def build_batch_recollect_command(config: LoopConfig) -> list[str]:
 
 def is_index_tail_command(command: list[str]) -> bool:
     return len(command) >= 2 and Path(command[1]).name in {"index_tail.py", "index_tail_realtime.py"}
-
-
-def build_daily_archive_command(config: LoopConfig) -> list[str]:
-    """Compatibility wrapper; the loop now uses the proven index_tail path."""
-    return build_index_tail_command(config)
 
 
 # 로그에 네이버 세션 쿠키/토큰이 평문으로 새지 않게 마스킹(세션 탈취 방지).
@@ -778,18 +775,6 @@ def _capture_function_call(func: Callable[..., int], *args, **kwargs) -> tuple[i
     return returncode, stdout.getvalue(), stderr.getvalue()
 
 
-def _wait_for_interactive_login_enter() -> None:
-    if sys.platform == "win32":
-        import msvcrt
-
-        while True:
-            ch = msvcrt.getwch()
-            if ch in ("\r", "\n"):
-                break
-    else:
-        sys.stdin.readline()
-
-
 def prepare_interactive_login_session(
     config: LoopConfig,
     session: object,
@@ -821,7 +806,7 @@ def prepare_interactive_login_session(
     print("[LOGIN] 브라우저에서 네이버 로그인을 완료한 뒤, 이 PowerShell 창에서 엔터를 눌러주세요.", flush=True)
     print("[LOGIN] 엔터 입력 대기 중...", flush=True)
     if enter_waiter is None:
-        enter_waiter = _wait_for_interactive_login_enter
+        enter_waiter = wait_for_console_enter
     enter_waiter()
 
     # Enter 후 로그인 실제 성공 여부 재검증 (프로브 불가 환경이면 경고 없이 진행)

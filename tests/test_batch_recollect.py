@@ -31,7 +31,18 @@ def test_batch_login_check_uses_article_list_page_one(monkeypatch):
         sessions.append(session)
         return session
 
+    class FakeConnection:
+        def execute(self, _query, _params):
+            return self
+
+        def fetchone(self):
+            return None
+
+        def close(self):
+            pass
+
     monkeypatch.setattr(batch_recollect, "BrowserSession", fake_browser_session)
+    monkeypatch.setattr(batch_recollect, "get_conn", FakeConnection)
     monkeypatch.setattr(batch_recollect, "wait_for_login", lambda _page: None)
     monkeypatch.setattr(batch_recollect, "get_articles_by_status", lambda _status: [FakeArticle()])
     monkeypatch.setattr(batch_recollect, "_open_logfile", lambda: (Path("test.log"), FakeLog()))
