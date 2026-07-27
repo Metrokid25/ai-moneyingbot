@@ -65,7 +65,8 @@ git status --short --branch
 ## 4. 다음 개발 작업
 
 - Enter-wait 중복과 죽은 코드 정리는 개발 PC 검증까지 완료됐다.
-- EOF 안전 종료 보강까지 전체 pytest `743 passed`로 검증했고 main 반영 승인을 받았다.
+- EOF 안전 종료 보강과 최신 문서 계약까지 전체 pytest `744 passed`로 검증했다.
+  코드 기준 `main` `b215465` 반영·push는 완료됐다.
 - 다른 작업의 우선순위를 검토할 때까지 Archive 코드는 `b215465` 기준으로 동결한다.
 - 운영 코드 import 변경이므로 미니PC pull·재시작·60초 healthcheck가 남아 있으나,
   오너 지시대로 나중 패치 단계까지 보류한다.
