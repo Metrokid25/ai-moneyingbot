@@ -11,6 +11,21 @@
 
 ---
 
+## 2026-07-27 · 노트북 · 브랜치 `agent/archive-session-closeout-20260727` (Archive 개발 PC 작업 종료 상태 확정)
+
+**오늘 최종 상태**
+- Enter-wait 통합·죽은 코드 제거 `3105869`와 stdin EOF fail-closed 보강 `b215465`가 원격 `main`에 반영됐다.
+- 최신 검증 기준은 관련 테스트 `126 passed`, 전체 suite `743 passed`, compileall과 `git diff --check` 통과다.
+- 개발 PC 기준 즉시 착수할 Archive 우선 작업은 없다. 다른 작업을 검토해 우선순위를 다시 정할 때까지
+  Archive 코드는 `b215465` 기준으로 동결한다.
+
+**남은 운영 작업**
+- 미니PC는 아직 `b215465`를 pull하지 않았으며 CollectLoop 재시작·60초 healthcheck도 수행하지 않았다.
+- 오너 지시대로 미니PC 패치는 나중에 별도 승인 범위로 진행한다.
+- 완전 로그오프 사각지대는 구조 변경 후보이므로 별도 설계·승인 전 착수하지 않는다.
+
+---
+
 ## 2026-07-27 · 노트북 · 브랜치 `agent/archive-console-enter-eof-hardening-20260727` (원격 통합 후 EOF 안전 종료 보강)
 
 **한 일**
