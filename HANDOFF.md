@@ -11,6 +11,31 @@
 
 ---
 
+## 2026-07-27 · 노트북+미니PC 읽기전용 · `main` `b215465` (Archive main 반영·RAG 라이브 확인)
+
+**Git/Archive**
+- 오너 승인 범위에 따라 Enter-wait 통합 브랜치와 EOF 보강 브랜치를 원격에 push하고,
+  최신 원격 `main`의 선행 커밋 `3105869` 위에 `b215465`를 fast-forward로 반영·push했다.
+- 최종 `HEAD == origin/main == b215465`, ahead/behind `0/0`, 작업 트리 clean이다.
+- 최신 전체 suite `744 passed`, main 코드 반영 후 집중 테스트 `74 passed`,
+  RAG/Archive 문서 계약 테스트 `19 passed`, PowerShell 예제 4블록 구문 검사와 `git diff --check` 통과.
+- 미니PC Archive pull·재시작·healthcheck는 오너 지시대로 나중 패치 단계까지 보류했다.
+
+**RAG 미니PC 실측 (2026-07-27 00:14~00:19 KST)**
+- 실제 스케줄 checkout은 `C:\projects\naver_cafe_archive_rag`이며
+  `RAG-IncrementalIndex`는 enabled/`Ready`, 최근 실행 `2026-07-26 16:30:01`, 결과 `0`,
+  다음 실행 `2026-07-27 16:30:00`이다.
+- 실제 manifest/Qdrant는 함께 `2026-07-24 16:38` 갱신됐고 manifest unique 청크 `50,957`,
+  최신 반영 article ID `173453`이다.
+- Archive 최신 본문수집은 article ID `173480`, 작성시각 `2026-07-26 20:00:10`이다.
+  공식 `--dry-run --no-telegram`은 rc=0, 현재 `50,966`/반영 `50,957`로 신규 `9청크`를 감지했다.
+  이 글들은 7월 26일 16:30 태스크 실행 뒤 수집됐으므로 다음 일일 실행 대기분이다.
+- RAG writer 프로세스는 0개였고, dry-run은 Archive DB·Qdrant·manifest·태스크·시크릿을 변경하지 않았다.
+- 기존 사전점검 문서의 고정 예시 경로가 실제 스케줄 checkout과 달라, 태스크 `WorkingDirectory`를
+  우선 권위로 사용하도록 문서를 갱신했다.
+
+---
+
 ## 2026-07-27 · 노트북 · 브랜치 `agent/archive-console-enter-eof-hardening-20260727` (원격 통합 후 EOF 안전 종료 보강)
 
 **한 일**

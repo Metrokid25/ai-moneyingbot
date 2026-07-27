@@ -36,12 +36,24 @@ git rev-list --left-right --count origin/main...HEAD
 ## 3. 미니PC 운영 상태 확인
 
 ```powershell
-Get-ScheduledTask -TaskName "RAG-IncrementalIndex" -ErrorAction SilentlyContinue
+$ragTask = Get-ScheduledTask -TaskName "RAG-IncrementalIndex" -ErrorAction SilentlyContinue
+$ragTask
 Get-ScheduledTaskInfo -TaskName "RAG-IncrementalIndex" -ErrorAction SilentlyContinue |
-  Select-Object LastRunTime, LastTaskResult
+  Select-Object LastRunTime, LastTaskResult, NextRunTime
 
 $archiveDb = "C:\projects\naver_cafe_archive\data\archive.db"
-$ragRoot = "C:\projects\ai_moneyingbot_rag_agent"
+$defaultRagRoot = "C:\projects\ai_moneyingbot_rag_agent"
+$taskWorkingDirectory = if ($null -ne $ragTask) {
+  [string]$ragTask.Actions[0].WorkingDirectory
+} else {
+  ""
+}
+$ragRoot = if ($taskWorkingDirectory -and (Test-Path -LiteralPath $taskWorkingDirectory)) {
+  $taskWorkingDirectory
+} else {
+  $defaultRagRoot
+}
+Write-Output "rag_root=$ragRoot"
 $qdrant = Join-Path $ragRoot "data\qdrant"
 $manifest = Join-Path $ragRoot "data\rag_index_manifest.jsonl"
 
@@ -50,10 +62,14 @@ $manifest = Join-Path $ragRoot "data\rag_index_manifest.jsonl"
 }
 ```
 
+등록된 태스크가 있으면 그 `WorkingDirectory`가 실제 운영 checkout의 권위값이다.
+문서의 기본 경로만 보고 다른 checkout의 오래된 Qdrant/manifest를 운영 자산으로 오판하지 않는다.
+2026-07-27 실측 운영 경로는 `C:\projects\naver_cafe_archive_rag`였다.
+
 `.env`는 값 대신 필수 키 설정 여부만 확인한다.
 
 ```powershell
-$envPath = "C:\projects\ai_moneyingbot_rag_agent\.env"
+$envPath = Join-Path $ragRoot ".env"
 $requiredKeys = @(
   "VOYAGE_API_KEY",
   "RAG_TELEGRAM_BOT_TOKEN",
@@ -79,7 +95,7 @@ foreach ($key in $requiredKeys) {
 - 어떤 RAG/Archive 프로세스도 해당 Qdrant 스냅샷을 쓰는 중이 아니다.
 
 ```powershell
-cd C:\projects\ai_moneyingbot_rag_agent
+Set-Location -LiteralPath $ragRoot
 $env:PYTHONUTF8 = "1"
 .\.venv\Scripts\python.exe scripts\check_rag_deploy_assets.py `
   --db-path "C:\projects\naver_cafe_archive\data\archive.db"
@@ -103,6 +119,7 @@ PASS 기준:
 ```text
 [RAG 미니PC 사전점검]
 - 기계명/checkout 경로:
+- 태스크 WorkingDirectory/최종 rag_root:
 - branch/HEAD:
 - origin/main:
 - ahead/behind:

@@ -52,6 +52,19 @@ def test_preflight_requires_fail_closed_asset_gate_before_deploy():
     assert guard < dry_run < schedule
 
 
+def test_preflight_uses_registered_task_working_directory_as_runtime_authority():
+    text = read(PREFLIGHT)
+
+    task = text.index('$ragTask = Get-ScheduledTask -TaskName "RAG-IncrementalIndex"')
+    working_directory = text.index("$ragTask.Actions[0].WorkingDirectory", task)
+    rag_root = text.index("$ragRoot = if ($taskWorkingDirectory", working_directory)
+    asset_paths = text.index('$qdrant = Join-Path $ragRoot "data\\qdrant"', rag_root)
+
+    assert task < working_directory < rag_root < asset_paths
+    assert "실제 운영 checkout의 권위값" in text
+    assert r"C:\projects\naver_cafe_archive_rag" in text
+
+
 def test_deploy_doc_treats_legacy_tag_as_historical_only():
     text = read(DEPLOY)
 
