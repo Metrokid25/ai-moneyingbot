@@ -36,6 +36,52 @@
 
 ---
 
+## 2026-07-27 · 데스크톱+미니PC 4자 협업 · 브랜치 `agent/rag-rulebook-pdf-v2-20260727` (굿머닝 매매원칙 검증판 v2 제작)
+
+**결과**
+- 기존 `굿머닝_그림해설판.pdf`를 교육용 요약본으로만 사용하고, Archive 원문을 다시 대조해
+  `output/pdf/굿머닝_매매원칙_검증판_v2.pdf` 23쪽을 생성했다.
+- PDF는 12개 규칙을 시장 레짐→비중→진입→손절/익절 계층으로 정리한다. 각 카드에서
+  선생님 직접 가르침과 연구자 구현 가설, 필요조건, 무효화, 예외, 데이터 요구사항을 분리했다.
+- 구조화 정본은 `output/pdf/굿머닝_매매원칙_검증판_v2_rules.jsonl`이며, 12개 규칙,
+  고유 근거 글 24개, 짧은 원문 인용 36개를 포함한다. 모든 상태는
+  `research_hypothesis_unvalidated`이고 백테스트·수익성 검증 완료 주장은 없다.
+- 재현 생성기는 `scripts/build_rag_rulebook_pdf_v2.py`, 사람이 편집하는 규칙 원본은
+  `artifacts/rulebook_v2/rules_v2.json`, QA 기록은
+  `output/pdf/굿머닝_매매원칙_검증판_v2_QA.json`이다.
+
+**Archive/RAG 최신성 실측**
+- 미니PC Archive는 SQLite `mode=ro`+`query_only=ON`으로만 조사했다. 현재 본문은 43,789건,
+  최신 `article_id=173508`; 기존 PDF 표기 42,979건 대비 총량은 +810건이다.
+- 데스크톱 DB 43,506건과 미니PC에서 stdout으로만 받은 신규 JSONL 283건의 article_id 중복은 0건,
+  합집합 43,789건이다. 운영 DB·태스크·체크아웃에는 쓰기나 재시작을 하지 않았다.
+- 미니PC RAG는 manifest/Qdrant 50,957청크, 공식 dry-run 현재 50,969청크로 신규 12청크·7개 글이
+  정규 증분 전이었다. 최신 글은 semantic 검색 결과로 가장하지 않고 Archive 원문 직접검토로 반영했다.
+  그중 `article_id=173480`의 불확실성·비중관리 가르침을 GM-R01 신규 근거로 채택했다.
+
+**검증 출력**
+- `PYTHONUTF8=1 python scripts/build_rag_rulebook_pdf_v2.py --check-only`
+  → `validation=passed`, `rule_count=12`, `source_article_count=24`,
+  `quote_checks_passed=36`, `archive_union_count=43789`, `query_only=true`, rc=0.
+- 최종 빌드 → PDF 309,498 bytes, QA warnings 0, 자동화 등급 A/B/C=`4/6/2`, rc=0.
+- Poppler 150/120dpi 렌더 → 23/23쪽, rc=0. 전체 접촉표와 표지·최신성 표·규칙 카드·색인 연속쪽·
+  마지막 쪽 확대 검수에서 잘림·깨짐·빈 표 머리글 없음.
+- `pypdf` → pages=23, empty_pages=0, GM-R01~GM-R12 전부 존재,
+  article_id 173508/173480 존재.
+- `python -m py_compile scripts/build_rag_rulebook_pdf_v2.py` rc=0,
+  `git diff --check` rc=0.
+- 독립 RAG 리뷰는 Archive/RAG 숫자, 가설 분리, 미검증 상태, 소유권 경계, 최신 미색인 설명이
+  정확하다고 확인했다. 처음 지적된 validation 문구 QA 경고 7건은 문구를 명시화해 최종 0건으로 해소했다.
+  독립 작업자의 렌더 도구는 중단됐으므로 시각 검수는 주 작업자가 23쪽 전체를 대신 완료했다.
+
+**Git/다음 단계**
+- 이 작업은 `origin/main=ead7188`에서 만든 격리 브랜치에서 진행했다. 오너 승인으로 이 항목과 산출물을
+  작업 브랜치에 커밋·푸시했으며 `main`에는 병합하지 않았다.
+- trading-bot 데이터 접근·연동·백테스트는 이번 범위에 없었다. 다음 연구는 A등급 위험관리 규칙부터
+  별도 승인 후 진행한다.
+
+---
+
 ## 2026-07-27 · 노트북+미니PC 읽기전용 · `main` `b215465` (Archive main 반영·RAG 라이브 확인)
 
 **Git/Archive**

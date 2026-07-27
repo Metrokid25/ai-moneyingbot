@@ -1,0 +1,24 @@
+{
+  "schema_version": "2.0",
+  "rule_count": 12,
+  "source_article_count": 24,
+  "quote_checks_passed": 36,
+  "automation_grade_counts": {
+    "A": 4,
+    "B": 6,
+    "C": 2
+  },
+  "warnings": [],
+  "archive": {
+    "local_count": 43506,
+    "delta_count": 283,
+    "union_count": 43789,
+    "delta_overlap_count": 0,
+    "min_article_id": 1,
+    "max_article_id": 173508,
+    "status_counts": {
+      "BODY_COLLECTED": 43789
+    },
+    "query_only": true
+  }
+}
