@@ -48,7 +48,7 @@ git status --short --branch
 
 ## 3. 현재 완료 상태
 
-- 개발 PC와 원격 `main`의 Archive 기준점은 `b215465`다.
+- 현재 개발 worktree와 미니PC에서 확인한 Git 기준점은 `ead7188`다.
 - Archive healthcheck, index-tail 단일 정본, Git 기반 미니PC 인수인계가 운영 반영됐다.
 - 수동 snapshot/tail 일시 오류는 같은 페이지에서 최대 3회 재시도하며 차단 오류는 즉시 중단한다.
 - 수동 tail estimate 미지정 기본값은 멤버 REST URL `2121`, 기존 HTML URL `2828`이며
@@ -67,9 +67,10 @@ git status --short --branch
 - Enter-wait 중복과 죽은 코드 정리는 개발 PC 검증까지 완료됐다.
 - EOF 안전 종료 보강과 최신 문서 계약까지 전체 pytest `744 passed`로 검증했다.
   코드 기준 `main` `b215465` 반영·push는 완료됐다.
-- 다른 작업의 우선순위를 검토할 때까지 Archive 코드는 `b215465` 기준으로 동결한다.
-- 운영 코드 import 변경이므로 미니PC pull·재시작·60초 healthcheck가 남아 있으나,
-  오너 지시대로 나중 패치 단계까지 보류한다.
+- Archive 운영 코드 기준점은 `b215465`를 포함한 `ead7188`이며, 다른 작업의
+  우선순위를 검토할 때까지 코드를 동결한다.
+- 2026-08-03 미니PC pull·재시작·60초 healthcheck를 완료했다. 최종 `HEALTHY`, rc=0,
+  controller instance 1개이며, 일상 수집 관찰 단계다.
 - 그 외 남은 Archive 운영 이슈는 완전 로그오프 사각지대다. 작업 스케줄러와 로그인 세션 구조를
   바꾸는 별도 설계 작업이므로 오너 승인 전 착수하지 않는다.
 

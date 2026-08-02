@@ -98,3 +98,20 @@ def test_notebook_handoff_keeps_minipc_mutations_approval_gated():
     assert "invoke-mini-bot-codex.ps1" in text
     assert "-AllowMutation -ApprovalNote" in text
     assert "오너가 정확한 범위를" in text
+
+
+def test_archive_minipc_live_deploy_snapshot_is_recorded_as_current():
+    handoff_text = HANDOFF.read_text(encoding="utf-8")
+    operations_text = OPERATIONS.read_text(encoding="utf-8")
+    notebook_text = NOTEBOOK_HANDOFF.read_text(encoding="utf-8")
+    current_entry = handoff_text.split("## 2026-08-03", 1)[1].split("---", 1)[0]
+
+    assert "52def4d → ead7188" in current_entry
+    assert "배포 전·후 60초 관찰 healthcheck" in current_entry
+    assert "`HEALTHY`, rc=0" in current_entry
+    assert "controller instance 1개" in current_entry
+    assert "선택된 Archive PID는 7개" in current_entry
+    assert "비Archive Python 종료는 0개" in current_entry
+    assert "56CBA94517054572A8148F3A9EAB6218628884AC1103DF2F88488CF85719A2EA" in current_entry
+    assert "2026-08-03 `ead7188`까지 반영" in operations_text
+    assert "미니PC pull·재시작·60초 healthcheck를 완료" in notebook_text

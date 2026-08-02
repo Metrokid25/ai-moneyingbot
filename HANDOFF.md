@@ -11,6 +11,31 @@
 
 ---
 
+## 2026-08-03 · 미니PC · `main` `ead7188` (Archive 지연 패치 반영·라이브 검증 완료)
+
+**반영**
+- 오너 승인 범위로 미니PC Archive checkout을 `52def4d → ead7188`로 ff-only 갱신했다.
+- 운영 코드 변경은 Enter-wait 공용 helper 통합·죽은 코드 제거 `3105869`와
+  stdin EOF fail-closed `b215465`를 포함한다.
+- `docs/ARCHIVE_MINIPC_HANDOFF.md` §4대로 Watchdog을 일시 차단하고 Archive PID/자식 Chrome만
+  선택 정리한 뒤 CollectLoop를 재시작했다. 선택된 Archive PID는 7개, 비Archive Python 종료는 0개다.
+
+**라이브 검증 (2026-08-03 00:39 KST 사후 읽기전용 재확인)**
+- 배포 전·후 60초 관찰 healthcheck 모두 `HEALTHY`, rc=0으로 보고됐고,
+  사후 읽기전용 healthcheck도 `generated_at=2026-08-03T00:39:27+09:00`, `HEALTHY`, rc=0이다.
+- 최종 `HEAD == origin/main == ead7188`, tracked clean, 알려진 미추적
+  `scripts/_step3_verify_v2.py`만 존재한다.
+- 보호 파일 SHA-256은 전·후
+  `56CBA94517054572A8148F3A9EAB6218628884AC1103DF2F88488CF85719A2EA`로 동일하다.
+- CollectLoop `Running`, Watchdog/DailySummary enabled·`Ready`, controller instance 1개,
+  loop lock 정상, 세션 경고 없음, latest article ID `173739`. 최종 결론 `LIVE VERIFIED`.
+
+**다음 단계**
+- 신규 장애 없이 일상 수집을 관찰한다. 즉시 착수할 Archive 코드 과제는 없다.
+- 완전 로그오프 사각지대는 작업 스케줄러·로그인 세션 구조 변경이므로 별도 설계·승인 전까지 보류한다.
+
+---
+
 ## 2026-07-27 · 노트북+미니PC 읽기전용 · `main` `b215465` (Archive main 반영·RAG 라이브 확인)
 
 **Git/Archive**
