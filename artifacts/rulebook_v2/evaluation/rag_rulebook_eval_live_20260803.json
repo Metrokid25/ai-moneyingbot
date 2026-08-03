@@ -1,0 +1,228 @@
+{
+  "gold_path": "C:\\Users\\미니PC\\AppData\\Local\\Temp\\rag_rulebook_gold_v2_20260803.jsonl",
+  "collection": "goodmorning_chunks",
+  "embedding_model": "voyage-3-large",
+  "depth": 10,
+  "fetch_k": 50,
+  "rerank": true,
+  "dense": {
+    "n": 24,
+    "recall@1": 0.4583,
+    "recall@5": 0.7083,
+    "recall@10": 0.8333,
+    "mrr@10": 0.5678,
+    "found": 20
+  },
+  "rerank_summary": {
+    "n": 24,
+    "recall@1": 0.8333,
+    "recall@5": 0.875,
+    "recall@10": 0.875,
+    "mrr@10": 0.8542,
+    "found": 21
+  },
+  "per_question": [
+    {
+      "id": "rulebook-v2-gm-r01-01",
+      "gold_chunk_ids": [
+        "173480:0"
+      ],
+      "dense_rank": null,
+      "rerank_rank": null
+    },
+    {
+      "id": "rulebook-v2-gm-r01-02",
+      "gold_chunk_ids": [
+        "18157:0",
+        "7938:0"
+      ],
+      "dense_rank": 10,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r02-01",
+      "gold_chunk_ids": [
+        "53601:0",
+        "7938:0"
+      ],
+      "dense_rank": null,
+      "rerank_rank": null
+    },
+    {
+      "id": "rulebook-v2-gm-r02-02",
+      "gold_chunk_ids": [
+        "129709:0"
+      ],
+      "dense_rank": 7,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r03-01",
+      "gold_chunk_ids": [
+        "24948:0",
+        "53601:0"
+      ],
+      "dense_rank": 1,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r03-02",
+      "gold_chunk_ids": [
+        "53601:0"
+      ],
+      "dense_rank": 1,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r04-01",
+      "gold_chunk_ids": [
+        "29102:0",
+        "33780:0"
+      ],
+      "dense_rank": 2,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r04-02",
+      "gold_chunk_ids": [
+        "64804:0"
+      ],
+      "dense_rank": 10,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r05-01",
+      "gold_chunk_ids": [
+        "78948:0",
+        "89519:0"
+      ],
+      "dense_rank": 1,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r05-02",
+      "gold_chunk_ids": [
+        "80367:0"
+      ],
+      "dense_rank": 5,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r06-01",
+      "gold_chunk_ids": [
+        "118470:0"
+      ],
+      "dense_rank": 2,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r06-02",
+      "gold_chunk_ids": [
+        "129709:0",
+        "33780:0"
+      ],
+      "dense_rank": null,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r07-01",
+      "gold_chunk_ids": [
+        "91752:0"
+      ],
+      "dense_rank": 1,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r07-02",
+      "gold_chunk_ids": [
+        "43209:0",
+        "89531:0"
+      ],
+      "dense_rank": 1,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r08-01",
+      "gold_chunk_ids": [
+        "40599:0"
+      ],
+      "dense_rank": 1,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r08-02",
+      "gold_chunk_ids": [
+        "40599:0"
+      ],
+      "dense_rank": 1,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r09-01",
+      "gold_chunk_ids": [
+        "26566:0"
+      ],
+      "dense_rank": 1,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r09-02",
+      "gold_chunk_ids": [
+        "26566:0",
+        "53122:0"
+      ],
+      "dense_rank": 1,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r10-01",
+      "gold_chunk_ids": [
+        "33823:0",
+        "43209:0"
+      ],
+      "dense_rank": 4,
+      "rerank_rank": 2
+    },
+    {
+      "id": "rulebook-v2-gm-r10-02",
+      "gold_chunk_ids": [
+        "32314:0"
+      ],
+      "dense_rank": 3,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r11-01",
+      "gold_chunk_ids": [
+        "27421:0"
+      ],
+      "dense_rank": 1,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r11-02",
+      "gold_chunk_ids": [
+        "13584:0",
+        "38039:0"
+      ],
+      "dense_rank": null,
+      "rerank_rank": null
+    },
+    {
+      "id": "rulebook-v2-gm-r12-01",
+      "gold_chunk_ids": [
+        "26566:0"
+      ],
+      "dense_rank": 2,
+      "rerank_rank": 1
+    },
+    {
+      "id": "rulebook-v2-gm-r12-02",
+      "gold_chunk_ids": [
+        "26566:0"
+      ],
+      "dense_rank": 1,
+      "rerank_rank": 1
+    }
+  ]
+}

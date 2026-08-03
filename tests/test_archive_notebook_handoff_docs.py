@@ -104,7 +104,12 @@ def test_archive_minipc_live_deploy_snapshot_is_recorded_as_current():
     handoff_text = HANDOFF.read_text(encoding="utf-8")
     operations_text = OPERATIONS.read_text(encoding="utf-8")
     notebook_text = NOTEBOOK_HANDOFF.read_text(encoding="utf-8")
-    current_entry = handoff_text.split("## 2026-08-03", 1)[1].split("---", 1)[0]
+    archive_heading = (
+        "## 2026-08-03 · 미니PC · `main` `ead7188` "
+        "(Archive 지연 패치 반영·라이브 검증 완료)"
+    )
+    assert archive_heading in handoff_text
+    current_entry = handoff_text.split(archive_heading, 1)[1].split("---", 1)[0]
 
     assert "52def4d → ead7188" in current_entry
     assert "배포 전·후 60초 관찰 healthcheck" in current_entry

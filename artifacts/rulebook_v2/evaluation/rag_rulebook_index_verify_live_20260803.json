@@ -1,0 +1,8 @@
+{
+  "expected_chunk_count": 24,
+  "retrieved_chunk_count": 24,
+  "missing_chunk_ids": [],
+  "article_id_mismatch_chunk_ids": [],
+  "empty_text_chunk_ids": [],
+  "validation": "passed"
+}

@@ -11,6 +11,51 @@
 
 ---
 
+## 2026-08-03 · 데스크톱+미니PC 읽기전용 · 브랜치 `agent/rag-trading-research-contract-20260803` (A등급 연구 계약·Rulebook RAG 실측)
+
+**결과**
+- Rulebook v2 자동화 A등급 `GM-R01/R03/R06/R07`을 Trading Bot이 독립 검증할
+  `artifacts/trading_research/a_grade_rules_research_contract_v1.jsonl`을 만들었다.
+  baseline·후보 grid·시계열 walk-forward·봉인 holdout·비용 stress·룩어헤드 방지·결과 반환 schema를
+  고정했으며 자동 적용과 실거래 승인은 false다. RAG는 Trading Bot 소유 데이터에 접근하지 않았다.
+- 12개 규칙마다 core 1개+caveat 1개인 24문항 gold를
+  `tests/fixtures/rag_rulebook_gold_v2.jsonl`로 만들었다. 24개 지정 article/chunk는 전부 Rulebook 근거다.
+- 생성·검증·진단 도구 4개와 테스트 14개, 운영·연구 문서 5개를 추가했다. 상세 시작점은
+  `docs/TRADING_RESEARCH_HANDOFF_A_GRADE.md`, `docs/RAG_RULEBOOK_LIVE_EVAL_20260803.md`,
+  `docs/RULEBOOK_V2_DECISION_GATE_20260803.md`다.
+
+**production RAG 실측**
+- 미니PC `C:\projects\naver_cafe_archive_rag`의 manifest 51,040줄에서 gold 청크 24/24를 확인했다.
+  Qdrant UUID 직접 조회도 24/24 존재, article_id 불일치 0, 빈 text 0이었다.
+- 24문항 dense→Voyage rerank 1회 결과: dense recall@1/5/10=`0.4583/0.7083/0.8333`,
+  MRR@10=`0.5678`; rerank=`0.8333/0.8750/0.8750`, MRR@10=`0.8542`.
+- rerank 지정근거 미회수 3건은 GM-R01 최신 근거의 실제 fetch-50 미회수, GM-R02 동의 근거 중복으로
+  지정 ID가 밀린 사례, GM-R11 예외 근거 미회수로 분리했다. fixture는 결과에 맞춰 변경하지 않았다.
+- 라이브 JSON은 `artifacts/rulebook_v2/evaluation/` 3개 파일에 보존했다. 미니PC에는 `%TEMP%` 파일만
+  썼고 로컬 복사 후 정확한 8개 임시 파일을 삭제했다. DB/Qdrant/manifest/태스크/시크릿은 변경하지 않았다.
+- Rulebook Archive union 재검증: 12규칙, 고유 article 24개, 원문 인용 36/36,
+  `archive_union_count=43789`, `query_only=true`, rc=0.
+
+**운영 하드닝 독립 리뷰**
+- 원격 `3821e23`의 WindowsIdentity 기반 스케줄 계정과 `article_id DESC` 생존신호 변경에서 P0~P2를
+  찾지 못했다. 커밋 자체 표적 `40 passed`, 최신 `origin/main=2df7479` 격리 적용 전체
+  `747 passed`, PowerShell AST 오류 0, diff check 0, merge-tree 충돌 없음이다.
+- 미니PC 실제 RAG checkout은 아직 HEAD `06b5b68`, `ahead 2 / behind 9`이며 구버전
+  `$env:USERDOMAIN\$env:USERNAME`, `ORDER BY saved_at DESC`를 사용한다. 현재 태스크는 정상이나 하드닝
+  통합·deploy baseline 확정·별도 배포 승인 전에는 checkout/pull/스케줄을 변경하지 않는다.
+- 리뷰 정본: `docs/RAG_OPS_HARDENING_REVIEW_20260803.md`.
+
+**검증/Git 상태**
+- 새 표적 테스트 `14 passed in 0.55s`, 현재 브랜치 전체 `758 passed in 16.34s`, py_compile rc=0,
+  `git diff --check` rc=0, 신규 파일 18개 시크릿 패턴 0건.
+- 현재 브랜치는 Rulebook commit `edfee47`에서 분기했고 변경은 아직 미커밋·미푸시다.
+  확인 시 `origin/main=2df7479`, main 고유 1/현재 HEAD 고유 1이며 main은 현재 브랜치 조상이 아니다.
+- 다음: 오너가 커밋·푸시를 승인하면 작업 브랜치에서만 커밋 → 최신 main과 안전 통합 → 전체 재검증 →
+  독립 리뷰. 운영 하드닝 main 통합과 미니PC 배포는 별도 승인으로 진행한다. Trading Bot 결과가 오기 전
+  모든 규칙은 `research_hypothesis_unvalidated`를 유지한다.
+
+---
+
 ## 2026-08-03 · 미니PC · `main` `ead7188` (Archive 지연 패치 반영·라이브 검증 완료)
 
 **반영**
