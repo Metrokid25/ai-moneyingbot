@@ -9,6 +9,24 @@
 
 ---
 
+## 현재 운영 배포 스냅샷 (2026-08-03 10:22 KST)
+
+- 배포 기준점: `deploy-baseline-20260803` → `3fec893e11675f9ba49d535d4adff21d000170a7`
+- 운영 worktree: `C:\projects\naver_cafe_archive_rag_runtime`
+- 예약 작업: `RAG-IncrementalIndex`, 매일 16:30 KST, S4U, 실행 제한 2시간
+- Archive 읽기 전용 DB: `C:\projects\naver_cafe_archive\data\archive.db`
+- RAG 자산: `C:\projects\naver_cafe_archive_rag\data\qdrant` 및
+  `C:\projects\naver_cafe_archive_rag\data\rag_index_manifest.jsonl`
+- 첫 수동 예약 실행: `2026-08-03 10:11:47 KST`, `LastTaskResult=0`
+- 실행 후 게이트: manifest 51,047 = Qdrant 51,047, ID 일치, 최대 article_id 173760, PASS
+- 롤백 checkout: `C:\projects\naver_cafe_archive_rag` / HEAD `06b5b68` (첫 자동발화 성공 전 제거 금지)
+- 이전 작업 XML: `C:\Users\미니PC\AppData\Local\Temp\RAG-IncrementalIndex-pre-20260803.xml`
+
+이 절의 수치는 운영 당시 실측 스냅샷이다. 새 담당자는 수치를 현재값으로 가정하지 말고 아래 사전점검과
+자산 게이트를 다시 실행한다. 첫 자동발화 검증 결과는 `HANDOFF.md` 최상단 후속 항목에서 확인한다.
+
+---
+
 ## 인수인계 시작점 — 먼저 읽기 전용 사전점검
 
 새 RAG 담당자는 채팅에서 받은 프롬프트를 기준으로 배포하지 않는다. 저장소를 `git fetch`한 뒤

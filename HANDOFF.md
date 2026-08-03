@@ -11,6 +11,45 @@
 
 ---
 
+## 2026-08-03 · 미니PC 운영 배포 · 태그 `deploy-baseline-20260803` / commit `3fec893` (RAG 증분색인 실가동)
+
+**배포 결과**
+- 오너 승인 범위로 Rulebook 연구 계약 2커밋(`887cb1c`, `f71593f`)과 RAG 운영 하드닝
+  `3fec893`을 독립 리뷰 후 `main`에 fast-forward 반영했다. 배포 코드 기준점은 annotated tag
+  `deploy-baseline-20260803`이며 commit은 `3fec893e11675f9ba49d535d4adff21d000170a7`이다.
+- 미니PC에 clean 운영 worktree `C:\projects\naver_cafe_archive_rag_runtime`를 만들고
+  `runtime/rag-deploy-20260803` / HEAD `3fec893`으로 고정했다. Python 3.12 venv와 requirements를 설치하고
+  기존 `.env`의 필수 3키를 값 노출 없이 복사·비어 있지 않음만 확인했다.
+- Archive 소유 DB는 `C:\projects\naver_cafe_archive\data\archive.db`를 읽기 전용으로 사용한다.
+  RAG 소유 Qdrant와 manifest는 기존 안전 자산
+  `C:\projects\naver_cafe_archive_rag\data\qdrant`,
+  `C:\projects\naver_cafe_archive_rag\data\rag_index_manifest.jsonl`을 그대로 사용한다.
+
+**안전 게이트·실행 실측**
+- 배포 전 자산 게이트: `status=PASS`, Archive `sqlite_query_only=true`, manifest/Qdrant 각각 51,040,
+  collection `goodmorning_chunks`, vector 1024/Cosine, ID 집합 일치, `write_performed=false`.
+- 공식 dry-run: `rc=0`, 현재 51,047 / 반영 51,040 / 신규 7청크, 마지막 수집글 작성일
+  `2026-08-03 09:48:14`; manifest SHA-256
+  `25F120425279B49FDA0C8EB91179DD4000C999C52F8434BE1A2297CA8BB879DF`와 수정시각 모두 불변이었다.
+- 기존 예약 작업 XML은
+  `C:\Users\미니PC\AppData\Local\Temp\RAG-IncrementalIndex-pre-20260803.xml`에 백업했다.
+  `RAG-IncrementalIndex`를 새 runtime의 Python/wrapper로 재등록했으며 S4U, 16:30 매일,
+  DB/Qdrant/manifest 절대경로, 2시간 제한을 사용한다.
+- `2026-08-03 10:11:47 KST` 수동 예약 실행은 `Ready`, `LastTaskResult=0`, writer 0으로 종료됐다.
+  후속 자산 게이트도 `status=PASS`: manifest 51,047줄, Qdrant 51,047포인트, unique 51,047,
+  ID 집합 일치, 최대 반영 article_id 173760, `write_performed=false`다.
+- 새 runtime과 구 체크아웃 모두 tracked clean이다. 구 체크아웃
+  `C:\projects\naver_cafe_archive_rag` / HEAD `06b5b68`은 롤백용으로 보존했으며 삭제·reset하지 않았다.
+
+**검증·다음 확인**
+- 연구 계약 독립 clean-worktree 전체 `759 passed`; 운영 하드닝 통합 전체 `761 passed`,
+  PowerShell AST 오류 0, `git diff --check` rc=0, 실제 시크릿 패턴 0건이었다.
+- 다음 필수 확인은 `2026-08-03 16:30 KST` 첫 자동발화 후 `LastTaskResult=0`, manifest/Qdrant 일치,
+  텔레그램 수신 여부다. 이 자동발화까지 성공하기 전에는 롤백 체크아웃과 작업 XML 백업을 제거하지 않는다.
+- 검색 API, Phase 2 잔여 대량 배치, trading-bot 데이터 접근은 이번 범위에 없었고 계속 보류한다.
+
+---
+
 ## 2026-08-03 · 데스크톱+미니PC 읽기전용 · 브랜치 `agent/rag-trading-research-contract-20260803` (A등급 연구 계약·Rulebook RAG 실측)
 
 **결과**
