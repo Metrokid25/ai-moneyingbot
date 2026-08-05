@@ -1,5 +1,14 @@
 # 인수인계 대장 (PC ↔ 노트북)
 
+## 2026-08-05 — Mentor Signal Reader (feature/mentor-signal-reader)
+
+- Archive `articles`를 SQLite read-only URI로 조회하는 독립 Reader를 추가했다.
+- 기본 shadow, paper 전달, live 정책 거부, 최초 기준점, 수정 글 재판독, 이중 멱등 DB,
+  전달 실패 재시도와 기존 RAG Telegram 재사용을 구현했다.
+- 운영/안전/파이프라인 계약은 `docs/mentor_signal_*.md`가 기준이다.
+- Trading 연동 전용 종목 마스터 스냅샷이 필요하며 Reader는 `trading.db`를 열지 않는다.
+- 미니PC 배포와 paper 전환은 아직 수행하지 않았다.
+
 > 작업 세션이 끝날 때 **맨 위에 새 항목**을 추가한다(최신이 위). 다른 기계에서 이어받는 Claude/사람이
 > 이 파일만 읽으면 "직전에 뭘 했고, 산출물이 어디 있고, 다음에 뭘 할지"를 안다.
 > - 규칙: 데이터/정책 = MACHINE_SYNC.md, 세션별 진행 = 이 파일, 결과물 상세 = `docs/*.md`.
