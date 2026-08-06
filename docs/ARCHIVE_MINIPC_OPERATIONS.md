@@ -55,7 +55,7 @@
 새 env 키 금지. 메시지 구분은 첫 줄 프리픽스: `[Archive] 세션 만료 감지` / `[Archive] 일일 수집 요약`.
 
 **세션만료 알림**: `scripts/session_alert.py` + 루프 stop 경로 배선(`alert_on_session_expiry` @ run_daily_archive_loop).
-code-0004 확정 + 1회 재프로브 → 발송. dedup = 최초 1회 + 24h 리마인더 + 발송실패 30분 하한. 상태 `state/session_alert.json`, 정상 사이클마다 리셋.
+code-0004 확정 + 1회 재프로브 → 발송. dedup = 최초 1회 + **1시간 리마인더** + 발송실패 30분 하한. 상태 `state/session_alert.json`, 정상 사이클마다 리셋.
 
 ## 4. 운영 절차 (복붙용)
 
