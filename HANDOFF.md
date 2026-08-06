@@ -11,6 +11,29 @@
 
 ---
 
+## 2026-08-07 · 미니PC · 브랜치 `agent/archive-offhours-session-keepalive-20260807` (장외 세션 keepalive)
+
+**운영 사고와 복구**
+- 08-05 headed 재로그인 후 정상 수집됐지만 23:00~06:00 무요청 구간을 지난 08-06 06시 첫 REST 요청부터
+  `member_api code=0004`가 반복됐다. 로컬 쿠키 만료값과 별개로 서버측 유휴 세션이 끊긴 정황이다.
+- 08-07 headed 재로그인, persistent 프로필 재개방 API 프로브, CollectLoop 재기동을 완료했다. DB max id가
+  173921→173972로 증가했고 단일 controller·락·headless 프로세스가 정상임을 확인했다.
+
+**재발 방지 변경**
+- 23:00~06:00 글 수집 중단은 유지하면서 persistent realtime 세션에서만 멤버 REST API 로그인 프로브를
+  최대 1시간 간격으로 수행한다. HTML 파싱이나 별도 subprocess를 사용하지 않는다.
+- `True`는 알림 상태를 리셋하고 대기, 일시오류 `None`은 루프를 유지해 다음 시간에 재시도, code-0004 확정
+  `False`는 기존 세션만료 알림 후 종료한다. `is_block_error`와 browser 로그인 휴리스틱은 변경하지 않았다.
+- 원격 main의 별도 변경 `3fb7b18`(만료 지속 중 1시간마다 재알림)을 먼저 ff-only 반영해 함께 검증했다.
+
+**검증과 상태**
+- 집중 테스트 82 passed, 전체 suite 765 passed (`PYTHONUTF8=1`), `py_compile`과 `git diff --check` 통과.
+- 정확성·운영 결합·일시오류·보안 관점 리뷰에서 확정 문제를 수정했고 P0~P3 잔여 없음.
+- 변경은 별도 worktree에 미커밋 상태다. 오너 승인 전 commit/push/main 반영/운영 재시작은 하지 않는다.
+- 실제 서버 세션 유지 효과는 23:00~06:00 경계를 한 번 통과한 뒤 다음날 06시 라이브 검증이 필요하다.
+
+---
+
 ## 2026-08-05 · 미니PC · 브랜치 `agent/archive-hourly-session-reminder-20260805` (세션 만료 매시간 재알림)
 
 **변경**
