@@ -362,6 +362,47 @@ def test_first_run_baselines_existing_articles(tmp_path):
     assert reader.run_once()["events"] == 0
 
 
+def test_first_run_does_not_lose_edit_between_watermark_and_id_baseline(tmp_path, monkeypatch):
+    archive_path = make_archive(tmp_path, [
+        (10, "기존글", "u", "굿머닝", "2026-08-01", "시황", "시황",
+         "BODY_COLLECTED", "2026-08-01T00:00:00+09:00", "2026-08-01T00:00:00+09:00")
+    ])
+
+    class MutatingArchive(ArchiveSource):
+        def max_article_id(self, author):
+            baseline = super().max_article_id(author)
+            con = sqlite3.connect(archive_path)
+            con.execute(
+                "UPDATE articles SET title='삼성전자', clean_text='', raw_html='', updated_at=? "
+                "WHERE article_id=10",
+                ("2026-08-07T10:00:01+09:00",),
+            )
+            con.commit()
+            con.close()
+            return baseline
+
+    monkeypatch.setattr(reader_module, "now_iso", lambda: "2026-08-07T10:00:00+09:00")
+    reader = MentorSignalReader(
+        archive=MutatingArchive(archive_path), state=StateStore(tmp_path / "state.db"),
+        parser=RuleParser(make_master(tmp_path)), author_id="굿머닝", mode="shadow",
+        confidence_threshold=0.95,
+    )
+    assert reader.run_once()["events"] == 0
+    second = reader.run_once()
+    assert second["articles"] == 1
+    assert second["events"] == 1
+
+
+def test_bootstrap_existing_is_shadow_only(tmp_path):
+    reader = MentorSignalReader(
+        archive=ArchiveSource(make_archive(tmp_path)), state=StateStore(tmp_path / "state.db"),
+        parser=RuleParser(make_master(tmp_path)), author_id="굿머닝", mode="paper",
+        confidence_threshold=0.95, trading_base_url="http://127.0.0.1:8000", web_key="key",
+    )
+    with pytest.raises(ValueError, match="only in shadow mode"):
+        reader.run_once(bootstrap_existing=True)
+
+
 def test_reader_processes_stock_title_with_truly_empty_body(tmp_path):
     archive = make_archive(tmp_path, [
         (10, "삼성전자", "u", "굿머닝", "2026-08-05 10:00:00", "", "",
@@ -440,7 +481,8 @@ def test_failed_trading_delivery_retries_on_next_cycle(tmp_path, monkeypatch):
         author_id="굿머닝", mode="paper", confidence_threshold=0.95,
         trading_base_url="http://trading", web_key="key",
     )
-    reader.run_once(bootstrap_existing=True)
+    state.initialize(last_article_id=0, last_scan_at="1970-01-01T00:00:00+00:00")
+    reader.run_once()
     assert state.conn.execute(
         "SELECT delivery_status FROM mentor_signal_events"
     ).fetchone()[0] == "delivery_failed"
@@ -470,7 +512,8 @@ def test_permanent_delivery_rejection_is_not_retried(tmp_path, monkeypatch):
         author_id="굿머닝", mode="paper", confidence_threshold=0.95,
         trading_base_url="http://trading", web_key="key",
     )
-    reader.run_once(bootstrap_existing=True)
+    state.initialize(last_article_id=0, last_scan_at="1970-01-01T00:00:00+00:00")
+    reader.run_once()
     assert state.conn.execute(
         "SELECT delivery_status FROM mentor_signal_events"
     ).fetchone()[0] == "delivery_rejected"

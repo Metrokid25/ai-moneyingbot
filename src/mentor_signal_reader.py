@@ -708,9 +708,13 @@ class MentorSignalReader:
         return "delivery_rejected"
 
     def run_once(self, *, bootstrap_existing: bool = False) -> dict[str, int]:
+        if bootstrap_existing and self.mode != "shadow":
+            raise ValueError("bootstrap_existing is allowed only in shadow mode")
         if self.state.get_meta("initialized") is None:
-            baseline = 0 if bootstrap_existing else self.archive.max_article_id(self.author_id)
             watermark = "1970-01-01T00:00:00+00:00" if bootstrap_existing else now_iso()
+            # 워터마크를 ID 기준점보다 먼저 잡아 두 조회 사이에 수정된 기존 글도
+            # 다음 주기의 updated_at 조건으로 반드시 다시 읽는다.
+            baseline = 0 if bootstrap_existing else self.archive.max_article_id(self.author_id)
             self.state.initialize(last_article_id=baseline, last_scan_at=watermark)
             if not bootstrap_existing:
                 return {

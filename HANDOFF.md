@@ -11,7 +11,9 @@
   되살리는 경로를 차단했다.
 - bounded exponential retry와 영구 4xx 거부를 분리했고 `말고/대신/반면`,
   `안/어렵` 부정 표현까지 종목별로 보수 판독한다.
-- 전체 `817 passed`; 실제 FastAPI Fixture E2E에서 관심종목 등록과 Paper Runner
+- 최초 기준점은 시간 watermark를 먼저 고정해 초기 수정글 race를 막고, 과거 전체
+  `bootstrap_existing`은 shadow에서만 허용한다.
+- 전체 `819 passed`; 실제 FastAPI Fixture E2E에서 관심종목 등록과 Paper Runner
   당일 제외·익일 반영을 확인했다. 실전 주문 경로는 변경·호출하지 않았다.
 - 미니PC 배포/운영 프로세스 재기동/paper 전환은 수행하지 않았으며 최초 운영은
   반드시 shadow 관찰부터 시작한다.

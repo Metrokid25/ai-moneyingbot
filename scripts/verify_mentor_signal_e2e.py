@@ -101,13 +101,17 @@ def main() -> int:
         try:
             base_url = f"http://127.0.0.1:{port}"
             wait_ready(base_url + "/api/picks", process)
+            state = StateStore(root / "state.db")
+            # Fixture 한 건만 명시적으로 읽도록 상태를 구성한다. 운영 코드의
+            # paper+bootstrap 안전 차단은 우회하지 않는다.
+            state.initialize(last_article_id=0, last_scan_at="1970-01-01T00:00:00+00:00")
             reader = MentorSignalReader(
-                archive=ArchiveSource(archive), state=StateStore(root / "state.db"),
+                archive=ArchiveSource(archive), state=state,
                 parser=RuleParser(StockMasterSnapshot(master_path)), author_id="굿머닝",
                 mode="paper", confidence_threshold=0.95, trading_base_url=base_url,
                 web_key="e2e-key", notifier=None,
             )
-            result = reader.run_once(bootstrap_existing=True)
+            result = reader.run_once()
             con = sqlite3.connect(trading_db)
             audit = con.execute(
                 "SELECT article_id,stock_code,delivery_status FROM mentor_signal_events"

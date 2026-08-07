@@ -44,6 +44,7 @@ $env:PYTHONUTF8='1'
 
 Shadow 관찰과 작성자/마스터 확인 후에만 `--mode paper`로 바꾼다. `live`는 항상
 `Live mentor signal trading is disabled by policy.`로 종료한다.
+`--bootstrap-existing`은 과거 검증용이며 shadow에서만 허용된다.
 
 ## 장애 복구
 
@@ -76,7 +77,7 @@ Shadow 관찰과 작성자/마스터 확인 후에만 `--mode paper`로 바꾼�
   --trading-python C:\trading-bot\.venv\Scripts\python.exe
 ```
 
-2026-08-07 로컬 검증 기준: Reader 저장소 전체 `817 passed`, Trading 저장소 전체
-`483 passed, 1 skipped`, Fixture E2E에서 `SK하이닉스(000660)` 등록 → `trading.db` 감사행 →
+2026-08-07 로컬 검증 기준: Reader 저장소 전체 `819 passed`, Trading 저장소 전체
+`484 passed, 1 skipped`, Fixture E2E에서 `SK하이닉스(000660)` 등록 → `trading.db` 감사행 →
 일반 관심종목 조회 즉시 노출 → Paper Runner 당일 제외·익일 편입까지 통과했다.
 운영 미니PC 배포/프로세스 재기동은 별도 운영 단계이며 배포 전에는 shadow를 유지한다.
