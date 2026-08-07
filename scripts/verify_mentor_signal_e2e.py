@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -32,6 +33,7 @@ def free_port() -> int:
 def create_fixture(root: Path) -> tuple[Path, Path]:
     archive = root / "archive.db"
     con = sqlite3.connect(archive)
+    posted = datetime.now(timezone(timedelta(hours=9))).isoformat()
     con.execute(
         "CREATE TABLE articles(article_id INTEGER PRIMARY KEY,title TEXT,url TEXT,author TEXT,"
         "posted_at TEXT,raw_html TEXT,clean_text TEXT,status TEXT,saved_at TEXT,updated_at TEXT)"
@@ -40,8 +42,7 @@ def create_fixture(root: Path) -> tuple[Path, Path]:
     con.execute(
         "INSERT INTO articles VALUES (?,?,?,?,?,?,?,?,?,?)",
         (173800, "오늘 시장 대응", "https://example/173800", "굿머닝",
-         "2026-08-05T10:14:00+09:00", text, text, "BODY_COLLECTED",
-         "2026-08-05T10:14:40+09:00", "2026-08-05T10:14:40+09:00"),
+         posted, text, text, "BODY_COLLECTED", posted, posted),
     )
     con.commit()
     con.close()
@@ -116,22 +117,31 @@ def main() -> int:
             ).fetchall()
             con.close()
             verify_code = (
-                "import json; from strategy.paper_runner import load_universe; "
-                "print(json.dumps(load_universe(r'" + str(trading_db) + "'),ensure_ascii=False))"
+                "import json; from datetime import datetime,timedelta,timezone; "
+                "from strategy.paper_runner import load_universe; "
+                "d=datetime.now(timezone(timedelta(hours=9))).date(); "
+                "print(json.dumps({'visible':load_universe(r'" + str(trading_db) + "'),"
+                "'paper_today':load_universe(r'" + str(trading_db) + "',as_of_day=d),"
+                "'paper_next':load_universe(r'" + str(trading_db) + "',as_of_day=d+timedelta(days=1))},"
+                "ensure_ascii=False))"
             )
             verified = subprocess.run(
                 [str(args.trading_python), "-c", verify_code], cwd=args.trading_repo,
                 env=child_env, capture_output=True, text=True, encoding="utf-8", check=True,
             )
-            universe = json.loads(verified.stdout.strip().splitlines()[-1])
-            expected = ["000660", "SK하이닉스", "반도체"]
+            universes = json.loads(verified.stdout.strip().splitlines()[-1])
+            expected_watch = ["000660", "SK하이닉스", "멘토 자동픽 · 반도체"]
+            expected_universe = ["000660", "SK하이닉스", "반도체"]
             if result["delivered"] != 1 or audit != [("173800", "000660", "registered")]:
                 raise RuntimeError(f"delivery/audit mismatch: result={result} audit={audit}")
-            if watch != [tuple(expected)] or expected not in universe:
-                raise RuntimeError(f"watch/universe mismatch: watch={watch} universe={universe}")
+            if (watch != [tuple(expected_watch)]
+                    or expected_universe not in universes["visible"]
+                    or universes["paper_today"]
+                    or expected_universe not in universes["paper_next"]):
+                raise RuntimeError(f"watch/universe mismatch: watch={watch} universes={universes}")
             print(json.dumps({
                 "reader": result, "signal": "ADD_WATCH", "audit": audit,
-                "watchlist": watch, "paper_universe": universe, "live_order": "disabled",
+                "watchlist": watch, "paper_universe": universes, "live_order": "disabled",
             }, ensure_ascii=False))
         finally:
             if reader is not None:

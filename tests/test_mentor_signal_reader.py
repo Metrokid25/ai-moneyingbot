@@ -13,6 +13,7 @@ from src.mentor_signal_reader import (
     RuleParser,
     StateStore,
     StockMasterSnapshot,
+    revision_hash,
 )
 
 
@@ -22,6 +23,8 @@ MASTER = {
         "005930": "삼성전자",
         "000660": "SK하이닉스",
         "042660": "한화오션",
+        "100001": "와이엠",
+        "100002": "와이엠씨",
     },
 }
 
@@ -89,8 +92,261 @@ def test_rule_parser_cases(tmp_path, text, expected_type, expected_codes):
 
 def test_archive_connection_is_read_only(tmp_path):
     source = ArchiveSource(make_archive(tmp_path))
+    assert source.conn.execute("PRAGMA query_only").fetchone()[0] == 1
     with pytest.raises(sqlite3.OperationalError):
         source.conn.execute("CREATE TABLE forbidden_write(id INTEGER)")
+
+
+def test_state_store_rejects_archive_path_before_opening_it(tmp_path):
+    archive_path = make_archive(tmp_path)
+    with pytest.raises(ValueError, match="must not be the Archive DB"):
+        StateStore(archive_path, forbidden_path=archive_path)
+    con = sqlite3.connect(archive_path)
+    assert con.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE name='reader_meta'"
+    ).fetchone()[0] == 0
+    con.close()
+
+
+def test_state_store_detects_archive_without_explicit_forbidden_path(tmp_path):
+    archive_path = make_archive(tmp_path)
+    with pytest.raises(ValueError, match="must not be an Archive DB"):
+        StateStore(archive_path)
+    con = sqlite3.connect(archive_path)
+    assert con.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE name='reader_meta'"
+    ).fetchone()[0] == 0
+    con.close()
+
+
+def test_exact_stock_title_is_pick_even_when_body_is_empty(tmp_path):
+    parser = RuleParser(make_master(tmp_path))
+    signal = parser.parse(article=article_row(tmp_path, "", title="삼성전자..."), mode="shadow")
+    assert signal.signal_type == "ADD_WATCH"
+    assert [stock["code"] for stock in signal.stocks] == ["005930"]
+    assert signal.confidence >= 0.99
+
+
+def test_feature_title_extracts_structured_stock_lines(tmp_path):
+    parser = RuleParser(make_master(tmp_path))
+    row = article_row(tmp_path, "시장 설명\n- 삼성전자\n- SK하이닉스", title="오늘의 특징주")
+    signal = parser.parse(article=row, mode="shadow")
+    assert signal.signal_type == "ADD_WATCH"
+    assert {stock["code"] for stock in signal.stocks} == {"005930", "000660"}
+    assert signal.confidence >= 0.98
+
+
+def test_feature_title_keeps_per_stock_negative_override(tmp_path):
+    parser = RuleParser(make_master(tmp_path))
+    row = article_row(
+        tmp_path,
+        "- 삼성전자\n삼성전자는 추격하지 마세요.\n- SK하이닉스",
+        title="특징주",
+    )
+    signals = parser.parse_all(article=row, mode="shadow")
+    by_type = {signal.signal_type: [stock["code"] for stock in signal.stocks] for signal in signals}
+    assert by_type["DO_NOT_BUY"] == ["005930"]
+    assert by_type["ADD_WATCH"] == ["000660"]
+
+
+def test_feature_name_code_header_inherits_next_line_negative(tmp_path):
+    parser = RuleParser(make_master(tmp_path))
+    row = article_row(
+        tmp_path, "- 삼성전자(005930)\n추격하지 마세요", title="특징주"
+    )
+    signal = parser.parse(article=row, mode="shadow")
+    assert signal.signal_type == "DO_NOT_BUY"
+    assert [stock["code"] for stock in signal.stocks] == ["005930"]
+
+
+def test_macro_title_only_promotes_structured_tail_stocks(tmp_path):
+    parser = RuleParser(make_master(tmp_path))
+    row = article_row(
+        tmp_path,
+        "삼성전자 실적 발표가 있었습니다.\n거시 설명1\n거시 설명2\n거시 설명3\n"
+        "마지막 관심 종목입니다.\n- SK하이닉스",
+        title="다음 주는........",
+    )
+    signal = parser.parse(article=row, mode="shadow")
+    assert signal.signal_type == "ADD_WATCH"
+    assert [stock["code"] for stock in signal.stocks] == ["000660"]
+    assert signal.confidence == 0.96
+
+
+def test_title_change_changes_revision_hash_and_legacy_time_becomes_iso(tmp_path):
+    parser = RuleParser(make_master(tmp_path))
+    first_dir, second_dir = tmp_path / "first", tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    first = parser.parse(article=article_row(first_dir, "", title="삼성전자"), mode="shadow")
+    second = parser.parse(article=article_row(second_dir, "", title="SK하이닉스"), mode="shadow")
+    assert first.article_revision_hash != second.article_revision_hash
+    assert first.posted_at == "2026-08-05T10:00:00+09:00"
+
+
+def test_longest_stock_name_wins_without_substring_duplicate(tmp_path):
+    stocks = make_master(tmp_path).candidates("오늘은 와이엠씨를 관심 있게 봅니다")
+    assert [(stock.code, stock.name) for stock in stocks] == [("100002", "와이엠씨")]
+
+
+def test_revision_hash_preserves_signal_relevant_line_boundaries():
+    assert revision_hash("특징주", "삼성전자 SK하이닉스") != revision_hash(
+        "특징주", "삼성전자\nSK하이닉스"
+    )
+
+
+def test_third_party_selling_is_not_exit_or_feature_add(tmp_path):
+    parser = RuleParser(make_master(tmp_path))
+    row = article_row(
+        tmp_path, "- 삼성전자\n외인들이 삼성전자를 계속 매도중입니다", title="특징주"
+    )
+    signal = parser.parse(article=row, mode="shadow")
+    assert signal.signal_type == "NO_SIGNAL"
+    assert signal.stocks == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "외인들의 삼성전자 손절물량이 출회되고 있습니다",
+        "삼성전자는 비중축소에 해당되지 않는다",
+        "삼성전자 수익실현이 나온다면 시장을 다시 봅니다",
+    ],
+)
+def test_exit_words_without_mentor_exit_instruction_are_blocked(tmp_path, text):
+    parser = RuleParser(make_master(tmp_path))
+    signal = parser.parse(article=article_row(tmp_path, text, title="특징주"), mode="shadow")
+    assert signal.signal_type == "NO_SIGNAL"
+
+
+def test_later_reentry_action_wins_over_earlier_exit_background(tmp_path):
+    parser = RuleParser(make_master(tmp_path))
+    signal = parser.parse(
+        article=article_row(
+            tmp_path,
+            "다른 종목은 수익실현후 삼성전자로 갈아타는 대응이 필요합니다",
+            title="오늘은........",
+        ),
+        mode="shadow",
+    )
+    assert signal.signal_type == "ADD_WATCH"
+    assert [stock["code"] for stock in signal.stocks] == ["005930"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "삼성전자는 좋아 보이지 않습니다",
+        "삼성전자는 홀딩하지 마세요",
+        "삼성전자는 매수 사인이 아닙니다",
+        "삼성전자는 공매도 비중을 체크합니다",
+    ],
+)
+def test_negated_positive_and_market_metric_are_not_add_watch(tmp_path, text):
+    signal = RuleParser(make_master(tmp_path)).parse(
+        article=article_row(tmp_path, text), mode="shadow"
+    )
+    assert signal.signal_type != "ADD_WATCH"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "외인들이 삼성전자를 일부 매도했습니다",
+        "기관은 삼성전자를 전량 매도했습니다",
+    ],
+)
+def test_third_party_explicit_sales_are_not_exit_signals(tmp_path, text):
+    signal = RuleParser(make_master(tmp_path)).parse(
+        article=article_row(tmp_path, text), mode="shadow"
+    )
+    assert signal.signal_type == "NO_SIGNAL"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "삼성전자는 매수 후보가 아닙니다",
+        "삼성전자는 매수 가능하지 않습니다",
+        "삼성전자는 재진입하지 마세요",
+        "삼성전자로 갈아타지 마세요",
+    ],
+)
+def test_all_positive_phrases_honor_suffix_negation(tmp_path, text):
+    signal = RuleParser(make_master(tmp_path)).parse(
+        article=article_row(tmp_path, text), mode="shadow"
+    )
+    assert signal.signal_type != "ADD_WATCH"
+
+
+def test_same_sentence_actions_are_scoped_to_each_stock_clause(tmp_path):
+    signals = RuleParser(make_master(tmp_path)).parse_all(
+        article=article_row(
+            tmp_path, "삼성전자는 관심, SK하이닉스는 추격하지 마세요"
+        ),
+        mode="shadow",
+    )
+    by_type = {item.signal_type: [s["code"] for s in item.stocks] for item in signals}
+    assert by_type == {"DO_NOT_BUY": ["000660"], "ADD_WATCH": ["005930"]}
+
+
+def test_malgo_transition_keeps_each_stock_action_separate(tmp_path):
+    signals = RuleParser(make_master(tmp_path)).parse_all(
+        article=article_row(
+            tmp_path, "삼성전자는 추격하지 말고 SK하이닉스는 관심입니다"
+        ),
+        mode="shadow",
+    )
+    by_type = {item.signal_type: [s["code"] for s in item.stocks] for item in signals}
+    assert by_type == {"DO_NOT_BUY": ["005930"], "ADD_WATCH": ["000660"]}
+
+
+def test_feature_list_malgo_does_not_restore_excluded_stock(tmp_path):
+    signals = RuleParser(make_master(tmp_path)).parse_all(
+        article=article_row(
+            tmp_path, "- 삼성전자 말고 SK하이닉스를 관심", title="특징주"
+        ),
+        mode="shadow",
+    )
+    by_type = {item.signal_type: [s["code"] for s in item.stocks] for item in signals}
+    assert by_type == {"DO_NOT_BUY": ["005930"], "ADD_WATCH": ["000660"]}
+
+
+@pytest.mark.parametrize("connector", ["대신", "대신에"])
+def test_feature_list_daesin_does_not_restore_replaced_stock(tmp_path, connector):
+    signals = RuleParser(make_master(tmp_path)).parse_all(
+        article=article_row(
+            tmp_path, f"- 삼성전자 {connector} SK하이닉스를 관심", title="특징주"
+        ),
+        mode="shadow",
+    )
+    by_type = {item.signal_type: [s["code"] for s in item.stocks] for item in signals}
+    assert by_type == {"DO_NOT_BUY": ["005930"], "ADD_WATCH": ["000660"]}
+
+
+def test_later_positive_overrides_earlier_negated_positive(tmp_path):
+    signal = RuleParser(make_master(tmp_path)).parse(
+        article=article_row(
+            tmp_path, "삼성전자는 매수 후보가 아니지만 지금은 관심입니다"
+        ),
+        mode="shadow",
+    )
+    assert signal.signal_type == "ADD_WATCH"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "삼성전자는 재진입은 안 합니다",
+        "삼성전자는 관심 안 둡니다",
+        "삼성전자는 매수 후보로 보기는 어렵습니다",
+    ],
+)
+def test_conversational_positive_negations_are_not_picks(tmp_path, text):
+    signal = RuleParser(make_master(tmp_path)).parse(
+        article=article_row(tmp_path, text), mode="shadow"
+    )
+    assert signal.signal_type != "ADD_WATCH"
 
 
 def test_first_run_baselines_existing_articles(tmp_path):
@@ -104,6 +360,25 @@ def test_first_run_baselines_existing_articles(tmp_path):
         confidence_threshold=0.95,
     )
     assert reader.run_once()["events"] == 0
+
+
+def test_reader_processes_stock_title_with_truly_empty_body(tmp_path):
+    archive = make_archive(tmp_path, [
+        (10, "삼성전자", "u", "굿머닝", "2026-08-05 10:00:00", "", "",
+         "BODY_COLLECTED", "2026-08-05T10:01:00+09:00", "2026-08-05T10:01:00+09:00")
+    ])
+    state = StateStore(tmp_path / "state.db")
+    reader = MentorSignalReader(
+        archive=ArchiveSource(archive), state=state, parser=RuleParser(make_master(tmp_path)),
+        author_id="굿머닝", mode="shadow", confidence_threshold=0.95,
+    )
+    result = reader.run_once(bootstrap_existing=True)
+    assert result["articles"] == 1
+    assert result["events"] == 1
+    row = state.conn.execute(
+        "SELECT stock_code,signal_type,delivery_status FROM mentor_signal_events"
+    ).fetchone()
+    assert tuple(row) == ("005930", "ADD_WATCH", "shadow")
 
 
 def test_duplicate_is_idempotent_and_revision_is_reprocessed(tmp_path):
@@ -152,7 +427,11 @@ def test_failed_trading_delivery_retries_on_next_cycle(tmp_path, monkeypatch):
 
     def fake_deliver(payload, base_url, web_key, timeout=15.0):
         attempts.append(payload["stock_code"])
-        return (len(attempts) > 1, "ok" if len(attempts) > 1 else "temporary failure")
+        return (
+            len(attempts) > 1,
+            "ok" if len(attempts) > 1 else "temporary failure",
+            len(attempts) == 1,
+        )
 
     monkeypatch.setattr(reader_module, "deliver", fake_deliver)
     state = StateStore(tmp_path / "state.db")
@@ -165,8 +444,47 @@ def test_failed_trading_delivery_retries_on_next_cycle(tmp_path, monkeypatch):
     assert state.conn.execute(
         "SELECT delivery_status FROM mentor_signal_events"
     ).fetchone()[0] == "delivery_failed"
-    reader.run_once()
+    state.conn.execute("UPDATE mentor_signal_events SET next_retry_at=NULL")
+    state.conn.commit()
+    retried = reader.run_once()
     assert state.conn.execute(
         "SELECT delivery_status FROM mentor_signal_events"
     ).fetchone()[0] == "delivered"
     assert attempts == ["000660", "000660"]
+    assert retried["retried"] == 1
+    assert retried["retry_delivered"] == 1
+    assert retried["delivered"] == 1
+
+
+def test_permanent_delivery_rejection_is_not_retried(tmp_path, monkeypatch):
+    archive = make_archive(tmp_path, [
+        (10, "신규글", "u", "굿머닝", "2026-08-05", "SK하이닉스를 관심 있게 봅니다",
+         "SK하이닉스를 관심 있게 봅니다", "BODY_COLLECTED", "2026-08-05", "2026-08-05")
+    ])
+    monkeypatch.setattr(
+        reader_module, "deliver", lambda *args, **kwargs: (False, "HTTP 422", False)
+    )
+    state = StateStore(tmp_path / "state.db")
+    reader = MentorSignalReader(
+        archive=ArchiveSource(archive), state=state, parser=RuleParser(make_master(tmp_path)),
+        author_id="굿머닝", mode="paper", confidence_threshold=0.95,
+        trading_base_url="http://trading", web_key="key",
+    )
+    reader.run_once(bootstrap_existing=True)
+    assert state.conn.execute(
+        "SELECT delivery_status FROM mentor_signal_events"
+    ).fetchone()[0] == "delivery_rejected"
+    assert state.pending() == []
+
+
+def test_retry_backlog_query_is_bounded(tmp_path):
+    state = StateStore(tmp_path / "state.db")
+    payload = {
+        "article_revision_hash": "a" * 64, "signal_type": "ADD_WATCH",
+        "confidence": 0.97, "evidence": "e", "posted_at": None,
+        "detected_at": "2026-08-07T00:00:00+09:00", "stocks": [],
+    }
+    for number in range(25):
+        event = {**payload, "article_id": str(number)}
+        state.insert_event(event, {"name": "삼성전자", "code": "005930"})
+    assert len(state.pending(limit=10)) == 10

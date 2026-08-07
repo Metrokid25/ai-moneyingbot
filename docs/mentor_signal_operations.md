@@ -49,7 +49,12 @@ Shadow 관찰과 작성자/마스터 확인 후에만 `--mode paper`로 바꾼�
 
 - Archive DB 잠금/일시 읽기 실패: 체크포인트는 성공한 주기 끝에서만 이동한다.
   상주 모드는 다음 주기에 재시도한다.
-- Trading API 실패: Reader 행은 `delivery_failed`로 남고 다음 주기 시작 때 재시도한다.
+- Trading API 일시 실패: Reader 행은 `delivery_failed`로 남고 30초부터 최대 1시간의
+  exponential backoff로, 주기당 최대 10건만 재시도한다. 신규 Archive 스캔을 먼저
+  수행하므로 오래된 장애 backlog가 새 글 판독을 막지 않는다.
+- 설정 누락과 영구 4xx는 `delivery_rejected`로 종료해 무한 재시도하지 않는다.
+- Archive의 `posted_at`이 레거시 `YYYY.MM.DD. HH:MM`/naive 형식이어도 Reader가
+  Asia/Seoul 오프셋이 있는 ISO-8601로 변환한 뒤 API에 전달한다.
 - 재시작: `reader_meta`의 `last_article_id`/`last_scan_at`에서 이어간다.
 - 상태 DB 손상: 프로세스를 중지하고 파일을 백업한 뒤 새 DB로 시작한다. 새 DB 첫
   실행은 현시점 기준점만 잡으므로 과거 전체가 재전송되지 않는다.
@@ -70,3 +75,8 @@ Shadow 관찰과 작성자/마스터 확인 후에만 `--mode paper`로 바꾼�
   --trading-repo C:\trading-bot `
   --trading-python C:\trading-bot\.venv\Scripts\python.exe
 ```
+
+2026-08-07 로컬 검증 기준: Reader 저장소 전체 `817 passed`, Trading 저장소 전체
+`483 passed, 1 skipped`, Fixture E2E에서 `SK하이닉스(000660)` 등록 → `trading.db` 감사행 →
+일반 관심종목 조회 즉시 노출 → Paper Runner 당일 제외·익일 편입까지 통과했다.
+운영 미니PC 배포/프로세스 재기동은 별도 운영 단계이며 배포 전에는 shadow를 유지한다.

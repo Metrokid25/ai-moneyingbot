@@ -1,5 +1,21 @@
 # 인수인계 대장 (PC ↔ 노트북)
 
+## 2026-08-07 — Mentor Signal Reader 완료 하드닝 (feature/mentor-signal-reader)
+
+- 43,506건 아카이브 분석을 반영해 `종목명 제목`, `특징주`,
+  `오늘은/이번주는/다음주는` 하단 종목 블록을 별도 판독한다.
+- 제목+줄 경계 revision hash, 레거시 시각 ISO/KST 변환, query_only 재확인,
+  Archive/상태 DB 동일 파일 차단, 종목명 trie/최장 일치, 멘토 기준점 원자화,
+  종목별 혼합 행동 이벤트를 구현했다.
+- 외인·기관 매도/공매도를 EXIT로 오인하거나 뉴스 종목을 특징주 기본 픽으로
+  되살리는 경로를 차단했다.
+- bounded exponential retry와 영구 4xx 거부를 분리했고 `말고/대신/반면`,
+  `안/어렵` 부정 표현까지 종목별로 보수 판독한다.
+- 전체 `817 passed`; 실제 FastAPI Fixture E2E에서 관심종목 등록과 Paper Runner
+  당일 제외·익일 반영을 확인했다. 실전 주문 경로는 변경·호출하지 않았다.
+- 미니PC 배포/운영 프로세스 재기동/paper 전환은 수행하지 않았으며 최초 운영은
+  반드시 shadow 관찰부터 시작한다.
+
 ## 2026-08-05 — Mentor Signal Reader (feature/mentor-signal-reader)
 
 - Archive `articles`를 SQLite read-only URI로 조회하는 독립 Reader를 추가했다.

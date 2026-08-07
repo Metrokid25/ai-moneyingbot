@@ -51,22 +51,26 @@ def main() -> int:
         print("MENTOR_STOCK_MASTER_PATH is required", file=sys.stderr)
         return 2
     aliases_raw = os.getenv("MENTOR_STOCK_ALIASES_PATH", "")
-    master = StockMasterSnapshot(Path(master_path_raw), Path(aliases_raw) if aliases_raw else None)
-    notifier = send_telegram if telegram_configured() else None
     try:
+        master = StockMasterSnapshot(Path(master_path_raw), Path(aliases_raw) if aliases_raw else None)
+        notifier = send_telegram if telegram_configured() else None
         reader = MentorSignalReader(
-            archive=ArchiveSource(archive_path), state=StateStore(state_path),
+            archive=ArchiveSource(archive_path),
+            state=StateStore(state_path, forbidden_path=archive_path),
             parser=RuleParser(master), author_id=os.getenv("MENTOR_AUTHOR_ID", "").strip(),
             mode=args.mode,
             confidence_threshold=float(os.getenv("MENTOR_SIGNAL_CONFIDENCE_THRESHOLD", "0.95")),
             trading_base_url=os.getenv("TRADING_BOT_BASE_URL", ""),
             web_key=os.getenv("TRADING_BOT_WEB_KEY", ""), notifier=notifier,
         )
-    except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+        poll_seconds = int(os.getenv("MENTOR_SIGNAL_POLL_SECONDS", "60"))
+        if poll_seconds < 1:
+            raise ValueError("MENTOR_SIGNAL_POLL_SECONDS must be at least 1")
+    except (OSError, ValueError, RuntimeError, sqlite3.Error, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     if args.loop:
-        reader.run_loop(int(os.getenv("MENTOR_SIGNAL_POLL_SECONDS", "60")))
+        reader.run_loop(poll_seconds)
         return 0
     print(json.dumps(reader.run_once(bootstrap_existing=args.bootstrap_existing), ensure_ascii=False))
     return 0
