@@ -44,6 +44,7 @@ DEFAULT_BACKUPS_DIR = PROJECT_ROOT / "backups"
 DEFAULT_STATE_DIR = PROJECT_ROOT / "state"
 DEFAULT_REPORTS_DIR = PROJECT_ROOT / "reports"
 DEFAULT_LOCK_STALE_MINUTES = 30.0
+OFF_HOURS_SESSION_KEEPALIVE_SECONDS = 3600
 LOCK_VERSION = 1
 BLOCK_SIGNAL_PATTERNS = (
     ("captcha", re.compile(r"\[DEBUG\].*captcha.*detected|captcha detected", re.IGNORECASE)),
@@ -1040,6 +1041,16 @@ def clear_session_alert(config: LoopConfig) -> None:
     clear_alert_state(_session_alert_state_path(config))
 
 
+def check_off_hours_session(session: object, list_url: str) -> tuple[bool | None, str]:
+    """Probe the authoritative member API without collecting articles."""
+    from member_api import check_member_login, parse_member_list_url  # noqa: WPS433
+
+    member = parse_member_list_url(list_url)
+    if member is None:
+        return None, "not a member-list url"
+    return check_member_login(session, member[0], member[1])
+
+
 def run_loop(
     config: LoopConfig,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
@@ -1049,6 +1060,7 @@ def run_loop(
     realtime_index_runner: Callable[..., int] | None = None,
     batch_recollect_runner: Callable[..., int] | None = None,
     interactive_login_enter_waiter: Callable[[], None] | None = None,
+    off_hours_session_checker: Callable[[object, str], tuple[bool | None, str]] | None = None,
 ) -> int:
     if is_placeholder_url(config.list_url):
         print("[archive_loop] ERROR: --list-url looks like a placeholder; refusing to run.")
@@ -1092,12 +1104,42 @@ def run_loop(
                 return 0
 
             decision = schedule_decision_for(config, now)
+            if not decision.active and loop_realtime_session is not None:
+                decision = ScheduleDecision(
+                    active=False,
+                    interval_seconds=min(
+                        decision.interval_seconds,
+                        OFF_HOURS_SESSION_KEEPALIVE_SECONDS,
+                    ),
+                    label=decision.label,
+                )
             update_status_for_schedule_decision(config, status, run_number, decision, now)
             if not decision.active:
                 path = append_schedule_skip_log(config, run_number, now, decision)
                 print(f"[archive_loop] market schedule inactive: {decision.label}")
                 print(f"[archive_loop] next_interval_seconds: {decision.interval_seconds}")
                 print(f"[archive_loop] log       : {path}")
+                if loop_realtime_session is not None:
+                    checker = off_hours_session_checker or check_off_hours_session
+                    logged_in, detail = checker(loop_realtime_session, config.list_url)
+                    if logged_in is False:
+                        stop_reason = "off-hours session keepalive detected login expiry"
+                        status["last_return_code"] = 1
+                        try:
+                            alert_on_session_expiry(config, loop_realtime_session, clock())
+                        except Exception as exc:  # 알림 실패가 루프를 죽이면 안 됨
+                            print(f"[archive_loop] session-expiry alert skipped: {exc}")
+                        print(f"[archive_loop] stopping: {stop_reason}")
+                        finalize_status(config, status, stop_reason)
+                        return 1
+                    if logged_in is True:
+                        clear_session_alert(config)
+                        print("[archive_loop] off-hours session keepalive: ok")
+                    else:
+                        print(
+                            "[archive_loop] off-hours session keepalive: "
+                            f"inconclusive ({redact_secrets(detail)})"
+                        )
                 if run_number < max_runs:
                     sleeper(decision.interval_seconds)
                 continue

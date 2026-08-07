@@ -38,6 +38,79 @@
 
 ---
 
+## 2026-08-07 · 미니PC 운영 배포 · main `5475156` (1시간 재알림 + 장외 세션 keepalive 라이브 검증)
+
+**반영**
+- 오너 지시로 세션 만료 성공 알림을 24시간에서 1시간 주기로 바꾼 `3fb7b18`을 작업 브랜치와 원격
+  `main`에 fast-forward 반영했다. 이어진 `5475156`은 이 커밋을 포함하며 23:00~06:00 수집 중단 중에도
+  동일 persistent 세션에서 멤버 REST API keepalive를 최대 1시간 간격으로 수행한다.
+- 미니PC 운영 checkout을 `ead7188 → 3fb7b18 → 5475156`으로 ff-only 갱신했다. 보호 대상 미추적
+  `scripts/_step3_verify_v2.py`는 그대로 보존했고 RAG runtime·다른 Python은 수정하거나 종료하지 않았다.
+- Watchdog을 일시 차단하고 Archive PID/자식 Chrome만 선택 정리했다. 첫 종료 검증은 프로세스 소멸 반영이
+  늦어 fail-closed됐지만 후속 조회에서 잔여 PID 0을 확인했고, 예약 재시작 후 08:50 단일 controller로 안착했다.
+
+**라이브 검증**
+- 배포된 `session_alert.REMINDER_INTERVAL_HOURS=1.0`, 기존 06:00 만료 상태에 대한
+  `should_send(...)=True`를 읽기 전용으로 확인했다. 실제 텔레그램 강제 발송은 하지 않았다.
+- 로그인 복구 후 DB `max(article_id)`는 173921→173972로 증가했고 최신 표본은 모두
+  `BODY_COLLECTED`, `attempt_count=1`, 오류 없음이다.
+- 첫 정상 회차는 08:50:47~09:20:52, `returncode=0`, `latest_id=173972`; 성공 후
+  `state/session_alert.json`이 자동 삭제됐다.
+- 사후 60초 healthcheck는 `HEALTHY`, rc=0. controller instance 1개, CollectLoop Running,
+  Watchdog 09:23 자동발화 결과 0, DailySummary 정상 대기, `HEAD == origin/main == 5475156`이다.
+
+**남은 자연 검증**
+- 1시간 재알림은 다음 실제 code-0004 지속 상황에서 확인한다. 장외 keepalive의 서버측 세션 유지 효과는
+  23:00~06:00 경계를 한 번 통과한 뒤 다음날 06시 REST 수집 성공 여부로 확인한다.
+
+---
+
+## 2026-08-07 · 미니PC · 브랜치 `agent/archive-offhours-session-keepalive-20260807` (장외 세션 keepalive)
+
+**운영 사고와 복구**
+- 08-05 headed 재로그인 후 정상 수집됐지만 23:00~06:00 무요청 구간을 지난 08-06 06시 첫 REST 요청부터
+  `member_api code=0004`가 반복됐다. 로컬 쿠키 만료값과 별개로 서버측 유휴 세션이 끊긴 정황이다.
+- 08-07 headed 재로그인, persistent 프로필 재개방 API 프로브, CollectLoop 재기동을 완료했다. DB max id가
+  173921→173972로 증가했고 단일 controller·락·headless 프로세스가 정상임을 확인했다.
+
+**재발 방지 변경**
+- 23:00~06:00 글 수집 중단은 유지하면서 persistent realtime 세션에서만 멤버 REST API 로그인 프로브를
+  최대 1시간 간격으로 수행한다. HTML 파싱이나 별도 subprocess를 사용하지 않는다.
+- `True`는 알림 상태를 리셋하고 대기, 일시오류 `None`은 루프를 유지해 다음 시간에 재시도, code-0004 확정
+  `False`는 기존 세션만료 알림 후 종료한다. `is_block_error`와 browser 로그인 휴리스틱은 변경하지 않았다.
+- 원격 main의 별도 변경 `3fb7b18`(만료 지속 중 1시간마다 재알림)을 먼저 ff-only 반영해 함께 검증했다.
+
+**검증과 상태**
+- 집중 테스트 82 passed, 전체 suite 765 passed (`PYTHONUTF8=1`), `py_compile`과 `git diff --check` 통과.
+- 정확성·운영 결합·일시오류·보안 관점 리뷰에서 확정 문제를 수정했고 P0~P3 잔여 없음.
+- 변경은 별도 worktree에 미커밋 상태다. 오너 승인 전 commit/push/main 반영/운영 재시작은 하지 않는다.
+- 실제 서버 세션 유지 효과는 23:00~06:00 경계를 한 번 통과한 뒤 다음날 06시 라이브 검증이 필요하다.
+
+---
+
+## 2026-08-05 · 미니PC · 브랜치 `agent/archive-hourly-session-reminder-20260805` (세션 만료 매시간 재알림)
+
+**변경**
+- 새벽 06:00에 `member_api code=0004`로 Archive 수집이 중단됐지만 기존 24시간 dedup 때문에 후속 알림이
+  없었던 운영 사례를 반영해, 세션 만료 성공 알림의 기본 리마인더 간격을 24시간에서 **1시간**으로 변경했다.
+- 최초 알림, 59분 이내 억제, 정확히 60분 후 재알림, 만료 지속 시 이후 매시간 재알림을 테스트로 고정했다.
+- 로그인 판정(`check_member_login`의 code 0004), 1회 재프로브, 발송실패 30분 하한, 정상 복귀 시 상태 리셋,
+  RAG 텔레그램 재사용과 시크릿 방어는 변경하지 않았다.
+
+**검증·리뷰**
+- 집중 테스트 `33 passed`, 전체 suite `762 passed in 32.05s`, 모두 `PYTHONUTF8=1`, rc=0.
+- `git diff --check` rc=0. 실제 Watchdog 트리거 `PT1H`를 확인해 만료 지속 중 매시간 재프로브·재알림 경로가
+  성립함을 검증했다.
+- 정확성·운영 결합·실패 백오프·보안/소유권 관점 리뷰에서 P0~P3 없음. 변경은 Archive 알림 코드·테스트·
+  운영문서와 이 인수인계 항목에만 한정했다.
+
+**상태/다음 단계**
+- 변경은 별도 worktree에 미커밋 상태다. 오너 확인 전 commit/push/main 반영/운영 태스크 재시작은 하지 않는다.
+- 승인 후 main ff-only 반영 → 미니PC Archive 운영 checkout ff-only 갱신 → 안전 재시작 → healthcheck와 실제
+  시간 경계 알림을 라이브 검증한다. 현재 code 0004 세션 만료는 별도 headed 재로그인이 필요하다.
+
+---
+
 ## 2026-08-03 · 미니PC 운영 배포 · 태그 `deploy-baseline-20260803` / commit `3fec893` (RAG 증분색인 실가동)
 
 **배포 결과**

@@ -8,7 +8,7 @@
 - 트리거: member API 프로브(check_member_login)가 False(로그인 필요/code 0004 계열) 확정 시.
   순단(일시적 네트워크/게이트웨이 블립) 방어를 위해 1회 재프로브 후에만 알림.
 - 알림 주체 구분: 메시지 첫 줄에 "[Archive] 세션 만료 감지" 프리픽스 → RAG 색인 알림과 안 섞임.
-- 중복 방지: 만료 지속 중 매 주기 재발송 금지. 최초 1회 + 이후 24시간 간격 리마인더.
+- 중복 방지: 만료 지속 중 매 주기 재발송 금지. 최초 1회 + 이후 1시간 간격 리마인더.
   재로그인으로 정상 복귀하면 상태를 리셋(다음 만료 때 즉시 재알림).
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 ALERT_PREFIX = "[Archive] 세션 만료 감지"
-REMINDER_INTERVAL_HOURS = 24.0
+REMINDER_INTERVAL_HOURS = 1.0
 # 발송 실패(예: 잘못된 토큰) 시 재시작마다 무한 재시도되는 스팸을 막는 하한.
 # 순단성 실패는 이 간격 뒤 재시도되고, 지속 실패는 이 간격보다 자주 시도하지 않는다.
 FAILURE_RETRY_FLOOR_MINUTES = 30.0
@@ -71,7 +71,7 @@ def should_send(
 ) -> bool:
     """중복 방지 판정.
 
-    - 성공 발송(last_alert_at) 후 리마인더 간격 안이면 억제(최초 1회 + 24h 리마인더).
+    - 성공 발송(last_alert_at) 후 리마인더 간격 안이면 억제(최초 1회 + 1h 리마인더).
     - 시도(last_attempt_at) 후 실패-백오프 하한 안이면 억제(잘못된 토큰 스팸 방지).
     둘 다 통과해야 발송.
     """
@@ -138,7 +138,7 @@ def maybe_alert_session_expiry(
     sent_ok = bool(sender(text))
 
     # 시도는 성공/실패 무관 항상 기록(last_attempt_at) → 실패 시 하한 간격 백오프.
-    # 성공 시에만 last_alert_at 기록 → 24h 리마인더 dedup의 기준.
+    # 성공 시에만 last_alert_at 기록 → 1h 리마인더 dedup의 기준.
     state["last_attempt_at"] = now.isoformat()
     if sent_ok:
         state["last_alert_at"] = now.isoformat()

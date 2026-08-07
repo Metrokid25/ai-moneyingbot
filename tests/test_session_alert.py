@@ -39,16 +39,17 @@ NOW = datetime(2026, 7, 6, 9, 0, 0)
 # ── should_send (중복 방지 판정) ──────────────────────────────────────────────
 
 def test_should_send_first_time_true():
+    assert session_alert.REMINDER_INTERVAL_HOURS == 1.0
     assert session_alert.should_send({}, NOW) is True
 
 
 def test_should_send_within_interval_false():
-    state = {"last_alert_at": (NOW - timedelta(hours=5)).isoformat()}
+    state = {"last_alert_at": (NOW - timedelta(minutes=59)).isoformat()}
     assert session_alert.should_send(state, NOW) is False
 
 
 def test_should_send_after_interval_true():
-    state = {"last_alert_at": (NOW - timedelta(hours=25)).isoformat()}
+    state = {"last_alert_at": (NOW - timedelta(hours=1)).isoformat()}
     assert session_alert.should_send(state, NOW) is True
 
 
@@ -122,7 +123,7 @@ def test_none_probe_does_not_send(tmp_path):
 def test_dedup_no_resend_within_interval(tmp_path):
     state_path = tmp_path / "session_alert.json"
     state_path.write_text(
-        '{"last_alert_at": "' + (NOW - timedelta(hours=1)).isoformat() + '"}',
+        '{"last_alert_at": "' + (NOW - timedelta(minutes=59)).isoformat() + '"}',
         encoding="utf-8",
     )
     checker = _Checker([(False, "login_required: code=0004")])
@@ -139,7 +140,7 @@ def test_dedup_no_resend_within_interval(tmp_path):
 def test_reminder_resends_after_interval(tmp_path):
     state_path = tmp_path / "session_alert.json"
     state_path.write_text(
-        '{"last_alert_at": "' + (NOW - timedelta(hours=25)).isoformat() + '"}',
+        '{"last_alert_at": "' + (NOW - timedelta(hours=1)).isoformat() + '"}',
         encoding="utf-8",
     )
     checker = _Checker([(False, "login_required: code=0004")])
@@ -151,6 +152,21 @@ def test_reminder_resends_after_interval(tmp_path):
 
     assert res["alerted"] is True
     assert len(sender.messages) == 1
+
+
+def test_persistent_expiry_realerts_every_hour(tmp_path):
+    state_path = tmp_path / "session_alert.json"
+    sender = _Sender()
+
+    for offset_minutes, expected_count in ((0, 1), (59, 1), (60, 2), (119, 2), (120, 3)):
+        res = session_alert.maybe_alert_session_expiry(
+            _Checker([(False, "login_required: code=0004")]),
+            state_path=state_path,
+            now=NOW + timedelta(minutes=offset_minutes),
+            sender=sender,
+        )
+        assert res["expired"] is True
+        assert len(sender.messages) == expected_count
 
 
 def test_recovery_true_clears_state(tmp_path):

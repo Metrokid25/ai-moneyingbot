@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 from datetime import datetime
@@ -213,6 +214,7 @@ def test_market_realtime_interactive_login_prepares_before_inactive_skip(monkeyp
             AssertionError("body collection should not run while market schedule is inactive")
         ),
         interactive_login_enter_waiter=lambda: enter_waits.append("enter"),
+        off_hours_session_checker=lambda _session, _url: (True, "ok"),
     )
 
     out = capsys.readouterr().out
@@ -230,6 +232,115 @@ def test_market_realtime_interactive_login_prepares_before_inactive_skip(monkeyp
     assert "[LOGIN] 엔터 입력 대기 중..." in out
     assert "[archive_loop] interactive login preparation finished" in out
     assert session.closed is True
+    assert session.close_count == 1
+
+
+def test_market_realtime_inactive_keeps_session_alive_hourly(monkeypatch, tmp_path, capsys):
+    session = FakeSession()
+    slept = []
+    probes = []
+    monkeypatch.setattr(archive_loop, "readonly_archive_summary", _archive_summary)
+    config = _loop_config(
+        tmp_path,
+        market_schedule=True,
+        realtime_index=True,
+        max_runs=2,
+    )
+
+    rc = archive_loop.run_loop(
+        config,
+        sleeper=slept.append,
+        clock=lambda: datetime(2026, 6, 2, 23, 30, 0),
+        realtime_browser_session_factory=lambda: session,
+        realtime_index_runner=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("title collection should not run while market schedule is inactive")
+        ),
+        batch_recollect_runner=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("body collection should not run while market schedule is inactive")
+        ),
+        off_hours_session_checker=lambda seen, url: (
+            probes.append((seen, url)) or (True, "ok")
+        ),
+    )
+
+    assert rc == 0
+    assert slept == [archive_loop.OFF_HOURS_SESSION_KEEPALIVE_SECONDS]
+    assert probes == [(session, config.list_url), (session, config.list_url)]
+    status = json.loads(config.status_file.read_text(encoding="utf-8"))
+    assert status["next_interval_seconds"] == archive_loop.OFF_HOURS_SESSION_KEEPALIVE_SECONDS
+    assert "off-hours session keepalive: ok" in capsys.readouterr().out
+    assert session.close_count == 1
+
+
+def test_market_realtime_inactive_stops_and_alerts_on_expired_session(
+    monkeypatch, tmp_path, capsys
+):
+    session = FakeSession()
+    alerts = []
+    monkeypatch.setattr(archive_loop, "readonly_archive_summary", _archive_summary)
+    monkeypatch.setattr(
+        archive_loop,
+        "alert_on_session_expiry",
+        lambda config, seen, now: alerts.append((config, seen, now)),
+    )
+    config = _loop_config(
+        tmp_path,
+        market_schedule=True,
+        realtime_index=True,
+        max_runs=2,
+    )
+
+    rc = archive_loop.run_loop(
+        config,
+        sleeper=lambda _seconds: (_ for _ in ()).throw(
+            AssertionError("expired session must stop before sleeping")
+        ),
+        clock=lambda: datetime(2026, 6, 2, 23, 30, 0),
+        realtime_browser_session_factory=lambda: session,
+        off_hours_session_checker=lambda _session, _url: (
+            False,
+            "login_required: member_api code=0004",
+        ),
+    )
+
+    assert rc == 1
+    assert len(alerts) == 1
+    assert alerts[0][1] is session
+    status = json.loads(config.status_file.read_text(encoding="utf-8"))
+    assert status["is_running"] is False
+    assert status["last_return_code"] == 1
+    assert status["stop_reason"] == "off-hours session keepalive detected login expiry"
+    assert "off-hours session keepalive detected login expiry" in capsys.readouterr().out
+    assert session.close_count == 1
+
+
+def test_market_realtime_inactive_keeps_running_on_inconclusive_probe(
+    monkeypatch, tmp_path, capsys
+):
+    session = FakeSession()
+    slept = []
+    monkeypatch.setattr(archive_loop, "readonly_archive_summary", _archive_summary)
+    config = _loop_config(
+        tmp_path,
+        market_schedule=True,
+        realtime_index=True,
+        max_runs=2,
+    )
+
+    rc = archive_loop.run_loop(
+        config,
+        sleeper=slept.append,
+        clock=lambda: datetime(2026, 6, 2, 23, 30, 0),
+        realtime_browser_session_factory=lambda: session,
+        off_hours_session_checker=lambda _session, _url: (
+            None,
+            "member_api_request_failed: socket hang up",
+        ),
+    )
+
+    assert rc == 0
+    assert slept == [archive_loop.OFF_HOURS_SESSION_KEEPALIVE_SECONDS]
+    assert "off-hours session keepalive: inconclusive" in capsys.readouterr().out
     assert session.close_count == 1
 
 

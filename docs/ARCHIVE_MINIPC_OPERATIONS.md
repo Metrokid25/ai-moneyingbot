@@ -40,8 +40,11 @@
 | 로그 쿠키 이중방어: `member_api._clean_error()`(Call log 제거) + `redact_secrets()`(기록 시 마스킹) | Playwright 예외 문자열에 NID_AUT/NID_SES 세션쿠키가 평문 포함(세션 탈취 위험). 과거로그 정리는 `scripts/scrub_log_secrets.py`(오늘 로그는 라이브 append 레이스 때문에 스킵함) |
 
 **상주 루프** `scripts/run_daily_archive_loop.py` (`market_schedule_decision`, 코드와 일치 검증):
-08-16시 300s / 16-18시 600s / 18-23시 1800s / **23-06시 중단** / 06-07시 1800s / 07-08시 600s.
+08-16시 300s / 16-18시 600s / 18-23시 1800s / **23-06시 수집 중단** / 06-07시 1800s / 07-08시 600s.
 사이클 = 제목수집(`index_tail_realtime.run_realtime_index`) + 본문수집(`batch_recollect`, 무인은 `interactive=False`).
+23-06시에는 글을 수집하지 않되 persistent 세션의 서버측 유휴 만료를 막기 위해 동일한 멤버 REST API
+로그인 프로브(`check_member_login`)만 최대 1시간 간격으로 호출한다. `True`면 대기만 계속하고, 일시 오류
+(`None`)는 루프를 유지해 다음 시간에 재시도하며, code-0004 확정(`False`)이면 기존 세션만료 알림 후 중단한다.
 
 ## 3. 운영 — 작업 스케줄러 태스크 3종
 
@@ -55,7 +58,7 @@
 새 env 키 금지. 메시지 구분은 첫 줄 프리픽스: `[Archive] 세션 만료 감지` / `[Archive] 일일 수집 요약`.
 
 **세션만료 알림**: `scripts/session_alert.py` + 루프 stop 경로 배선(`alert_on_session_expiry` @ run_daily_archive_loop).
-code-0004 확정 + 1회 재프로브 → 발송. dedup = 최초 1회 + 24h 리마인더 + 발송실패 30분 하한. 상태 `state/session_alert.json`, 정상 사이클마다 리셋.
+code-0004 확정 + 1회 재프로브 → 발송. dedup = 최초 1회 + **1시간 리마인더** + 발송실패 30분 하한. 상태 `state/session_alert.json`, 정상 사이클마다 리셋.
 
 ## 4. 운영 절차 (복붙용)
 
