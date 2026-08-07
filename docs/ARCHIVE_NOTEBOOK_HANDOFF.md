@@ -1,5 +1,18 @@
 # Archive봇 노트북 개발 인수인계
 
+## 2026-08-07 Mentor Signal Reader 이어하기
+
+- 원격 `main`에는 Mentor Signal Reader와 최신 Archive 운영 변경이 통합돼 있다.
+  기능 기준점은 `4d488c7`이며 실제 시작점은 이 문서를 포함한 최신 `origin/main`이다.
+- 검증 기준은 Archive/Reader `823 passed`, Trading `486 passed, 1 skipped`, Paper 전용
+  Fixture E2E 통과다. 실전 주문 코드는 활성화하거나 호출하지 않았다.
+- 미니PC 배포는 Codex 자동화 `pc-16`으로 2026-08-07 16:10 KST 한 번 예약됐다.
+  Reader는 Shadow로만 기동하며 Paper 자동등록 전환은 별도 승인 사항이다.
+- 노트북 첫 작업은 아래 §2 clean/pull 검증 후 `HANDOFF.md` 최상단의 예약 실행 결과를
+  확인하는 것이다. 결과가 없거나 실패로 기록돼 있으면 임의 재배포하지 말고 상태를 보고한다.
+- 다음 개발 범위는 Shadow 판독 로그의 오탐·누락·지연 분석과 회귀 테스트 보강이다.
+  운영 Archive DB, Trading DB, 미니PC 프로세스와 시크릿은 노트북에서 변경하지 않는다.
+
 > 노트북의 Archive 개발 작업 시작 정본이다. 채팅 요약만 믿지 말고 이 문서,
 > `HANDOFF.md` 최신 항목, `docs/OWNERSHIP.md`,
 > `docs/ARCHIVE_MINIPC_OPERATIONS.md`를 읽은 뒤 코드로 재확인한다.

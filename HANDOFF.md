@@ -1,5 +1,19 @@
 # 인수인계 대장 (PC ↔ 노트북)
 
+## 2026-08-07 — 노트북 이관 및 미니PC Shadow 배포 예약
+
+- Mentor Signal Reader 기능과 최신 Archive main을 통합한 `4d488c7`을 원격 `main`에
+  fast-forward 반영했다. 기능 브랜치도 같은 내용을 보존한다.
+- main 통합 후 전체 `823 passed`, Trading 전체 `486 passed, 1 skipped`, Fixture E2E
+  (`registered` → 일반 watch 즉시 노출 → Paper 당일 제외·익일 편입)를 통과했다.
+- Codex 자동화 `pc-16`이 2026-08-07 16:10 KST에 미니PC 배포를 한 번 실행한다.
+  Archive/Trading dirty 상태·테스트·DB 백업/quick_check를 먼저 확인하며 실패 시 중단한다.
+- Reader는 Archive `mode=ro`/`query_only`, 별도 상태 DB, `shadow`로만 기동한다.
+  Paper 자동등록과 실전 주문은 활성화하지 않는다.
+- 출근 후 노트북에서는 clean 전용 worktree에서 `git pull --ff-only origin main` 후
+  `docs/ARCHIVE_NOTEBOOK_HANDOFF.md`를 읽는다. 미니PC 배포를 중복 실행하지 말고
+  이 항목 뒤에 추가될 예약 실행 결과와 Shadow 로그부터 확인한다.
+
 ## 2026-08-07 — Mentor Signal Reader 완료 하드닝 (feature/mentor-signal-reader)
 
 - 43,506건 아카이브 분석을 반영해 `종목명 제목`, `특징주`,
