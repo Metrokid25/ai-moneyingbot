@@ -11,6 +11,33 @@
 
 ---
 
+## 2026-08-07 · 미니PC 운영 배포 · main `5475156` (1시간 재알림 + 장외 세션 keepalive 라이브 검증)
+
+**반영**
+- 오너 지시로 세션 만료 성공 알림을 24시간에서 1시간 주기로 바꾼 `3fb7b18`을 작업 브랜치와 원격
+  `main`에 fast-forward 반영했다. 이어진 `5475156`은 이 커밋을 포함하며 23:00~06:00 수집 중단 중에도
+  동일 persistent 세션에서 멤버 REST API keepalive를 최대 1시간 간격으로 수행한다.
+- 미니PC 운영 checkout을 `ead7188 → 3fb7b18 → 5475156`으로 ff-only 갱신했다. 보호 대상 미추적
+  `scripts/_step3_verify_v2.py`는 그대로 보존했고 RAG runtime·다른 Python은 수정하거나 종료하지 않았다.
+- Watchdog을 일시 차단하고 Archive PID/자식 Chrome만 선택 정리했다. 첫 종료 검증은 프로세스 소멸 반영이
+  늦어 fail-closed됐지만 후속 조회에서 잔여 PID 0을 확인했고, 예약 재시작 후 08:50 단일 controller로 안착했다.
+
+**라이브 검증**
+- 배포된 `session_alert.REMINDER_INTERVAL_HOURS=1.0`, 기존 06:00 만료 상태에 대한
+  `should_send(...)=True`를 읽기 전용으로 확인했다. 실제 텔레그램 강제 발송은 하지 않았다.
+- 로그인 복구 후 DB `max(article_id)`는 173921→173972로 증가했고 최신 표본은 모두
+  `BODY_COLLECTED`, `attempt_count=1`, 오류 없음이다.
+- 첫 정상 회차는 08:50:47~09:20:52, `returncode=0`, `latest_id=173972`; 성공 후
+  `state/session_alert.json`이 자동 삭제됐다.
+- 사후 60초 healthcheck는 `HEALTHY`, rc=0. controller instance 1개, CollectLoop Running,
+  Watchdog 09:23 자동발화 결과 0, DailySummary 정상 대기, `HEAD == origin/main == 5475156`이다.
+
+**남은 자연 검증**
+- 1시간 재알림은 다음 실제 code-0004 지속 상황에서 확인한다. 장외 keepalive의 서버측 세션 유지 효과는
+  23:00~06:00 경계를 한 번 통과한 뒤 다음날 06시 REST 수집 성공 여부로 확인한다.
+
+---
+
 ## 2026-08-07 · 미니PC · 브랜치 `agent/archive-offhours-session-keepalive-20260807` (장외 세션 keepalive)
 
 **운영 사고와 복구**
