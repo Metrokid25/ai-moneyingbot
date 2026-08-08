@@ -1,5 +1,22 @@
 # 인수인계 대장 (PC ↔ 노트북)
 
+## 2026-08-09 — 미니PC Mentor Reader Shadow 배포 완료
+
+- 미니PC Archive main `bf7f4c2`, Trading main `eb0ea59`를 fast-forward 반영했다.
+  보호 미추적 `scripts/_step3_verify_v2.py`와 Trading `AGENTS.md`의 SHA-256은 불변이다.
+- 미니PC 전체 테스트는 Archive/Reader `823 passed`, Trading `517 passed`이며
+  운영 전후 `trading.db`, `paper.db`, `mentor_signals.db` quick_check가 모두 `ok`다.
+- 종목 마스터 3,794개를 `C:\bot-shared\mentor-stock-master.json`으로 내보냈다.
+  Reader 상태 DB는 Archive와 분리된 `state\mentor_signals.db`이고 최초 기준점은
+  `article_id=174023`이다.
+- Reader는 WMI 부모 아래 `--mode shadow --loop`와 비버퍼 로그로 상주한다.
+  `logs\mentor_signal_reader.log`에서 첫 주기 0건 정상 처리를 확인했다.
+- Archive 연결은 `query_only=1`, 쓰기 시도 차단을 실측했다. 운영 Trading 감사행과
+  mentor watch는 0건으로 Paper 자동등록이 꺼져 있음을 확인했다.
+- 임시 Fixture E2E는 ADD_WATCH 등록·당일 제외·익일 편입과 `live_order=disabled`를 통과했다.
+  최신 Trading main의 P0 데이터 무결성 패치는 별도 재기동 승인이 필요하므로 기존
+  Paper Runner는 PID를 보존했고, Shadow 관찰에는 영향이 없다.
+
 ## 2026-08-07 — 노트북 이관 및 미니PC Shadow 배포 예약
 
 - Mentor Signal Reader 기능과 최신 Archive main을 통합한 `4d488c7`을 원격 `main`에

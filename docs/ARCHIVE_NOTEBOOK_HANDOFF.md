@@ -1,5 +1,15 @@
 # Archive봇 노트북 개발 인수인계
 
+## 2026-08-09 Shadow 운영 시작 상태
+
+- 미니PC Archive main `bf7f4c2`에서 Mentor Reader Shadow 상주가 시작됐다.
+  기준점 `article_id=174023`, 종목 마스터 3,794개, 상태/운영 DB quick_check `ok`다.
+- 전체 테스트 Archive/Reader `823 passed`, Trading `517 passed`, 임시 Fixture E2E 통과다.
+- 출근 후에는 재배포하지 말고 `HANDOFF.md` 최상단을 읽은 뒤 Shadow 상태 DB와 로그의
+  오탐·누락·지연만 분석한다. Paper 자동등록과 실전 주문은 여전히 비활성이다.
+- 최신 Trading P0 데이터 무결성 코드는 pull됐지만 Paper Runner 재기동은 별도 승인
+  사항이라 보류됐다. 노트북에서 운영 DB 재구축이나 상주 재기동을 수행하지 않는다.
+
 ## 2026-08-07 Mentor Signal Reader 이어하기
 
 - 원격 `main`에는 Mentor Signal Reader와 최신 Archive 운영 변경이 통합돼 있다.
