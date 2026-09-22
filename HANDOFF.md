@@ -1,5 +1,31 @@
 # 인수인계 대장 (PC ↔ 노트북)
 
+## 2026-09-23 — Archive Chrome 로그인 및 밀린 수집 복구
+
+- 오너의 수집 재개 지시에 따라 `9b7e087`을 main에 ff-only 반영하고 push했다.
+  persistent `BrowserSession`은 설치된 Google Chrome(`channel="chrome"`)을 사용하며
+  `state/browser_profile`은 계속 전용으로 유지한다. 개인 Chrome 프로필·쿠키 복사는 하지 않았다.
+- 수동 로그인에서 카페 검증 URL을 지정해도 먼저 네이버 로그인 폼을 연다.
+  오너 로그인 후 Enter로 카페 접근을 확인하고, 종료 후 새 persistent 세션의
+  `check_member_login` 1회 결과가 authenticated임을 확인했다.
+  브라우저 변경 전후 결과만 확인한 것이며 네이버 보호조치의 서버측 원인은 확정하지 않았다.
+- 전체 테스트 `824 passed`, 설치된 Chrome 153의 about:blank 실행 점검 통과.
+  보호 미추적 `scripts/_step3_verify_v2.py` SHA-256은
+  `56CBA94517054572A8148F3A9EAB6218628884AC1103DF2F88488CF85719A2EA`로 보존했다.
+- 복구 전 healthcheck STOPPED, CollectLoop/Watchdog Disabled, 수집 프로세스 0개,
+  DB 최대 ID 175615였다. 야간 시간표를 영구 변경하지 않고 `--realtime-index --max-runs 1`
+  인프로세스 복구 회차를 실행했다. 새 글 62건 전부 BODY_COLLECTED,
+  실패·재시도 0건, 최대 ID 175825 및 최신 표본 attempt_count=1을 DB에서 확인했다.
+- 복구 회차는 01:15:53에 returncode=0, saved_delta=62로 정상 종료했다.
+  01:16 정규 CollectLoop를 재개했고 Running, controller instance 1개,
+  Watchdog/DailySummary Ready, lock 정상, session alert 없음으로 확인했다.
+  사후 진단의 운영 항목은 모두 OK이며 기록 작성 중 HANDOFF dirty 경고만 있었다.
+  정규 시간표는 23~06시 수집 중단을 유지하므로 오전 6시부터 다음 자동 수집이 진행된다.
+- 오너 요청으로 별도 상태 창 `Archive - Live collection status`를 실행했다.
+  `%LOCALAPPDATA%/Temp/archive-recovery-monitor.py`가 15초마다 DB를 읽기 전용으로 확인한다.
+  집계는 article_id > 175615 범위만 사용하며 네이버 요청은 하지 않는다.
+  상태 창을 닫아도 수집기는 종료되지 않는다.
+
 ## 2026-08-09 — 미니PC Mentor Reader Shadow 배포 완료
 
 - 미니PC Archive main `bf7f4c2`, Trading main `eb0ea59`를 fast-forward 반영했다.
