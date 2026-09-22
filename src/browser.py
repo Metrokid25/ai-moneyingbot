@@ -346,6 +346,7 @@ class BrowserSession:
             self._context: BrowserContext = self._pw.chromium.launch_persistent_context(
                 user_data_dir=str(self.user_data_dir),
                 headless=browser_headless,
+                channel="chrome",
             )
         else:
             self._browser = self._pw.chromium.launch(headless=browser_headless)

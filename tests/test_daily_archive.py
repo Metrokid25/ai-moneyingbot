@@ -704,6 +704,13 @@ def test_manual_login_verification_urls_include_collection_first_page():
     ]
 
 
+def test_manual_login_start_url_opens_naver_login_before_cafe_verification():
+    cafe_url = "https://cafe.naver.com/f-e/cafes/29082876/members/example"
+
+    assert daily_archive.manual_login_start_url(cafe_url) == "https://nid.naver.com/nidlogin.login"
+    assert daily_archive.manual_login_start_url("https://nid.naver.com/nidlogin.login") == "https://nid.naver.com/nidlogin.login"
+
+
 def test_collect_execute_articles_uses_index_tail_based_api(monkeypatch):
     calls = []
     closed = False
@@ -838,7 +845,8 @@ def test_login_mode_opens_profile_without_collecting_or_writing(tmp_path, monkey
     assert "this command does not collect articles" in captured.out
     assert "do not put this command in Windows Task Scheduler" in captured.out
     assert ("session", tmp_path / "profile", False) in calls
-    assert calls.count(("goto", login_url)) == 2
+    assert calls.count(("goto", "https://nid.naver.com/nidlogin.login")) == 1
+    assert calls.count(("goto", login_url)) == 1
     assert calls.count(("goto", page_url)) == 1
     assert any(call[0] == "wait_for_enter" for call in calls)
     assert closed is True
@@ -952,7 +960,8 @@ def test_login_mode_retries_and_fails_when_login_url_stays_blocked(tmp_path, mon
     assert "still login_required" in captured.out
     assert "manual login verification failed" in captured.out
     assert ("session", tmp_path / "profile", False) in calls
-    assert calls.count(("goto", login_url)) == 3
+    assert calls.count(("goto", "https://nid.naver.com/nidlogin.login")) == 1
+    assert calls.count(("goto", login_url)) == 2
     assert len([call for call in calls if call[0] == "wait_for_enter"]) == 2
 
 

@@ -257,6 +257,13 @@ def manual_login_verification_urls(login_url: str) -> list[str]:
     return list(dict.fromkeys(urls))
 
 
+def manual_login_start_url(login_url: str) -> str:
+    """Open Naver's sign-in form first when Cafe access is the verification target."""
+    if "cafe.naver.com" in urlparse(login_url).netloc.lower():
+        return DEFAULT_LOGIN_URL
+    return login_url
+
+
 def collect_article_body(article_id: int) -> tuple[str, str | None]:
     from collector import collect_body  # noqa: WPS433
 
@@ -429,15 +436,15 @@ def prepare_manual_login(
     max_attempts = max(1, login_check_retries)
     print("[daily_archive] manual login mode")
     print(f"  browser_profile_dir: {profile_dir}")
-    print(f"  login_url: {login_url}")
+    print(f"  access verification URL: {login_url}")
     print("  browser mode: headed (visible) for manual login")
     print(f"  login verification retries: {max_attempts}")
     print("  this command does not collect articles")
     print("  no DB write, state update, or report write will be performed")
     print("  sign in to Naver manually in the opened browser")
     print("  if captcha or identity verification appears, handle it manually")
-    print("  after login, confirm the mentor teacher article-list page is visible")
-    print("  after Enter, this command reopens login_url and page=1 to verify access")
+    print("  after Naver sign-in completes, press Enter to verify Cafe access")
+    print("  after Enter, this command opens login_url and page=1 in this Chrome profile")
     print("  do not put this command in Windows Task Scheduler")
     if login_url == DEFAULT_LOGIN_URL:
         print("  카페 접근 확인을 위해 --login-url 사용 권장")
@@ -446,14 +453,14 @@ def prepare_manual_login(
     session = BrowserSession(user_data_dir=profile_dir, headless=False)
     verification_urls = manual_login_verification_urls(login_url)
     try:
-        _final_url, initial_err = session.goto(login_url)
-        if initial_err:
+        start_url = manual_login_start_url(login_url)
+        _final_url, initial_err = session.goto(start_url)
+        if initial_err and initial_err != "login_required":
             print(f"[daily_archive] initial login_url status: {initial_err}")
 
         for attempt in range(1, max_attempts + 1):
             print(
-                "[daily_archive] complete login and confirm the article-list page, "
-                "then press Enter in PowerShell"
+                "[daily_archive] complete Naver sign-in, then press Enter in PowerShell"
             )
             wait_for_manual_confirmation()
             print(f"[daily_archive] verifying login_url access ({attempt}/{max_attempts})")
@@ -472,8 +479,7 @@ def prepare_manual_login(
             print(f"[daily_archive] still {verify_err}: {failed_url}")
             if attempt < max_attempts:
                 print(
-                    "[daily_archive] in the browser, confirm the mentor teacher article-list "
-                    "is visible, then press Enter again"
+                    "[daily_archive] resolve the sign-in issue in the browser, then press Enter again"
                 )
 
         print("[daily_archive] ERROR: manual login verification failed")
@@ -537,7 +543,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--login-url",
         default=DEFAULT_LOGIN_URL,
-        help="URL to open in manual login mode; use the mentor teacher article-list URL to confirm Cafe access",
+        help="Cafe/article-list URL to verify after sign-in; the Naver login form opens first",
     )
     parser.add_argument(
         "--login-check-retries",

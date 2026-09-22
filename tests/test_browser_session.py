@@ -64,6 +64,7 @@ def test_browser_session_uses_persistent_profile_by_default(tmp_path, monkeypatc
             {
                 "user_data_dir": str(profile_dir),
                 "headless": browser.HEADLESS,
+                "channel": "chrome",
             },
         )
     ]
@@ -83,6 +84,7 @@ def test_browser_session_accepts_headless_override(tmp_path, monkeypatch):
             {
                 "user_data_dir": str(profile_dir),
                 "headless": False,
+                "channel": "chrome",
             },
         )
     ]
